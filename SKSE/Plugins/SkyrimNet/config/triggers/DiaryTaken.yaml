@@ -1,0 +1,21 @@
+name: "DiaryTaken"
+description: "Triggers when the player trades for an NPC's diary."
+
+eventCriteria:
+  eventType: "mod_event"
+  schemaConditions:
+    - fieldPath: "event_name"
+      operator: "equals"
+      value: "PhysicalDiary_Shared"
+
+response:
+  type: "direct_narration"
+  content: "{{player.name}} now has {{actor.name}}'s diary."
+
+audience: "target"
+
+enabled: true
+interrupt: false
+probability: 1
+cooldownSeconds: 30
+priority: 1
