@@ -2,6 +2,7 @@
 #include "BookManager.h"
 #include "DiaryTheftHandler.h"
 #include "DynamicBookFrameworkAPI.h"
+#include "SkyrimNetAPITest.h"
 #include "Config.h"
 #include <spdlog/sinks/basic_file_sink.h>
 #include <fstream>
@@ -1824,6 +1825,11 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
     DiaryTheftHandler::Register();
 
     SKSE::log::info("SkyrimNetPhysicalDiaries loaded successfully!");
+    
+    // Test SkyrimNet Public API integration
+    SKSE::log::info("Running SkyrimNet API tests...");
+    SkyrimNetAPITest::RunAllTests();
+    
     return true;
 }
 

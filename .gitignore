@@ -831,3 +831,4 @@ SkyrimSE.code-workspace
 skyrimse.ppj
 vcpkg.json
 vcpkg-configuration.json
+src/SkyrimNetAPITest.cpp
