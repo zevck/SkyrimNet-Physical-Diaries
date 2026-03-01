@@ -10,9 +10,6 @@
 #include <unordered_set>
 #include <unordered_map>
 
-// Global database path - accessible from BookManager
-std::optional<std::filesystem::path> g_currentDatabasePath;
-
 // Helper function to sanitize text for Skyrim's book renderer
 std::string SanitizeBookText(const std::string& text) {
     std::string result = text;
@@ -188,18 +185,8 @@ namespace
     constexpr std::uint32_t kSerializationVersion = 1;
     constexpr std::uint32_t kSerializationTypeBooks = 'SNDB'; // SkyrimNet Diary Books
     constexpr std::uint32_t kSerializationTypeCache = 'SNDC'; // SkyrimNet Diary Cache (UUID mappings)
-    constexpr std::uint32_t kSerializationTypeDbPath = 'SNDP'; // SkyrimNet Database Path
-
-    // Database polling state
-    int g_databasePollAttempts = 0;
-    std::chrono::steady_clock::time_point g_lastPollTime;
-    constexpr int MAX_DATABASE_POLL_ATTEMPTS = 30; // Poll for up to 30 seconds
-    constexpr std::chrono::seconds DATABASE_POLL_INTERVAL{1}; // Poll every second
-    constexpr std::chrono::seconds DATABASE_RECENCY_THRESHOLD{10}; // Database must be modified within last 10 seconds
 
     // Forward declarations
-    void UpdateDatabasePath();
-    void PollForActiveDatabase();
     void CheckDailyDiaryUpdates(bool forcedUpdate = false);
     void ScheduleTimeCheck();
 
@@ -226,7 +213,7 @@ std::string GetBioTemplateName(RE::Actor* actor) {
 }
 
 // Resolve actor to UUID with caching
-std::string ResolveActorUUID(RE::Actor* actor, SkyrimNetDiaries::Database& db) {
+std::string ResolveActorUUID(RE::Actor* actor) {
     if (!actor) {
         return "";
     }
@@ -239,17 +226,12 @@ std::string ResolveActorUUID(RE::Actor* actor, SkyrimNetDiaries::Database& db) {
         return it->second;
     }
     
-    // Not cached - resolve via bio_template_name
-    std::string templateName = GetBioTemplateName(actor);
-    if (templateName.empty()) {
-        return "";
-    }
-    
-    std::string uuid = db.GetUUIDByTemplateName(templateName);
+    // Not cached - resolve via SkyrimNet API
+    std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(actorRefID);
     if (!uuid.empty()) {
         // Cache for future lookups
         g_actorUuidCache[actorRefID] = uuid;
-        SKSE::log::info("Resolved actor {} (refID 0x{:X}) to UUID: {}", actor->GetActorBase()->GetName(), actorRefID, uuid);
+        SKSE::log::info("Resolved actor {} (FormID 0x{:X}) to UUID: {}", actor->GetActorBase()->GetName(), actorRefID, uuid);
     }
     
     return uuid;
@@ -471,13 +453,8 @@ bool WriteDynamicBookFile(const std::string& bookTitle, const std::string& text)
     auto booksPath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "DynamicBookFramework" / "Books";
     
     try {
-        // Create subfolder based on database filename to separate saves
-        std::string saveFolder = "Default";
-        if (g_currentDatabasePath.has_value()) {
-            // Extract filename without extension (e.g., "skyrimnet_PlayerName_20250205.db" -> "skyrimnet_PlayerName_20250205")
-            saveFolder = g_currentDatabasePath->stem().string();
-            SKSE::log::info("Using save-specific subfolder: {}", saveFolder);
-        }
+        // Use fixed folder name for SkyrimNet diaries
+        std::string saveFolder = "SkyrimNet";
         
         auto saveBooksPath = booksPath / saveFolder;
         std::filesystem::create_directories(saveBooksPath);
@@ -552,26 +529,22 @@ namespace {
                     }
                     
                     // Read content from txt file
-                    if (g_currentDatabasePath.has_value()) {
-                        std::string saveFolder = g_currentDatabasePath->stem().string();
-                        std::filesystem::path bookPath = std::filesystem::path("Data/SKSE/Plugins/DynamicBookFramework/Books") / saveFolder / (bookName + ".txt");
+                    std::string saveFolder = "SkyrimNet";
+                    std::filesystem::path bookPath = std::filesystem::path("Data/SKSE/Plugins/DynamicBookFramework/Books") / saveFolder / (bookName + ".txt");
+                    
+                    std::ifstream fileStream(bookPath);
+                    if (fileStream.is_open()) {
+                        std::stringstream buffer;
+                        buffer << fileStream.rdbuf();
+                        std::string bookText = buffer.str();
+                        fileStream.close();
                         
-                        std::ifstream fileStream(bookPath);
-                        if (fileStream.is_open()) {
-                            std::stringstream buffer;
-                            buffer << fileStream.rdbuf();
-                            std::string bookText = buffer.str();
-                            fileStream.close();
-                            
-                            // Pass content to DBF for display (session-only, doesn't rewrite file)
-                            DynamicBookFramework_API::SetDynamicText(bookName.c_str(), bookText.c_str());
-                            
-                            SKSE::log::info("Restored diary content from file: {}", bookPath.string());
-                        } else {
-                            SKSE::log::error("Failed to read diary file: {}", bookPath.string());
-                        }
+                        // Pass content to DBF for display (session-only, doesn't rewrite file)
+                        DynamicBookFramework_API::SetDynamicText(bookName.c_str(), bookText.c_str());
+                        
+                        SKSE::log::info("Restored diary content from file: {}", bookPath.string());
                     } else {
-                        SKSE::log::error("Database path not set - cannot determine save folder for file read");
+                        SKSE::log::error("Failed to read diary file: {}", bookPath.string());
                     }
                 }
             }
@@ -607,6 +580,10 @@ namespace {
                 task->AddTask([]() {
                     SKSE::log::info("Executing delayed diary update after sleep");
                     CheckDailyDiaryUpdates(true);
+                    
+                    // Run API tests to verify diary API integration
+                    SKSE::log::info("Running SkyrimNet API tests after sleep...");
+                    SkyrimNetAPITest::RunAllTests();
                 });
             }
 
@@ -641,6 +618,10 @@ namespace {
                 task->AddTask([]() {
                     SKSE::log::info("Executing delayed diary update after wait");
                     CheckDailyDiaryUpdates(true);
+                    
+                    // Run API tests to verify diary API integration
+                    SKSE::log::info("Running SkyrimNet API tests after wait...");
+                    SkyrimNetAPITest::RunAllTests();
                 });
             }
 
@@ -704,21 +685,16 @@ namespace {
             return;
         }
         
-        // Lazy database initialization: Find database when we actually need it
-        // This ensures we get the RIGHT database for THIS save, not another save's database
-        if (!g_currentDatabasePath.has_value()) {
-            SKSE::log::info("No database path set - finding most recent database (first diary check)");
-            UpdateDatabasePath();
-            
-            if (!g_currentDatabasePath.has_value()) {
-                SKSE::log::error("No SkyrimNet database found - diaries cannot be created yet");
-                SKSE::log::error("Please ensure SkyrimNet is generating diary entries");
-                return;
-            }
-            
-            SKSE::log::info("Found database for this save: {}", g_currentDatabasePath->string());
-        } else {
-            SKSE::log::info("Using existing database path: {}", g_currentDatabasePath->string());
+        // Initialize SkyrimNet API if not already done
+        if (!SkyrimNetDiaries::Database::InitializeAPI()) {
+            SKSE::log::error("Failed to initialize SkyrimNet API - diaries cannot be created");
+            return;
+        }
+        
+        // Check if memory system is ready
+        if (!SkyrimNetDiaries::Database::IsMemorySystemReady()) {
+            SKSE::log::warn("SkyrimNet memory system not ready yet - diary processing deferred");
+            return;
         }
 
         float currentDay = calendar->GetDaysPassed();
@@ -733,7 +709,7 @@ namespace {
                       forcedUpdate ? "Forced update" : "New", currentDay);
         g_lastProcessedDay = currentDay;
 
-        // Structure to cache actor data from database
+        // Structure to cache actor data from API
         struct CachedActorData {
             std::string uuid;
             std::string name;
@@ -749,80 +725,29 @@ namespace {
 
             // STEP 1: Quickly batch all database queries and close connection immediately
             // Database is opened in READ-ONLY mode to avoid blocking SkyrimNet's writes
-            // Uses retry logic to handle transient lock conflicts
+            // Uses API instead of direct database access - no retry logic needed
             std::unordered_map<std::string, CachedActorData> cachedData;
             {
-                // FIRST: Check if WAL mode needs to be enabled (one-time operation per database)
-                // This minimizes lock time that could block SkyrimNet
-                static std::string lastWALEnabledPath;
-                if (lastWALEnabledPath != g_currentDatabasePath->string()) {
-                    // Check if WAL is already enabled by looking for .db-wal file
-                    std::filesystem::path walFilePath = g_currentDatabasePath->string() + "-wal";
-                    if (std::filesystem::exists(walFilePath)) {
-                        SKSE::log::info("WAL mode already enabled for this database (found {}) - skipping setup", walFilePath.filename().string());
-                        lastWALEnabledPath = g_currentDatabasePath->string();
-                    } else {
-                        SKSE::log::info("First access to this database - enabling WAL mode in separate transaction...");
-                        SkyrimNetDiaries::Database walDb;
-                        if (walDb.Open(g_currentDatabasePath->string(), false)) {
-                            if (walDb.EnableWALMode()) {
-                                lastWALEnabledPath = g_currentDatabasePath->string();
-                                SKSE::log::info("✓ WAL mode enabled successfully");
-                            } else {
-                                SKSE::log::warn("Failed to enable WAL mode (may already be enabled)");
-                            }
-                            walDb.Close();  // Release lock immediately
-                            SKSE::log::info("WAL transaction closed - SkyrimNet can now access database concurrently");
-                        } else {
-                            SKSE::log::warn("Could not open database to enable WAL mode - will continue without it");
-                        }
-                    }
-                }
-                
-                // NOW: Open for actual diary processing (WAL already enabled, so no exclusive lock needed)
-                SkyrimNetDiaries::Database db;
-                
-                // Retry logic: SkyrimNet might be mid-write when we try to open
-                bool dbOpened = false;
-                const int maxRetries = 5;
-                for (int attempt = 1; attempt <= maxRetries; ++attempt) {
-                    // Open in read-write mode (for WAL checkpoint operations)
-                    if (db.Open(g_currentDatabasePath->string(), false)) {
-                        dbOpened = true;
-                        break;
-                    }
-                    
-                    if (attempt < maxRetries) {
-                        int waitMs = 50 * attempt; // 50ms, 100ms, 150ms, 200ms, 250ms
-                        SKSE::log::warn("Database locked (attempt {}/{}), waiting {}ms before retry...", 
-                                       attempt, maxRetries, waitMs);
-                        std::this_thread::sleep_for(std::chrono::milliseconds(waitMs));
-                    }
-                }
-                
-                if (!dbOpened) {
-                    SKSE::log::error("Failed to open database after {} attempts - SkyrimNet may be actively writing", maxRetries);
-                    SKSE::log::info("Diary processing deferred - will retry at next check interval");
-                    return;
-                }
-
-                SKSE::log::info("Database opened - batching queries...");
+                SKSE::log::info("Fetching diary entries via SkyrimNet API (thread-safe)...");
 
                 try {
-                    // PERFORMANCE OPTIMIZATION: Only check actors with NEW entries since last check
+                    // PERFORMANCE OPTIMIZATION: Fetch and group ALL diary entries in ONE API call
+                    // This eliminates 50+ redundant GetDiaryEntries calls on first load
                     SKSE::log::info("Querying for entries since timestamp: {:.2f} (current game time: {:.2f})", 
                                   g_lastDiaryCheckTimestamp, currentGameTime);
-                    auto actorsWithNewEntries = db.GetActorUUIDsWithNewEntries(g_lastDiaryCheckTimestamp);
-                    SKSE::log::info("Found {} actors with new entries", actorsWithNewEntries.size());
+                    auto entriesByActor = SkyrimNetDiaries::Database::GetAllDiaryEntriesGroupedByActor(g_lastDiaryCheckTimestamp);
+                    SKSE::log::info("Found {} actors with diary entries", entriesByActor.size());
                 
                 // Also check all existing diary holders for deletions
                 auto bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
                 std::unordered_set<std::string> actorsToProcess;
                 
-                // Add actors with new entries
-                for (const auto& [uuid, name] : actorsWithNewEntries) {
-                    SKSE::log::info("  - {} (UUID: {})", name, uuid);
-                    actorsToProcess.insert(uuid);
+                // Add actors with new entries from the grouped data
+                for (const auto& [uuid, entries] : entriesByActor) {
+                    if (!entries.empty()) {
+                        SKSE::log::info("  - {} ({} entries, UUID: {})", entries[0].actor_name, entries.size(), uuid);
+                        actorsToProcess.insert(uuid);
+                    }
                 }
                 
                 // Add actors with existing diaries (to check for deletions/updates)
@@ -833,11 +758,9 @@ namespace {
                 }
                 
                 if (actorsToProcess.empty()) {
-                    SKSE::log::warn("No diary updates needed: {} new entries, {} existing diary holders", 
-                                   actorsWithNewEntries.size(), existingDiaryHolders);
+                    SKSE::log::warn("No diary updates needed: {} actors with new entries, {} existing diary holders", 
+                                   entriesByActor.size(), existingDiaryHolders);
                     SKSE::log::warn("If you expect diary entries, check that SkyrimNet is writing to the database");
-                    db.Close();
-                    SKSE::log::info("Database closed (no processing needed)");
                     // Only update timestamp after successful processing
                     g_lastDiaryCheckTimestamp = currentGameTime;
                     return;
@@ -845,19 +768,26 @@ namespace {
 
                 SKSE::log::info("Prefetching data for {} actors...", actorsToProcess.size());
 
-                // Batch-fetch ALL data we need while database is open
+                // Batch-fetch ALL data we need (using pre-grouped entries from above)
                 for (const auto& uuid : actorsToProcess) {
                     CachedActorData data;
                     data.uuid = uuid;
-                    data.name = db.GetActorName(uuid);
-                    data.bioTemplateName = db.GetTemplateNameByUUID(uuid);
-                    data.formID = db.GetFormIDForUUID(uuid);
+                    data.name = SkyrimNetDiaries::Database::GetActorName(uuid);
+                    data.bioTemplateName = SkyrimNetDiaries::Database::GetTemplateNameByUUID(uuid);
+                    data.formID = SkyrimNetDiaries::Database::GetFormIDForUUID(uuid);
                     
                     SKSE::log::info("Cached actor: name='{}', formID=0x{:X}, bioTemplate='{}'", data.name, data.formID, data.bioTemplateName);
                     
-                    // Get ALL diary entries for this actor (we'll filter by time later)
-                    // Using 10000 as limit to get all entries - should be more than enough
-                    data.allEntries = db.GetDiaryEntries(uuid, 10000, 0.0);
+                    // Use pre-fetched entries if available, otherwise query API
+                    auto entriesIt = entriesByActor.find(uuid);
+                    if (entriesIt != entriesByActor.end()) {
+                        data.allEntries = entriesIt->second;  // OPTIMIZATION: Use cached entries
+                        SKSE::log::info("Using pre-fetched {} entries for {}", data.allEntries.size(), data.name);
+                    } else {
+                        // Existing diary holder with no new entries - fetch all their entries
+                        data.allEntries = SkyrimNetDiaries::Database::GetDiaryEntries(uuid, 10000, 0.0);
+                        SKSE::log::info("Fetched {} entries for existing diary holder {}", data.allEntries.size(), data.name);
+                    }
                     
                     cachedData[uuid] = std::move(data);
                     SKSE::log::info("Cached {} entries for {} (FormID: 0x{:X})", 
@@ -865,18 +795,15 @@ namespace {
                 }
                 
                 } catch (const std::exception& e) {
-                    SKSE::log::error("Database query error: {}", e.what());
-                    db.Close();
-                    SKSE::log::info("Database closed after error - diary processing aborted");
+                    SKSE::log::error("API query error: {}", e.what());
+                    SKSE::log::info("Diary processing aborted");
                     return;
                 }
 
-                // Close database IMMEDIATELY after fetching all data
-                db.Close();
-                SKSE::log::info("Database closed - all data cached in memory. Processing {} actors...", cachedData.size());
-            } // Database object goes out of scope here
+               SKSE::log::info("All data fetched from API. Processing {} actors...", cachedData.size());
+            }
 
-            // STEP 2: Process all actors from cached data (database is now closed)
+            // STEP 2: Process all actors from cached data
             auto bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
             int diariesCreated = 0;
             int diariesUpdated = 0;
@@ -1191,28 +1118,24 @@ namespace {
             // Check if diary was removed from an NPC (oldContainer = NPC, newContainer = player or world)
             if (fromRef) {
                 auto fromActor = fromRef->As<RE::Actor>();
-                if (fromActor && fromActor->GetActorBase() && g_currentDatabasePath) {
+                if (fromActor && fromActor->GetActorBase()) {
                     // Diary was removed from this NPC - record the time
                     std::string actorName = fromActor->GetActorBase()->GetName();
                     
                     try {
-                        SkyrimNetDiaries::Database db;
-                        if (db.Open(g_currentDatabasePath->string(), false)) {
-                            // Resolve actor UUID using bio_template_name
-                            std::string actorUuid = ResolveActorUUID(fromActor, db);
-                            
-                            if (!actorUuid.empty()) {
-                                auto calendar = RE::Calendar::GetSingleton();
-                                if (calendar) {
-                                    // Convert from days to seconds to match SkyrimNet's database format
-                                    double currentTime = calendar->GetCurrentGameTime() * 86400.0;
-                                    
-                                    SKSE::log::info("Diary v{} removed from {} (UUID: {}) at game time {} seconds", 
-                                                   diaryData->volumeNumber, actorName, actorUuid, currentTime);
-                                    // Note: Faction marker added by DiaryTheftHandler for SkyrimNet prompt
-                                }
+                        // Resolve actor UUID using API
+                        std::string actorUuid = ResolveActorUUID(fromActor);
+                        
+                        if (!actorUuid.empty()) {
+                            auto calendar = RE::Calendar::GetSingleton();
+                            if (calendar) {
+                                // Convert from days to seconds to match SkyrimNet's database format
+                                double currentTime = calendar->GetCurrentGameTime() * 86400.0;
+                                
+                                SKSE::log::info("Diary v{} removed from {} (UUID: {}) at game time {} seconds", 
+                                               diaryData->volumeNumber, actorName, actorUuid, currentTime);
+                                // Note: Faction marker added by DiaryTheftHandler for SkyrimNet prompt
                             }
-                            db.Close();
                         }
                     } catch (const std::exception& e) {
                         SKSE::log::error("Error tracking stolen diary: {}", e.what());
@@ -1223,7 +1146,7 @@ namespace {
             // Check if diary was returned to an NPC (oldContainer = player, newContainer = NPC)
             if (toRef) {
                 auto toActor = toRef->As<RE::Actor>();
-                if (toActor && toActor->GetActorBase() && g_currentDatabasePath) {
+                if (toActor && toActor->GetActorBase()) {
                     // Diary was returned to this NPC
                     std::string actorName = toActor->GetActorBase()->GetName();
                     
@@ -1258,15 +1181,11 @@ namespace {
                                 
                                 if (wasLatest) {
                                     // Latest volume returned - NPC can now receive new updates (inventory check on next daily update)
-                                    SkyrimNetDiaries::Database db;
-                                    if (db.Open(g_currentDatabasePath->string(), false)) {
-                                        std::string actorUuid = ResolveActorUUID(toActor, db);
-                                        
-                                        if (!actorUuid.empty()) {
-                                            SKSE::log::info("Latest volume v{} returned to {} (UUID: {})", 
-                                                           volNum, actorName, actorUuid);
-                                        }
-                                        db.Close();
+                                    std::string actorUuid = ResolveActorUUID(toActor);
+                                    
+                                    if (!actorUuid.empty()) {
+                                        SKSE::log::info("Latest volume v{} returned to {} (UUID: {})", 
+                                                       volNum, actorName, actorUuid);
                                     }
                                 } else {
                                     // Old volume returned but newer volumes exist
@@ -1310,167 +1229,20 @@ namespace {
         SKSE::log::info("========================================");
     }
 
+    // DEPRECATED: Database polling functions - no longer needed with API
+    /* 
     void TestDatabaseConnection() {
-        SKSE::log::info("Testing SkyrimNet database connection...");
-
-        if (!g_currentDatabasePath) {
-            SKSE::log::warn("No database path set yet - save may not have fully loaded");
-            return;
-        }
-
-        auto dbPath = *g_currentDatabasePath;
-        SKSE::log::info("Attempting to open database: {}", dbPath.string());
-
-        if (!std::filesystem::exists(dbPath)) {
-            SKSE::log::error("Database file does not exist: {}", dbPath.string());
-            return;
-        }
-
-        SkyrimNetDiaries::Database db;
-        if (!db.Open(dbPath.string(), false)) {
-            SKSE::log::error("Failed to open database");
-            return;
-        }
-
-        // Log the counters table to see what metadata is available
-        db.LogCountersTable();
-
-        // Test 1: Get all diary entries
-        SKSE::log::info("Fetching diary entries...");
-        auto entries = db.GetAllDiaryEntries(5); // Get 5 most recent entries
-
-        if (entries.empty()) {
-            SKSE::log::warn("No diary entries found in database");
-        } else {
-            WriteDiaryEntriesToLog(entries);
-        }
-
-        // Test 2: Try to get entries for a specific actor (Nazeem from your example)
-        SKSE::log::info("Testing specific actor query (Nazeem UUID: 1517892984741355101)...");
-        auto nazeemEntries = db.GetDiaryEntries("1517892984741355101", 10);
-        
-        if (!nazeemEntries.empty()) {
-            SKSE::log::info("Found {} diary entries for Nazeem", nazeemEntries.size());
-            WriteDiaryEntriesToLog(nazeemEntries);
-        } else {
-            SKSE::log::info("No diary entries found for this actor");
-        }
-
-        db.Close();
-        SKSE::log::info("Database connection test complete");
+        // This function is deprecated - uses direct database access
     }
 
-    // Poll for recently active database (called after save load)
     void PollForActiveDatabase() {
-        // Check if enough time has passed since last poll
-        auto now = std::chrono::steady_clock::now();
-        if (g_databasePollAttempts > 0) {
-            auto timeSinceLastPoll = std::chrono::duration_cast<std::chrono::seconds>(now - g_lastPollTime);
-            if (timeSinceLastPoll < DATABASE_POLL_INTERVAL) {
-                // Not enough time passed, schedule for next frame
-                auto task = SKSE::GetTaskInterface();
-                if (task) {
-                    task->AddTask([]() {
-                        PollForActiveDatabase();
-                    });
-                }
-                return;
-            }
-        }
-        
-        g_lastPollTime = now;
-        
-        auto dataPath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "SkyrimNet" / "data";
-        
-        if (!std::filesystem::exists(dataPath)) {
-            SKSE::log::error("SkyrimNet data directory not found: {}", dataPath.string());
-            return;
-        }
-
-        g_databasePollAttempts++;
-        SKSE::log::info("Polling for active database (attempt {}/{})", g_databasePollAttempts, MAX_DATABASE_POLL_ATTEMPTS);
-
-        auto fileTimeNow = std::filesystem::file_time_type::clock::now();
-        std::filesystem::path recentlyModifiedDb;
-        std::filesystem::file_time_type mostRecentTime{};
-
-        for (const auto& entry : std::filesystem::directory_iterator(dataPath)) {
-            if (entry.path().extension() == ".db") {
-                // Check WAL file modification time (writes go to WAL in WAL mode)
-                std::filesystem::path walPath = entry.path().string() + "-wal";
-                auto fileTime = std::filesystem::exists(walPath)
-                    ? std::filesystem::last_write_time(walPath)
-                    : std::filesystem::last_write_time(entry);
-                
-                // Check if modified very recently
-                auto age = fileTimeNow - fileTime;
-                if (age <= DATABASE_RECENCY_THRESHOLD) {
-                    if (recentlyModifiedDb.empty() || fileTime > mostRecentTime) {
-                        recentlyModifiedDb = entry.path();
-                        mostRecentTime = fileTime;
-                    }
-                }
-            }
-        }
-
-        if (!recentlyModifiedDb.empty()) {
-            // Found a recently active database!
-            g_currentDatabasePath = recentlyModifiedDb;
-            g_databasePollAttempts = 0; // Reset for next save load
-            SKSE::log::info("Found active database: {}", recentlyModifiedDb.string());
-        } else if (g_databasePollAttempts < MAX_DATABASE_POLL_ATTEMPTS) {
-            // Not found yet, schedule another poll
-            SKSE::log::info("No recently active database found, will retry");
-            
-            auto task = SKSE::GetTaskInterface();
-            if (task) {
-                task->AddTask([]() {
-                    PollForActiveDatabase();
-                });
-            }
-        } else {
-            // Exceeded max attempts, fall back to most recent database
-            SKSE::log::warn("Database polling timed out after {} attempts, falling back to most recent", MAX_DATABASE_POLL_ATTEMPTS);
-            g_databasePollAttempts = 0; // Reset for next save load
-            UpdateDatabasePath();
-        }
+        // This function is deprecated - API handles database access
     }
 
     void UpdateDatabasePath() {
-        auto dataPath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "SkyrimNet" / "data";
-        
-        if (!std::filesystem::exists(dataPath)) {
-            SKSE::log::error("SkyrimNet data directory not found: {}", dataPath.string());
-            return;
-        }
-
-        std::filesystem::path mostRecentDb;
-        std::filesystem::file_time_type mostRecentTime{};
-
-        for (const auto& entry : std::filesystem::directory_iterator(dataPath)) {
-            if (entry.path().extension() == ".db") {
-                // In WAL mode, writes go to .db-wal, not .db
-                // Check WAL file modification time to find the active database
-                std::filesystem::path walPath = entry.path().string() + "-wal";
-                auto fileTime = std::filesystem::exists(walPath)
-                    ? std::filesystem::last_write_time(walPath)
-                    : std::filesystem::last_write_time(entry);
-                
-                if (mostRecentDb.empty() || fileTime > mostRecentTime) {
-                    mostRecentDb = entry.path();
-                    mostRecentTime = fileTime;
-                }
-            }
-        }
-
-        if (mostRecentDb.empty()) {
-            SKSE::log::warn("No database files found in SkyrimNet data directory");
-            return;
-        }
-
-        g_currentDatabasePath = mostRecentDb;
-        SKSE::log::info("Using most recent database: {}", mostRecentDb.string());
+        // This function is deprecated - API handles database path
     }
+    */
 
     void SaveCallback(SKSE::SerializationInterface* a_intfc) {
         // Save book data
@@ -1512,31 +1284,6 @@ namespace {
         }
 
         SKSE::log::info("Saved {} UUID cache entries", cacheSize);
-        
-        // Save database path (only if we successfully found one via polling)
-        if (g_currentDatabasePath.has_value()) {
-            if (!a_intfc->OpenRecord(kSerializationTypeDbPath, kSerializationVersion)) {
-                SKSE::log::error("Failed to open database path serialization record");
-                return;
-            }
-
-            std::string dbPathStr = g_currentDatabasePath->string();
-            std::uint32_t pathLen = static_cast<std::uint32_t>(dbPathStr.length());
-            
-            if (!a_intfc->WriteRecordData(&pathLen, sizeof(pathLen))) {
-                SKSE::log::error("Failed to write database path length");
-                return;
-            }
-            
-            if (!a_intfc->WriteRecordData(dbPathStr.c_str(), pathLen)) {
-                SKSE::log::error("Failed to write database path");
-                return;
-            }
-            
-            SKSE::log::info("Saved database path to co-save: {}", dbPathStr);
-        } else {
-            SKSE::log::info("No database path to save (not yet detected)");
-        }
     }
 
     void LoadCallback(SKSE::SerializationInterface* a_intfc) {
@@ -1606,32 +1353,6 @@ namespace {
 
                 SKSE::log::info("Restored {} UUID cache entries", g_actorUuidCache.size());
             }
-            else if (type == kSerializationTypeDbPath) {
-                // Load database path from co-save
-                std::uint32_t pathLen;
-                if (!a_intfc->ReadRecordData(&pathLen, sizeof(pathLen))) {
-                    SKSE::log::error("Failed to read database path length");
-                    continue;
-                }
-
-                std::string dbPathStr;
-                dbPathStr.resize(pathLen);
-                if (!a_intfc->ReadRecordData(dbPathStr.data(), pathLen)) {
-                    SKSE::log::error("Failed to read database path");
-                    continue;
-                }
-
-                std::filesystem::path dbPath(dbPathStr);
-                
-                // Verify the database still exists
-                if (std::filesystem::exists(dbPath)) {
-                    g_currentDatabasePath = dbPath;
-                    SKSE::log::info("Restored database path from co-save: {}", dbPathStr);
-                } else {
-                    SKSE::log::warn("Cached database path no longer exists: {}", dbPathStr);
-                    // Will fall back to polling in kPostLoadGame handler
-                }
-            }
         }
     }
 
@@ -1639,7 +1360,6 @@ namespace {
         // Called when starting a new game - clear all books and tracking
         SkyrimNetDiaries::BookManager::GetSingleton()->Revert();
         g_actorUuidCache.clear();
-        g_currentDatabasePath.reset(); // Clear database path
         SKSE::log::info("Reverted all diary data and caches (new game)");
     }
 
@@ -1686,37 +1406,13 @@ namespace {
             break;
         }
         case SKSE::MessagingInterface::kPostLoadGame: {
-            // Clear cached database path unless it was loaded from co-save and is valid
-            // (LoadCallback will have set it if it exists and is valid)
+            // Initialize SkyrimNet API after save load
+            SKSE::log::info("Save loaded - initializing SkyrimNet API");
             
-            if (!g_currentDatabasePath.has_value()) {
-                // No cached path from co-save, need to poll for active database
-                SKSE::log::info("Save loaded - starting database polling");
-                g_databasePollAttempts = 0; // Reset poll counter
-                
-                auto task = SKSE::GetTaskInterface();
-                if (task) {
-                    task->AddTask([]() {
-                        PollForActiveDatabase();
-                    });
-                }
+            if (SkyrimNetDiaries::Database::InitializeAPI()) {
+                SKSE::log::info("✓ SkyrimNet API ready");
             } else {
-                // Using cached database path from co-save
-                SKSE::log::info("Using cached database from co-save: {}", g_currentDatabasePath->string());
-                
-                // Verify it still exists
-                if (!std::filesystem::exists(*g_currentDatabasePath)) {
-                    SKSE::log::warn("Cached database no longer exists, polling for new one");
-                    g_currentDatabasePath.reset();
-                    g_databasePollAttempts = 0;
-                    
-                    auto task = SKSE::GetTaskInterface();
-                    if (task) {
-                        task->AddTask([]() {
-                            PollForActiveDatabase();
-                        });
-                    }
-                }
+                SKSE::log::warn("Failed to initialize API (SkyrimNet may not be loaded yet)");
             }
             
             // Initialize last processed day to current day to prevent immediate processing on load
@@ -1730,10 +1426,7 @@ namespace {
             break;
         }
         case SKSE::MessagingInterface::kNewGame:
-            SKSE::log::info("New game started - clearing database path");
-            // DON'T call UpdateDatabasePath() here - would grab most recent DB from other saves!
-            // Let the database path remain empty. It will be found when diaries are first processed.
-            g_currentDatabasePath.reset();
+            SKSE::log::info("New game started - resetting diary state");
             // Reset tracking for new game
             g_lastProcessedDay = -1.0f;
             g_lastDiaryCheckTimestamp = 0.0;
@@ -1825,10 +1518,6 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
     DiaryTheftHandler::Register();
 
     SKSE::log::info("SkyrimNetPhysicalDiaries loaded successfully!");
-    
-    // Test SkyrimNet Public API integration
-    SKSE::log::info("Running SkyrimNet API tests...");
-    SkyrimNetAPITest::RunAllTests();
     
     return true;
 }

@@ -67,6 +67,13 @@ namespace SkyrimNetAPITest {
     void TestPlayerContext();
 
     /**
+     * Test diary entries query for an actor.
+     * @param formId Actor FormID (0 for all actors)
+     * @param maxCount Maximum entries to retrieve
+     */
+    void TestDiaryQuery(uint32_t formId, int maxCount = 10);
+
+    /**
      * Run all API tests with default parameters.
      */
     void RunAllTests();

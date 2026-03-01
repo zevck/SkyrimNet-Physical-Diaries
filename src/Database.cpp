@@ -1,529 +1,347 @@
 #include "Database.h"
+#include "SkyrimNetPublicAPI.h"
 #include <sstream>
+
+using json = nlohmann::json;
 
 namespace SkyrimNetDiaries {
 
-    Database::~Database() {
-        Close();
-    }
-
-    bool Database::Open(const std::string& dbPath, bool readOnly) {
-        if (is_open_) {
-            Close();
+    bool Database::InitializeAPI() {
+        if (api_initialized_) {
+            return true;
         }
 
-        int flags = readOnly ? SQLITE_OPEN_READONLY : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
-        int rc = sqlite3_open_v2(dbPath.c_str(), &db_, flags, nullptr);
+        SKSE::log::info("Initializing SkyrimNet Public API...");
         
-        if (rc != SQLITE_OK) {
-            SKSE::log::error("Failed to open database {} (read-only={}): {}", dbPath, readOnly, sqlite3_errmsg(db_));
-            sqlite3_close(db_);
-            db_ = nullptr;
+        if (!FindFunctions()) {
+            SKSE::log::error("Failed to load SkyrimNet.dll - API not available");
             return false;
         }
 
-        is_open_ = true;
-        SKSE::log::info("Successfully opened database: {} (read-only={})", dbPath, readOnly);
+        if (!PublicGetVersion) {
+            SKSE::log::error("PublicGetVersion not available");
+            return false;
+        }
+
+        int version = PublicGetVersion();
+        SKSE::log::info("SkyrimNet API version: {}", version);
+
+        if (version < 4) {
+            SKSE::log::error("SkyrimNet API v4+ required for diary support (found v{})", version);
+            return false;
+        }
+
+        if (!PublicGetDiaryEntries || !PublicIsMemorySystemReady || !PublicGetBioTemplateName) {
+            SKSE::log::error("Required API functions not available");
+            return false;
+        }
+
+        api_initialized_ = true;
+        SKSE::log::info("✓ SkyrimNet API initialized successfully");
         return true;
     }
 
-    void Database::Close() {
-        if (is_open_ && db_) {
-            sqlite3_close(db_);
-            db_ = nullptr;
-            is_open_ = false;
-        }
-    }
-    
-    bool Database::EnableWALMode() {
-        if (!is_open_ || !db_) {
-            SKSE::log::error("Cannot enable WAL mode - database is not open");
+    bool Database::IsMemorySystemReady() {
+        if (!api_initialized_ && !InitializeAPI()) {
             return false;
         }
-        
-        // Enable WAL (Write-Ahead Logging) mode for concurrent access
-        // This allows readers and writers to work simultaneously without blocking
-        char* errMsg = nullptr;
-        int rc = sqlite3_exec(db_, "PRAGMA journal_mode=WAL;", nullptr, nullptr, &errMsg);
-        
-        if (rc != SQLITE_OK) {
-            SKSE::log::error("Failed to enable WAL mode: {}", errMsg ? errMsg : "unknown error");
-            if (errMsg) sqlite3_free(errMsg);
+
+        if (!PublicIsMemorySystemReady) {
             return false;
         }
-        
-        SKSE::log::info("✓ WAL mode enabled - database now supports concurrent reads/writes");
-        return true;
+
+        return PublicIsMemorySystemReady();
     }
 
-    std::vector<DiaryEntry> Database::GetDiaryEntries(const std::string& actorUUID, int limit, double startTime, double endTime) {
+    std::vector<DiaryEntry> Database::ParseDiaryJSON(const std::string& jsonResponse) {
         std::vector<DiaryEntry> entries;
 
-        if (!is_open_) {
-            SKSE::log::error("Database is not open");
+        if (jsonResponse.empty() || jsonResponse == "[]") {
             return entries;
         }
 
-        // Build SQL query with optional time filters
-        std::string sql = R"(
-            SELECT 
-                d.actor_uuid,
-                d.content,
-                d.entry_date,
-                d.creation_time,
-                d.location,
-                d.emotion,
-                d.importance_score,
-                u.actor_name
-            FROM diary_entries d
-            LEFT JOIN uuid_mappings u ON d.actor_uuid = u.uuid
-            WHERE d.actor_uuid = ?
-        )";
-        
-        // Add time filters if specified
-        if (startTime > 0.0) {
-            sql += " AND d.entry_date >= ?";
-        }
-        if (endTime > 0.0) {
-            sql += " AND d.entry_date <= ?";
-        }
-        
-        sql += " ORDER BY d.entry_date ASC LIMIT ?";
+        try {
+            auto jsonArray = json::parse(jsonResponse);
 
-        SKSE::log::info("GetDiaryEntries SQL: {} (UUID: {}, startTime: {}, endTime: {}, limit: {})", 
-                       sql, actorUUID, startTime, endTime, limit);
-
-        sqlite3_stmt* stmt = nullptr;
-        int rc = sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr);
-        
-        if (rc != SQLITE_OK) {
-            SKSE::log::error("Failed to prepare statement: {}", sqlite3_errmsg(db_));
-            return entries;
-        }
-
-        int bindIndex = 1;
-        sqlite3_bind_text(stmt, bindIndex++, actorUUID.c_str(), -1, SQLITE_TRANSIENT);
-        
-        if (startTime > 0.0) {
-            sqlite3_bind_double(stmt, bindIndex++, startTime);
-        }
-        if (endTime > 0.0) {
-            sqlite3_bind_double(stmt, bindIndex++, endTime);
-        }
-        
-        sqlite3_bind_int(stmt, bindIndex, limit);
-
-        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
-            DiaryEntry entry;
-            entry.actor_uuid = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-            entry.content = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-            entry.entry_date = sqlite3_column_double(stmt, 2);
-            entry.creation_time = sqlite3_column_double(stmt, 3);
-            
-            if (sqlite3_column_text(stmt, 4)) {
-                entry.location = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
-            }
-            if (sqlite3_column_text(stmt, 5)) {
-                entry.emotion = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
-            }
-            
-            entry.importance_score = sqlite3_column_double(stmt, 6);
-            
-            if (sqlite3_column_text(stmt, 7)) {
-                entry.actor_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 7));
+            if (!jsonArray.is_array()) {
+                SKSE::log::error("Expected JSON array from API, got: {}", jsonResponse.substr(0, 100));
+                return entries;
             }
 
-            entries.push_back(entry);
+            for (const auto& item : jsonArray) {
+                DiaryEntry entry;
+                
+                // Required fields
+                if (item.contains("actor_uuid") && item["actor_uuid"].is_number()) {
+                    entry.actor_uuid = std::to_string(item["actor_uuid"].get<uint64_t>());
+                }
+                
+                if (item.contains("actor_name") && item["actor_name"].is_string()) {
+                    entry.actor_name = item["actor_name"].get<std::string>();
+                }
+                
+                if (item.contains("content") && item["content"].is_string()) {
+                    entry.content = item["content"].get<std::string>();
+                }
+                
+                if (item.contains("entry_date") && item["entry_date"].is_number()) {
+                    entry.entry_date = item["entry_date"].get<double>();
+                }
+                
+                if (item.contains("creation_time") && item["creation_time"].is_number()) {
+                    entry.creation_time = item["creation_time"].get<double>();
+                }
+                
+                // Optional fields
+                if (item.contains("location") && item["location"].is_string()) {
+                    entry.location = item["location"].get<std::string>();
+                }
+                
+                if (item.contains("emotion") && item["emotion"].is_string()) {
+                    entry.emotion = item["emotion"].get<std::string>();
+                }
+                
+                if (item.contains("importance_score") && item["importance_score"].is_number()) {
+                    entry.importance_score = item["importance_score"].get<double>();
+                }
+
+                entries.push_back(entry);
+            }
+
+            SKSE::log::info("Parsed {} diary entries from API JSON", entries.size());
+
+        } catch (const json::exception& e) {
+            SKSE::log::error("JSON parsing error: {}", e.what());
+            SKSE::log::error("JSON response (first 500 chars): {}", jsonResponse.substr(0, 500));
         }
-
-        sqlite3_finalize(stmt);
-
-        if (rc != SQLITE_DONE) {
-            SKSE::log::error("Error reading diary entries: {}", sqlite3_errmsg(db_));
-        }
-
-        SKSE::log::info("GetDiaryEntries returned {} entries", entries.size());
 
         return entries;
     }
 
-    std::string Database::GetActorName(const std::string& actorUUID) {
-        if (!is_open_) {
-            return "";
+    std::vector<DiaryEntry> Database::GetDiaryEntries(uint32_t formId, int limit, double startTime, double endTime) {
+        if (!api_initialized_ && !InitializeAPI()) {
+            SKSE::log::error("API not initialized - cannot get diary entries");
+            return {};
         }
 
-        const char* sql = "SELECT actor_name FROM uuid_mappings WHERE uuid = ? LIMIT 1";
+        if (!PublicGetDiaryEntries) {
+            SKSE::log::error("PublicGetDiaryEntries not available");
+            return {};
+        }
+
+        SKSE::log::info("Calling PublicGetDiaryEntries(formId=0x{:X}, limit={}, startTime={:.2f}, endTime={:.2f})",
+                       formId, limit, startTime, endTime);
+
+        std::string jsonResponse = PublicGetDiaryEntries(formId, limit, startTime, endTime);
         
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            SKSE::log::error("Failed to prepare statement: {}", sqlite3_errmsg(db_));
-            return "";
-        }
-
-        sqlite3_bind_text(stmt, 1, actorUUID.c_str(), -1, SQLITE_TRANSIENT);
-
-        std::string name;
-        if (sqlite3_step(stmt) == SQLITE_ROW) {
-            if (sqlite3_column_text(stmt, 0)) {
-                name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-            }
-        }
-
-        sqlite3_finalize(stmt);
-        return name;
+        auto entries = ParseDiaryJSON(jsonResponse);
+        
+        SKSE::log::info("Retrieved {} diary entries for FormID 0x{:X}", entries.size(), formId);
+        
+        return entries;
     }
 
     std::vector<DiaryEntry> Database::GetAllDiaryEntries(int limit) {
-        std::vector<DiaryEntry> entries;
-
-        if (!is_open_) {
-            SKSE::log::error("Database is not open");
-            return entries;
-        }
-
-        const char* sql = R"(
-            SELECT 
-                d.actor_uuid,
-                d.content,
-                d.entry_date,
-                d.creation_time,
-                d.location,
-                d.emotion,
-                d.importance_score,
-                u.actor_name
-            FROM diary_entries d
-            LEFT JOIN uuid_mappings u ON d.actor_uuid = u.uuid
-            ORDER BY d.creation_time DESC
-            LIMIT ?
-        )";
-
-        sqlite3_stmt* stmt = nullptr;
-        int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-        
-        if (rc != SQLITE_OK) {
-            SKSE::log::error("Failed to prepare statement: {}", sqlite3_errmsg(db_));
-            return entries;
-        }
-
-        sqlite3_bind_int(stmt, 1, limit);
-
-        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
-            DiaryEntry entry;
-            entry.actor_uuid = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-            entry.content = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-            entry.entry_date = sqlite3_column_double(stmt, 2);
-            entry.creation_time = sqlite3_column_double(stmt, 3);
-            
-            if (sqlite3_column_text(stmt, 4)) {
-                entry.location = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
-            }
-            if (sqlite3_column_text(stmt, 5)) {
-                entry.emotion = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
-            }
-            
-            entry.importance_score = sqlite3_column_double(stmt, 6);
-            
-            if (sqlite3_column_text(stmt, 7)) {
-                entry.actor_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 7));
-            }
-
-            entries.push_back(entry);
-        }
-
-        sqlite3_finalize(stmt);
-
-        if (rc != SQLITE_DONE) {
-            SKSE::log::error("Error reading diary entries: {}", sqlite3_errmsg(db_));
-        }
-
-        SKSE::log::info("Retrieved {} diary entries", entries.size());
-        return entries;
+        // Use formId=0 to get entries from ALL actors
+        return GetDiaryEntries(0, limit, 0.0, 0.0);
     }
 
-    void Database::LogCountersTable() {
-        if (!is_open_) {
-            SKSE::log::error("Database is not open");
-            return;
-        }
-
-        const char* sql = "SELECT id, label, value, session_id FROM counters";
-        sqlite3_stmt* stmt = nullptr;
-        int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-        
-        if (rc != SQLITE_OK) {
-            SKSE::log::error("Failed to prepare counters query: {}", sqlite3_errmsg(db_));
-            return;
-        }
-
-        SKSE::log::info("=== Counters Table ===");
-        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
-            int id = sqlite3_column_int(stmt, 0);
-            const char* label = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-            int value = sqlite3_column_int(stmt, 2);
-            const char* sessionId = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
-
-            SKSE::log::info("  id={}, label='{}', value={}, session_id='{}'", 
-                id, 
-                label ? label : "NULL",
-                value,
-                sessionId ? sessionId : "NULL");
-        }
-
-        sqlite3_finalize(stmt);
-
-        if (rc != SQLITE_DONE) {
-            SKSE::log::error("Error reading counters: {}", sqlite3_errmsg(db_));
-        }
-    }
-
-    std::string Database::GetPlayerUUID() {
-        if (!is_open_) {
+    std::string Database::GetBioTemplateName(uint32_t formId) {
+        if (!api_initialized_ && !InitializeAPI()) {
             return "";
         }
 
-        const char* sql = "SELECT uuid FROM actors WHERE is_player = 1 LIMIT 1";
-        sqlite3_stmt* stmt = nullptr;
-        int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-        
-        if (rc != SQLITE_OK) {
-            SKSE::log::error("Failed to prepare player UUID query: {}", sqlite3_errmsg(db_));
+        if (!PublicGetBioTemplateName) {
             return "";
         }
 
-        std::string playerUuid;
-        if (sqlite3_step(stmt) == SQLITE_ROW) {
-            const char* uuid = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-            if (uuid) {
-                playerUuid = uuid;
-            }
-        }
-
-        sqlite3_finalize(stmt);
-        return playerUuid;
-    }
-
-    std::string Database::GetPlayerName() {
-        if (!is_open_) {
-            return "";
-        }
-
-        const char* sql = "SELECT name FROM actors WHERE is_player = 1 LIMIT 1";
-        sqlite3_stmt* stmt = nullptr;
-        int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+        std::string templateName = PublicGetBioTemplateName(formId);
         
-        if (rc != SQLITE_OK) {
-            SKSE::log::error("Failed to prepare player name query: {}", sqlite3_errmsg(db_));
-            return "";
+        if (!templateName.empty()) {
+            SKSE::log::info("Bio template for 0x{:X}: {}", formId, templateName);
         }
-
-        std::string playerName;
-        if (sqlite3_step(stmt) == SQLITE_ROW) {
-            const char* name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-            if (name) {
-                playerName = name;
-            }
-        }
-
-        sqlite3_finalize(stmt);
-        return playerName;
-    }
-
-    bool Database::HasPlayerUUID(const std::string& playerUuid) {
-        if (!is_open_) {
-            return false;
-        }
-
-        const char* sql = "SELECT COUNT(*) FROM actors WHERE uuid = ? AND is_player = 1";
-        sqlite3_stmt* stmt = nullptr;
-        int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
         
-        if (rc != SQLITE_OK) {
-            return false;
-        }
-
-        sqlite3_bind_text(stmt, 1, playerUuid.c_str(), -1, SQLITE_TRANSIENT);
-
-        bool hasPlayer = false;
-        if (sqlite3_step(stmt) == SQLITE_ROW) {
-            int count = sqlite3_column_int(stmt, 0);
-            hasPlayer = (count > 0);
-        }
-
-        sqlite3_finalize(stmt);
-        return hasPlayer;
-    }
-
-    std::vector<std::string> Database::GetAllActorUUIDs() {
-        std::vector<std::string> uuids;
-        
-        if (!is_open_) {
-            return uuids;
-        }
-
-        // Get all unique actor UUIDs that have diary entries
-        const char* sql = "SELECT DISTINCT actor_uuid FROM diary_entries";
-        sqlite3_stmt* stmt = nullptr;
-        int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-        
-        if (rc != SQLITE_OK) {
-            SKSE::log::error("Failed to prepare actor UUID query: {}", sqlite3_errmsg(db_));
-            return uuids;
-        }
-
-        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
-            const char* uuid = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-            if (uuid) {
-                uuids.push_back(uuid);
-            }
-        }
-
-        sqlite3_finalize(stmt);
-
-        if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
-            SKSE::log::error("Error reading actor UUIDs: {}", sqlite3_errmsg(db_));
-        }
-
-        return uuids;
-    }
-    
-    std::string Database::GetUUIDByTemplateName(const std::string& templateName) {
-        if (!is_open_ || templateName.empty()) {
-            return "";
-        }
-
-        // Query uuid_mappings table for matching bio_template_name
-        const char* sql = "SELECT uuid FROM uuid_mappings WHERE bio_template_name = ?";
-        sqlite3_stmt* stmt = nullptr;
-        int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-        
-        if (rc != SQLITE_OK) {
-            SKSE::log::error("Failed to prepare UUID template query: {}", sqlite3_errmsg(db_));
-            return "";
-        }
-
-        sqlite3_bind_text(stmt, 1, templateName.c_str(), -1, SQLITE_TRANSIENT);
-
-        std::string uuid;
-        if ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
-            const char* result = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-            if (result) {
-                uuid = result;
-            }
-        }
-
-        sqlite3_finalize(stmt);
-
-        if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
-            SKSE::log::error("Error reading UUID by template name {}: {}", templateName, sqlite3_errmsg(db_));
-        }
-
-        return uuid;
-    }
-    
-    std::string Database::GetTemplateNameByUUID(const std::string& actorUUID) {
-        if (!is_open_) {
-            return "";
-        }
-
-        const char* sql = "SELECT bio_template_name FROM uuid_mappings WHERE uuid = ?";
-        
-        sqlite3_stmt* stmt = nullptr;
-        int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-        
-        if (rc != SQLITE_OK) {
-            SKSE::log::error("Failed to prepare template name query: {}", sqlite3_errmsg(db_));
-            return "";
-        }
-
-        sqlite3_bind_text(stmt, 1, actorUUID.c_str(), -1, SQLITE_TRANSIENT);
-
-        std::string templateName;
-        if ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
-            const char* result = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-            if (result) {
-                templateName = result;
-                SKSE::log::info("Found bio_template_name='{}' for UUID {}", templateName, actorUUID);
-            }
-        } else {
-            SKSE::log::warn("No bio_template_name found for UUID {} in uuid_mappings table", actorUUID);
-        }
-
-        sqlite3_finalize(stmt);
-
-        if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
-            SKSE::log::error("Error reading template name for UUID {}: {}", actorUUID, sqlite3_errmsg(db_));
-        }
-
         return templateName;
     }
 
-    std::vector<std::pair<std::string, std::string>> Database::GetActorUUIDsWithNewEntries(double sinceTime) {
-        std::vector<std::pair<std::string, std::string>> results;
-        
-        if (!is_open_) {
-            return results;
+    uint32_t Database::GetFormIDByName(const std::string& actorName) {
+        if (!api_initialized_ && !InitializeAPI()) {
+            return 0;
         }
 
-        // Get all actors with diary entries created after sinceTime
-        const char* sql = R"(
-            SELECT DISTINCT d.actor_uuid, u.actor_name 
-            FROM diary_entries d
-            INNER JOIN uuid_mappings u ON d.actor_uuid = u.uuid
-            WHERE d.creation_time > ?
-            ORDER BY u.actor_name
-        )";
-        
-        sqlite3_stmt* stmt = nullptr;
-        int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-        
-        if (rc != SQLITE_OK) {
-            SKSE::log::error("Failed to prepare new entries query: {}", sqlite3_errmsg(db_));
-            return results;
+        // Use engagement API to find actor by name
+        if (!PublicGetActorEngagement) {
+            return 0;
         }
 
-        sqlite3_bind_double(stmt, 1, sinceTime);
-
-        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
-            const char* uuid = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-            const char* name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        // Get top 100 actors and search for matching name
+        std::string engagementJson = PublicGetActorEngagement(100, false, false, 86400.0, 604800.0);
+        
+        try {
+            auto jsonArray = json::parse(engagementJson);
             
-            if (uuid && name) {
-                results.emplace_back(uuid, name);
+            if (jsonArray.is_array()) {
+                for (const auto& item : jsonArray) {
+                    if (item.contains("name") && item.contains("formId")) {
+                        std::string name = item["name"].get<std::string>();
+                        if (name == actorName) {
+                            return item["formId"].get<uint32_t>();
+                        }
+                    }
+                }
+            }
+        } catch (const json::exception& e) {
+            SKSE::log::error("Error parsing engagement JSON: {}", e.what());
+        }
+
+        return 0;
+    }
+
+    // UUID ↔ FormID conversion
+    std::string Database::GetUUIDFromFormID(uint32_t formId) {
+        if (!api_initialized_ && !InitializeAPI()) {
+            return "";
+        }
+
+        if (!PublicFormIDToUUID) {
+            return "";
+        }
+
+        uint64_t uuid = PublicFormIDToUUID(formId);
+        return std::to_string(uuid);
+    }
+
+    uint32_t Database::GetFormIDForUUID(const std::string& uuid) {
+        if (!api_initialized_ && !InitializeAPI()) {
+            return 0;
+        }
+
+        if (!PublicUUIDToFormID) {
+            return 0;
+        }
+
+        try {
+            uint64_t uuidNum = std::stoull(uuid);
+            return PublicUUIDToFormID(uuidNum);
+        } catch (...) {
+            SKSE::log::error("Invalid UUID string: {}", uuid);
+            return 0;
+        }
+    }
+
+    // Actor name lookup by UUID
+    std::string Database::GetActorName(const std::string& uuid) {
+        if (!api_initialized_ && !InitializeAPI()) {
+            return "";
+        }
+
+        if (!PublicGetActorNameByUUID) {
+            return "";
+        }
+
+        try {
+            uint64_t uuidNum = std::stoull(uuid);
+            return PublicGetActorNameByUUID(uuidNum);
+        } catch (...) {
+            SKSE::log::error("Invalid UUID string: {}", uuid);
+            return "";
+        }
+    }
+
+    // Get bio template name by UUID
+    std::string Database::GetTemplateNameByUUID(const std::string& uuid) {
+        uint32_t formId = GetFormIDForUUID(uuid);
+        if (formId == 0) {
+            return "";
+        }
+        return GetBioTemplateName(formId);
+    }
+
+    // Get UUID by bio template name
+    std::string Database::GetUUIDByTemplateName(const std::string& templateName) {
+        if (!api_initialized_ && !InitializeAPI()) {
+            return "";
+        }
+
+        // Strategy: Get all diary entries, find first entry with matching template name
+        // This is not efficient but necessary without a direct API
+        auto allEntries = GetAllDiaryEntries(1000);
+        
+        for (const auto& entry : allEntries) {
+            // Get FormID for this entry's UUID
+            uint32_t formId = GetFormIDForUUID(entry.actor_uuid);
+            if (formId != 0) {
+                std::string entryTemplate = GetBioTemplateName(formId);
+                if (entryTemplate == templateName) {
+                    SKSE::log::info("Found UUID for template '{}': {}", templateName, entry.actor_uuid);
+                    return entry.actor_uuid;
+                }
             }
         }
 
-        sqlite3_finalize(stmt);
-
-        if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
-            SKSE::log::error("Error reading actors with new entries: {}", sqlite3_errmsg(db_));
-        }
-
-        return results;
+        SKSE::log::warn("No UUID found for template name: {}", templateName);
+        return "";
     }
 
-    RE::FormID Database::GetFormIDForUUID(const std::string& actorUUID) {
-        if (!is_open_) {
-            return 0;
+    // Query diary entries by UUID
+    std::vector<DiaryEntry> Database::GetDiaryEntries(const std::string& uuid, int limit, double startTime) {
+        uint32_t formId = GetFormIDForUUID(uuid);
+        if (formId == 0) {
+            SKSE::log::error("Cannot convert UUID {} to FormID", uuid);
+            return {};
         }
-
-        const char* sql = "SELECT form_id FROM uuid_mappings WHERE uuid = ? LIMIT 1";
-        sqlite3_stmt* stmt = nullptr;
-        int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
         
-        if (rc != SQLITE_OK) {
-            SKSE::log::error("Failed to prepare FormID query: {}", sqlite3_errmsg(db_));
-            return 0;
+        // Call FormID version (endTime = 0.0 means no end limit)
+        return GetDiaryEntries(formId, limit, startTime, 0.0);
+    }
+
+    // Get actors with new diary entries since a timestamp
+    std::unordered_map<std::string, std::string> Database::GetActorUUIDsWithNewEntries(double sinceTimestamp) {
+        std::unordered_map<std::string, std::string> actorsWithNewEntries;
+
+        if (!api_initialized_ && !InitializeAPI()) {
+            return actorsWithNewEntries;
         }
 
-        sqlite3_bind_text(stmt, 1, actorUUID.c_str(), -1, SQLITE_TRANSIENT);
-
-        RE::FormID formID = 0;
-        if (sqlite3_step(stmt) == SQLITE_ROW) {
-            formID = static_cast<RE::FormID>(sqlite3_column_int64(stmt, 0));
+        // Get all diary entries and filter by timestamp
+        auto allEntries = GetAllDiaryEntries(10000);
+        
+        for (const auto& entry : allEntries) {
+            // Check if entry is newer than timestamp
+            if (entry.entry_date > sinceTimestamp) {
+                // Add to map (UUID → actor name)
+                actorsWithNewEntries[entry.actor_uuid] = entry.actor_name;
+            }
         }
 
-        sqlite3_finalize(stmt);
-        return formID;
+        SKSE::log::info("Found {} actors with entries since timestamp {:.2f}", 
+                       actorsWithNewEntries.size(), sinceTimestamp);
+        
+        return actorsWithNewEntries;
+    }
+
+    // OPTIMIZED: Fetch all entries once and partition by actor
+    std::unordered_map<std::string, std::vector<DiaryEntry>> Database::GetAllDiaryEntriesGroupedByActor(double sinceTimestamp) {
+        std::unordered_map<std::string, std::vector<DiaryEntry>> entriesByActor;
+
+        if (!api_initialized_ && !InitializeAPI()) {
+            return entriesByActor;
+        }
+
+        // Fetch ALL diary entries from API in one call
+        auto allEntries = GetAllDiaryEntries(10000);
+        
+        // Partition entries by actor UUID locally (avoids N API calls)
+        for (const auto& entry : allEntries) {
+            if (entry.entry_date > sinceTimestamp) {
+                entriesByActor[entry.actor_uuid].push_back(entry);
+            }
+        }
+
+        SKSE::log::info("Grouped {} diary entries across {} actors (since timestamp {:.2f})", 
+                       allEntries.size(), entriesByActor.size(), sinceTimestamp);
+        
+        return entriesByActor;
     }
 
 } // namespace SkyrimNetDiaries

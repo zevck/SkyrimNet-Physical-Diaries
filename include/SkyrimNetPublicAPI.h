@@ -6,368 +6,78 @@
 /**
  * SkyrimNet Public API — loaded at runtime via LoadLibraryA + GetProcAddress.
  *
- * Drop this header into your SKSE plugin project. Call FindFunctions() once
- * during initialization (e.g., SKSE DataLoaded message). If it returns true,
- * the function pointers below are ready to use.
+ * LINKING REQUIREMENT: Several functions return std::string or accept
+ * std::string / std::function parameters.  This is safe ONLY when the
+ * consuming DLL is built with the same MSVC toolset version and CRT
+ * linkage (dynamic /MD) as SkyrimNet.  Mixing CRT versions will cause
+ * heap corruption on string destruction.
  *
- * Quick start:
- * @code
- *   void OnDataLoaded() {
- *       if (!FindFunctions()) {
- *           logger::warn("SkyrimNet not found");
- *           return;
- *       }
- *       logger::info("SkyrimNet API v{}", PublicGetVersion());
- *
- *       if (PublicIsMemorySystemReady && PublicIsMemorySystemReady()) {
- *           std::string memories = PublicGetMemoriesForActor(0x00000014, 10, "");
- *       }
- *   }
- * @endcode
- *
- * ABI requirement: Both DLLs must use the same MSVC version and CRT linkage
- * (dynamic /MD). All CommonLibSSE-NG SKSE plugins satisfy this.
- *
- * Thread safety: All data query functions (v3+) are thread-safe. Action
- * registration should be done during plugin initialization only.
+ * For cross-toolset safety, prefer the const char* overloads where available.
  */
 extern "C" {
 
-// =============================================================================
-// Core (v2+)
-// =============================================================================
-
-/**
- * Returns the runtime API version (currently 3).
- * Version history: 2 = action registration, 3 = data queries + UUID + config.
- */
-int (*PublicGetVersion)() = nullptr;
-
-/**
- * Register a custom action that NPCs can perform via the LLM action system.
- *
- * @param name                  Unique action identifier (e.g., "MyMod_DoThing").
- * @param description           Human-readable description for LLM context.
- * @param eligibleCallback      Called to test if an NPC can perform this action.
- *                              Receives the NPC's Actor*. Must be thread-safe.
- * @param executeCallback       Called when the NPC executes this action.
- *                              Receives Actor* and a JSON params string.
- *                              Return true on success.
- * @param triggeringEventTypesCSV  Comma-separated event types that trigger
- *                              eligibility checks (e.g., "combat_hit,dialogue").
- * @param categoryStr           Built-in category: "Combat", "Social", etc.
- *                              Use customCategory for mod-defined categories.
- * @param priority              Execution priority (higher = checked first). 50
- *                              is a reasonable default.
- * @param parameterSchemaJSON   JSON Schema describing parameters your action
- *                              accepts. The LLM uses this to generate params.
- *                              Pass "{}" if no parameters.
- * @param customCategory        Custom category name (empty to use categoryStr).
- * @param customParentCategory  Parent category for nesting (empty = top-level).
- * @param tagsCSV               Comma-separated tags for filtering.
- * @return true if registration succeeded.
- */
+// ---- v2+: Action registration ----
 bool (*PublicRegisterCPPAction)(const std::string name, const std::string description, std::function<bool(RE::Actor *)> eligibleCallback,
                                 std::function<bool(RE::Actor *, std::string json_params)> executeCallback,
                                 const std::string triggeringEventTypesCSV, std::string categoryStr, int priority,
                                 std::string parameterSchemaJSON, std::string customCategory, std::string customParentCategory,
                                 std::string tagsCSV) = nullptr;
-
-/**
- * Register an action subcategory for organizational grouping.
- *
- * Subcategories appear as folders in the action tree. They don't execute
- * on their own but provide structure for related actions.
- *
- * @param name                  Unique subcategory identifier.
- * @param description           Human-readable description.
- * @param eligibleCallback      Controls visibility — shown only when this
- *                              returns true for the current NPC.
- * @param triggeringEventTypesCSV  Comma-separated triggering event types.
- * @param priority              Display priority within the parent category.
- * @param parameterSchemaJSON   Reserved, pass "{}".
- * @param customCategory        Category name for this subcategory.
- * @param customParentCategory  Parent category (empty = top-level).
- * @param tagsCSV               Comma-separated tags.
- * @return true if registration succeeded.
- */
 bool (*PublicRegisterCPPSubCategory)(const std::string name, const std::string description,
                                      std::function<bool(RE::Actor *)> eligibleCallback, const std::string triggeringEventTypesCSV,
                                      int priority, std::string parameterSchemaJSON, std::string customCategory,
                                      std::string customParentCategory, std::string tagsCSV) = nullptr;
+int (*PublicGetVersion)() = nullptr;
 
-// =============================================================================
-// UUID Resolution (v3+)
-// =============================================================================
-
-/**
- * Convert a Skyrim FormID to SkyrimNet's internal UUID.
- * @param formId  Actor FormID (e.g., 0x00000014 for the player).
- * @return UUID, or 0 if the actor is unknown.
- */
+// ---- v3+: UUID Resolution ----
 uint64_t (*PublicFormIDToUUID)(uint32_t formId) = nullptr;
-
-/**
- * Convert a SkyrimNet UUID back to a Skyrim FormID.
- * @return FormID, or 0 if unknown.
- */
 uint32_t (*PublicUUIDToFormID)(uint64_t uuid) = nullptr;
-
-/**
- * Get an actor's display name from their UUID.
- * @return Actor name, or "" if unknown.
- */
 std::string (*PublicGetActorNameByUUID)(uint64_t uuid) = nullptr;
 
-// =============================================================================
-// Bio Template (v3+)
-// =============================================================================
-
-/**
- * Get the bio template name assigned to an actor.
- * @param formId  Actor FormID.
- * @return Template name, or "" if none assigned.
- */
+// ---- v3+: Bio template lookup ----
 std::string (*PublicGetBioTemplateName)(uint32_t formId) = nullptr;
 
-// =============================================================================
-// Data Queries (v3+)
-//
-// All functions in this section are thread-safe.
-// Functions returning arrays return "[]" on error.
-// Functions returning objects return a default JSON object on error.
-// =============================================================================
+// ---- v3+: Data API ----
 
-/**
- * Retrieve memories stored for an actor.
- *
- * @param formId       Actor FormID.
- * @param maxCount     Maximum memories to return (<=0 defaults to 50).
- * @param contextQuery If non-empty, performs semantic (vector) search ranked
- *                     by relevance. If empty, returns most recent first.
- *
- * @return JSON array of memory objects:
- * @code
- * [
- *   {
- *     "id": 42,
- *     "text": "I saw the Dragonborn defeat a dragon at Whiterun",
- *     "importance": 0.85,
- *     "timestamp": 1234.5,
- *     "type": "observation"
- *   }
- * ]
- * @endcode
- */
+/** Retrieve memories for an actor. contextQuery enables semantic search if non-empty. */
 std::string (*PublicGetMemoriesForActor)(uint32_t formId, int maxCount, const char* contextQuery) = nullptr;
 
-/**
- * Retrieve recent world events, optionally filtered.
- *
- * @param formId          Actor FormID (0 = all events, non-zero = events
- *                        involving this actor).
- * @param maxCount        Maximum events to return (<=0 defaults to 50).
- * @param eventTypeFilter Comma-separated event types to include
- *                        (e.g., "dialogue,direct_narration"). Empty = all.
- *
- * @return JSON array of event objects:
- * @code
- * [
- *   {
- *     "type": "dialogue",
- *     "text": "Hello, traveler!",
- *     "gameTime": 1234.5,
- *     "originatingActorName": "Lydia",
- *     "targetActorName": "Player"
- *   }
- * ]
- * @endcode
- */
+/** Retrieve recent events, optionally filtered by actor and event type. */
 std::string (*PublicGetRecentEvents)(uint32_t formId, int maxCount, const char* eventTypeFilter) = nullptr;
 
-/**
- * Retrieve recent dialogue between the player and an NPC.
- *
- * @param formId       NPC's FormID.
- * @param maxExchanges Maximum exchanges to return (<=0 defaults to 10).
- *
- * @return JSON array in chronological order (oldest first):
- * @code
- * [
- *   {
- *     "speaker": "Player",
- *     "text": "What do you think about the war?",
- *     "gameTime": 1234.5
- *   },
- *   {
- *     "speaker": "Lydia",
- *     "text": "I follow you, my Thane.",
- *     "gameTime": 1234.6
- *   }
- * ]
- * @endcode
- */
+/** Retrieve recent dialogue between the player and a specific NPC. */
 std::string (*PublicGetRecentDialogue)(uint32_t formId, int maxExchanges) = nullptr;
 
-/**
- * Get info about the most recent NPC who spoke to the player.
- *
- * @return JSON object:
- * @code
- * {
- *   "npcFormId": 655544,
- *   "gameTime": 1234.5,
- *   "npcName": "Lydia"
- * }
- * @endcode
- */
+/** Get the most recent NPC who spoke to the player. */
 std::string (*PublicGetLatestDialogueInfo)() = nullptr;
 
-/**
- * Check if the memory/database system is initialized and ready for queries.
- * @return true if the database is ready.
- */
+/** Check if the memory/database system is ready. */
 bool (*PublicIsMemorySystemReady)() = nullptr;
 
-/**
- * Get per-actor engagement statistics for scoring and prioritization.
- *
- * @param maxCount             Max actors to return (0 = all with any activity).
- * @param excludePlayer        Omit the player (FormID 0x14) from results.
- * @param playerEventsOnly     Only count events involving the player. NPC-to-NPC
- *                             events still tracked as npcToNpcEventCount.
- * @param shortWindowSeconds   Short recency window in game-seconds
- *                             (e.g., 86400 = 1 game-day).
- * @param mediumWindowSeconds  Medium recency window in game-seconds
- *                             (e.g., 604800 = 7 game-days).
- *
- * @return JSON array:
- * @code
- * [
- *   {
- *     "formId": 655544,
- *     "name": "Lydia",
- *     "memoryCount": 12,
- *     "totalMemoryImportance": 8.5,
- *     "recentMemoryImportanceShort": 2.1,
- *     "recentMemoryImportanceMedium": 5.3,
- *     "eventCount": 30,
- *     "recentEventCountShort": 5,
- *     "recentEventCountMedium": 18,
- *     "lastEventTime": 1234.5,
- *     "npcToNpcEventCount": 4
- *   }
- * ]
- * @endcode
- */
+/** Get per-actor engagement statistics (memory + event activity) for caller-side scoring. */
 std::string (*PublicGetActorEngagement)(int maxCount, bool excludePlayer, bool playerEventsOnly, double shortWindowSeconds, double mediumWindowSeconds) = nullptr;
 
-/**
- * Get actors related to a given actor via shared event history.
- *
- * @param formId               Anchor actor's FormID.
- * @param maxCount             Max related actors to return (0 = all).
- * @param shortWindowSeconds   Short recency window in game-seconds.
- * @param mediumWindowSeconds  Medium recency window in game-seconds.
- *
- * @return JSON array:
- * @code
- * [
- *   {
- *     "formId": 655545,
- *     "name": "Ulfric Stormcloak",
- *     "sharedEventCount": 15,
- *     "recentSharedEventsShort": 3,
- *     "recentSharedEventsMedium": 10,
- *     "lastSharedEventTime": 1234.5
- *   }
- * ]
- * @endcode
- */
+/** Get actors related to a given actor via shared event history. */
 std::string (*PublicGetRelatedActors)(uint32_t formId, int maxCount, double shortWindowSeconds, double mediumWindowSeconds) = nullptr;
 
-/**
- * Get comprehensive player context: current time, recent interactions,
- * and relationship data.
- *
- * @param withinGameHours  Time window in game-hours for recent interactions.
- *                         0 = all time.
- *
- * @return JSON object:
- * @code
- * {
- *   "currentTime": 1234.5,
- *   "recentInteractionNames": ["Lydia", "Farengar"],
- *   "relationships": [
- *     {
- *       "name": "Lydia",
- *       "formId": 655544,
- *       "interactionCount": 12
- *     }
- *   ]
- * }
- * @endcode
- */
+/** Get comprehensive player context: DB time, recent interactions, relationships. */
 std::string (*PublicGetPlayerContext)(float withinGameHours) = nullptr;
 
-/**
- * Get NPC-to-NPC event pair counts within a candidate pool.
- *
- * @param formIdListCSV   Comma-separated FormIDs defining the pool
- *                        (e.g., "655544,655545,655546").
- * @param minSharedEvents Minimum shared events to include a pair (0 = all).
- *
- * @return JSON array:
- * @code
- * [
- *   {
- *     "formId1": 655544,
- *     "formId2": 655545,
- *     "sharedEvents": 8
- *   }
- * ]
- * @endcode
- */
+/** Get NPC-to-NPC event pair counts within a candidate pool. */
 std::string (*PublicGetEventPairCounts)(const char* formIdListCSV, int minSharedEvents) = nullptr;
 
-// =============================================================================
-// Plugin Configuration (v3+)
-// =============================================================================
+// ---- v4+: Diary API ----
 
-/**
- * Get the full JSON configuration for a registered plugin.
- *
- * Plugins register YAML config files under "Plugin_<name>" in ConfigManager.
- *
- * @param pluginName  Plugin name (without "Plugin_" prefix).
- * @return JSON object of the config, or "{}" if not found.
- */
+/** Retrieve diary entries for an actor, optionally filtered by time range. */
+std::string (*PublicGetDiaryEntries)(uint32_t formId, int maxCount, double startTime, double endTime) = nullptr;
+
+// ---- Plugin Configuration API ----
+
+/** Get the full JSON config for a registered plugin. */
 std::string (*PublicGetPluginConfig)(const char* pluginName) = nullptr;
 
-/**
- * Get a single config value by dot-path from a plugin's settings.
- *
- * @param pluginName    Plugin name (without "Plugin_" prefix).
- * @param path          Dot-separated path (e.g., "feature.enabled").
- * @param defaultValue  Returned if the path doesn't exist.
- * @return The config value as a string, or defaultValue if not found.
- */
+/** Get a single string config value by dot-path from a plugin's settings. */
 std::string (*PublicGetPluginConfigValue)(const char* pluginName, const char* path, const char* defaultValue) = nullptr;
 
-// =============================================================================
-// Initialization
-// =============================================================================
-
-/**
- * Load SkyrimNet and resolve all exported function pointers.
- *
- * Call once during plugin initialization (e.g., SKSE DataLoaded message).
- * After this returns true, check individual function pointers before use —
- * functions from newer API versions may be nullptr if the installed
- * SkyrimNet is older.
- *
- * @return true if SkyrimNet.dll was loaded and at least PublicGetVersion resolved.
- */
 inline bool FindFunctions() {
     auto hDLL = LoadLibraryA("SkyrimNet");
     if (hDLL != nullptr) {
@@ -427,6 +137,12 @@ inline bool FindFunctions() {
                     GetProcAddress(hDLL, "PublicGetPluginConfig"));
                 PublicGetPluginConfigValue = reinterpret_cast<std::string(*)(const char*, const char*, const char*)>(
                     GetProcAddress(hDLL, "PublicGetPluginConfigValue"));
+            }
+
+            // v4+ functions
+            if (version >= 4) {
+                PublicGetDiaryEntries = reinterpret_cast<std::string(*)(uint32_t, int, double, double)>(
+                    GetProcAddress(hDLL, "PublicGetDiaryEntries"));
             }
         }
         return true;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PCH.h"
+#include <nlohmann/json.hpp>
 
 namespace SkyrimNetDiaries {
 
@@ -18,53 +19,57 @@ namespace SkyrimNetDiaries {
     class Database {
     public:
         Database() = default;
-        ~Database();
+        ~Database() = default;
 
-        bool Open(const std::string& dbPath, bool readOnly = true);
-        void Close();
-
-        // Query diary entries for a specific actor UUID
-        std::vector<DiaryEntry> GetDiaryEntries(const std::string& actorUUID, int limit = 100, double startTime = 0.0, double endTime = 0.0);
+        // Initialize the SkyrimNet API
+        static bool InitializeAPI();
         
-        // Get actor name from UUID
-        std::string GetActorName(const std::string& actorUUID);
-
-        // Get all diary entries (for testing)
-        std::vector<DiaryEntry> GetAllDiaryEntries(int limit = 10);
-
-        // Log contents of counters table
-        void LogCountersTable();
-
-        // Get the player's UUID from the database
-        std::string GetPlayerUUID();
-
-        // Get the player's name from the database
-        std::string GetPlayerName();
-
-        // Check if database contains a specific player UUID
-        bool HasPlayerUUID(const std::string& playerUuid);
-
-        // Get all unique actor UUIDs that have diary entries
-        std::vector<std::string> GetAllActorUUIDs();
+        // Check if SkyrimNet memory system is ready
+        static bool IsMemorySystemReady();
         
-        // Get UUID by bio_template_name
-        std::string GetUUIDByTemplateName(const std::string& templateName);
+        // Query diary entries for a specific actor FormID (using API)
+        static std::vector<DiaryEntry> GetDiaryEntries(uint32_t formId, int limit = 10000, double startTime = 0.0, double endTime = 0.0);
         
-        // Get bio_template_name by UUID
-        std::string GetTemplateNameByUUID(const std::string& actorUUID);
-
-        // Get actors with new diary entries since a given time
-        std::vector<std::pair<std::string, std::string>> GetActorUUIDsWithNewEntries(double sinceTime);
-
-        // Get FormID for an actor UUID
-        RE::FormID GetFormIDForUUID(const std::string& actorUUID);
+        // Query diary entries by UUID (converts UUID → FormID → API call)
+        static std::vector<DiaryEntry> GetDiaryEntries(const std::string& uuid, int limit = 10000, double startTime = 0.0);
         
-        // Enable WAL mode for concurrent access (call once per database)
-        bool EnableWALMode();
+        // Query ALL diary entries across all actors (using API with formId=0)
+        static std::vector<DiaryEntry> GetAllDiaryEntries(int limit = 10000);
+        
+        // Get bio template name for an actor FormID
+        static std::string GetBioTemplateName(uint32_t formId);
+        
+        // Get FormID from actor name (reverse lookup via engagement API)
+        static uint32_t GetFormIDByName(const std::string& actorName);
+        
+        // UUID ↔ FormID conversion (using PublicAPI)
+        static std::string GetUUIDFromFormID(uint32_t formId);
+        static uint32_t GetFormIDForUUID(const std::string& uuid);
+        
+        // Actor name lookup by UUID
+        static std::string GetActorName(const std::string& uuid);
+        
+        // Get bio template name by UUID (converts UUID → FormID → GetBioTemplateName)
+        static std::string GetTemplateNameByUUID(const std::string& uuid);
+        
+        // Get UUID by bio template name (searches all actors)
+        static std::string GetUUIDByTemplateName(const std::string& templateName);
+        
+        // Get actors with new diary entries since a timestamp
+        // Returns map of UUID → actor name
+        static std::unordered_map<std::string, std::string> GetActorUUIDsWithNewEntries(double sinceTimestamp);
+        
+        // OPTIMIZED: Get all diary entries grouped by actor UUID (fetches once, partitions locally)
+        // Returns map of UUID → vector of diary entries
+        // More efficient than calling GetDiaryEntries per actor when processing many actors
+        static std::unordered_map<std::string, std::vector<DiaryEntry>> GetAllDiaryEntriesGroupedByActor(double sinceTimestamp = 0.0);
 
     private:
-        sqlite3* db_ = nullptr;
-        bool is_open_ = false;
+        // Parse JSON response from PublicGetDiaryEntries into DiaryEntry structures
+        static std::vector<DiaryEntry> ParseDiaryJSON(const std::string& jsonResponse);
+        
+        // Track if API has been initialized
+        static inline bool api_initialized_ = false;
     };
 
 } // namespace SkyrimNetDiaries

@@ -10,7 +10,6 @@
 #include <unordered_map>
 
 // External declarations from main.cpp
-extern std::optional<std::filesystem::path> g_currentDatabasePath;
 extern std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>&, const std::string&, double, double, int maxEntries);
 extern bool WriteDynamicBookFile(const std::string& bookTitle, const std::string& text);
 
@@ -116,22 +115,18 @@ namespace SkyrimNetDiaries {
                     // Use pre-cached entries (avoids database reopening)
                     SKSE::log::info("Using {} pre-cached diary entries for {} (no DB access needed)", cachedEntries.size(), name);
                     allEntries = cachedEntries;
-                } else if (g_currentDatabasePath.has_value()) {
-                    // Fallback: fetch from database if entries weren't cached (rare)
+                } else {
+                    // Fallback: fetch from API if entries weren't cached (rare)
                     try {
-                        SkyrimNetDiaries::Database db;
-                        if (db.Open(g_currentDatabasePath->string(), false)) {  // Read-write for WAL mode
-                            allEntries = db.GetDiaryEntries(uuid, 5000, start, end);
-                            SKSE::log::info("Retrieved {} diary entries from DB for {} (UUID: {}, startTime: {}, endTime: {})", 
-                                          allEntries.size(), name, uuid, start, end);
-                            db.Close();
-                        }
+                        allEntries = SkyrimNetDiaries::Database::GetDiaryEntries(uuid, 5000, start);
+                        SKSE::log::info("Retrieved {} diary entries from API for {} (UUID: {}, startTime: {})", 
+                                      allEntries.size(), name, uuid, start);
                     } catch (const std::exception& e) {
-                        SKSE::log::error("Database error fetching entries for {}: {}", name, e.what());
+                        SKSE::log::error("API error fetching entries for {}: {}", name, e.what());
                     }
                 }
                 
-                // Process entries (works for both cached and DB-fetched)
+                // Process entries (works for both cached and API-fetched)
                 if (!allEntries.empty()) {
                     // Limit to configured max entries per book
                             const int MAX_ENTRIES_PER_BOOK = SkyrimNetDiaries::Config::GetSingleton()->GetEntriesPerVolume();
@@ -599,13 +594,8 @@ namespace SkyrimNetDiaries {
         auto booksPath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "DynamicBookFramework" / "Books";
         
         try {
-            // Create subfolder based on database filename to separate saves
-            std::string saveFolder = "Default";
-            if (g_currentDatabasePath.has_value()) {
-                // Extract filename without extension (e.g., "skyrimnet_PlayerName_20250205.db" -> "skyrimnet_PlayerName_20250205")
-                saveFolder = g_currentDatabasePath->stem().string();
-                SKSE::log::info("Using save-specific subfolder: {}", saveFolder);
-            }
+            // Use fixed folder name for SkyrimNet diaries
+            std::string saveFolder = "SkyrimNet";
             
             auto saveBooksPath = booksPath / saveFolder;
             std::filesystem::create_directories(saveBooksPath);
@@ -770,27 +760,16 @@ namespace SkyrimNetDiaries {
     }
 
     void BookManager::RegenerateAllDiaryTexts() {
-        if (!g_currentDatabasePath.has_value()) {
-            SKSE::log::warn("[BookManager] Cannot regenerate diary texts - no database path");
-            return;
-        }
-
-        SKSE::log::info("[BookManager] Regenerating text for {} actors' diaries from database", books_.size());
+        SKSE::log::info("[BookManager] Regenerating text for {} actors' diaries from API", books_.size());
 
         try {
-            SkyrimNetDiaries::Database db;
-            if (!db.Open(g_currentDatabasePath->string(), true)) {  // Read-only
-                SKSE::log::error("[BookManager] Failed to open database for text regeneration");
-                return;
-            }
-
             auto calendar = RE::Calendar::GetSingleton();
             double currentGameTime = calendar ? calendar->GetCurrentGameTime() * 86400.0 : 999999999.0;
 
             int totalRegenerated = 0;
             for (const auto& [uuid, volumes] : books_) {
-                // Get all entries for this actor
-                auto allEntries = db.GetDiaryEntries(uuid, 10000, 0.0);
+                // Get all entries for this actor via API
+                auto allEntries = SkyrimNetDiaries::Database::GetDiaryEntries(uuid, 10000, 0.0);
 
                 for (const auto& bookData : volumes) {
                     const int MAX_ENTRIES_PER_VOLUME = SkyrimNetDiaries::Config::GetSingleton()->GetEntriesPerVolume();
@@ -828,8 +807,7 @@ namespace SkyrimNetDiaries {
                 }
             }
 
-            db.Close();
-            SKSE::log::info("[BookManager] Regenerated {} diary volumes from database", totalRegenerated);
+            SKSE::log::info("[BookManager] Regenerated {} diary volumes from API", totalRegenerated);
 
         } catch (const std::exception& e) {
             SKSE::log::error("[BookManager] Exception regenerating diary texts: {}", e.what());

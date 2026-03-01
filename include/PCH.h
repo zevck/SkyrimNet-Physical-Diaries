@@ -5,8 +5,6 @@
 
 #include <spdlog/spdlog.h>
 
-#include <sqlite3.h>
-
 #define DLLEXPORT __declspec(dllexport)
 
 using namespace std::literals;
