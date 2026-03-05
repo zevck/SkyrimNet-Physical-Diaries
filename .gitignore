@@ -897,3 +897,6 @@ build/x64/Release/INSTALL/INSTALL.tlog/CustomBuild.read.1.tlog
 build/x64/Release/INSTALL/INSTALL.tlog/CustomBuild.write.1.tlog
 build/x64/Release/INSTALL/INSTALL.tlog/INSTALL.lastbuildstate
 build/x64/Release/INSTALL/INSTALL.tlog/unsuccessfulbuild
+/build/.resources
+/build
+/vcpkg_installed

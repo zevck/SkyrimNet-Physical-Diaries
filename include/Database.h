@@ -27,8 +27,14 @@ namespace SkyrimNetDiaries {
         // Check if SkyrimNet memory system is ready
         static bool IsMemorySystemReady();
         
-        // Query diary entries for a specific actor FormID (using API)
-        static std::vector<DiaryEntry> GetDiaryEntries(uint32_t formId, int limit = 10000, double startTime = 0.0, double endTime = 0.0);
+        // Query diary entries for a specific actor FormID (using API).
+        // prevVolumeLastCreationTime: when > 0, entries with creation_time <= this value are excluded
+        // (prevents the last entry of the previous volume from appearing in this volume when they
+        // share the same entry_date at the boundary).
+        static std::vector<DiaryEntry> GetDiaryEntries(uint32_t formId, int limit = 10000,
+                                                        double startTime = 0.0, double endTime = 0.0,
+                                                        double prevVolumeLastCreationTime = 0.0,
+                                                        int prevVolumeCountAtBoundary = 0);
         
         // Query ALL diary entries across all actors (using API with formId=0, used by discovery scan)
         static std::vector<DiaryEntry> GetAllDiaryEntries(int limit = 10000);

@@ -181,7 +181,7 @@ namespace
     // Cache the current save's folder name (e.g., "SkyrimNet-1772379483115-796523")
     std::string g_currentSaveFolder;
 
-    constexpr std::uint32_t kSerializationVersion = 1;
+    constexpr std::uint32_t kSerializationVersion = 3;
     constexpr std::uint32_t kSerializationTypeBooks = 'SNDB'; // SkyrimNet Diary Books
     constexpr std::uint32_t kSerializationTypeCache = 'SNDC'; // SkyrimNet Diary Cache (UUID mappings)
     constexpr std::uint32_t kSerializationTypeFolder = 'SNDF'; // SkyrimNet Diary Folder (save-specific database name)
@@ -630,6 +630,8 @@ namespace {
                     // ---------------------------------------------------------------
                     SKSE::log::debug("[SNPD] SLOW PATH: '{}' vol={} startTime={:.2f} endTime={:.2f}",
                                     bookName, volumeInfo->volumeNumber, volumeInfo->startTime, volumeInfo->endTime);
+                    SKSE::log::info("[SNPD-DIAG] SLOW PATH '{}': startTime={:.6f} endTime={:.6f} prevVolCT={:.6f}",
+                                    bookName, volumeInfo->startTime, volumeInfo->endTime, volumeInfo->prevVolumeLastCreationTime);
 
                     // Lazy-cache actor FormID — look it up at most once per session.
                     if (volumeInfo->cachedActorFormId == 0) {
@@ -652,10 +654,22 @@ namespace {
                     double queryEnd = volumeInfo->endTime; // 0.0 = no upper bound for latest volume
 
                     auto liveEntries = SkyrimNetDiaries::Database::GetDiaryEntries(
-                        actorFormId, MAX_ENTRIES + 1, queryStart, queryEnd);
+                        actorFormId, MAX_ENTRIES + 1, queryStart, queryEnd, volumeInfo->prevVolumeLastCreationTime,
+                        volumeInfo->prevVolumeCountAtBoundary);
                     int liveCount = static_cast<int>(liveEntries.size());
 
                     SKSE::log::debug("[SNPD] API returned {} entries (was {}) for '{}'", liveCount, volumeInfo->lastKnownEntryCount, bookName);
+
+                    // For sealed volumes, deterministically cap to MAX_ENTRIES before formatting.
+                    // If two consecutive entries share a timestamp at the volume boundary, the
+                    // +1 sentinel may return MAX_ENTRIES+1 results; std::sort is not stable for
+                    // equal keys, so without this cap, which entry is shown is non-deterministic.
+                    if (volumeInfo->endTime > 0.0 && static_cast<int>(liveEntries.size()) > MAX_ENTRIES) {
+                        SKSE::log::info("[SNPD-DIAG] SLOW PATH resize: {} -> {} entries for '{}'",
+                                        liveEntries.size(), MAX_ENTRIES, bookName);
+                        liveEntries.resize(MAX_ENTRIES);
+                        liveCount = MAX_ENTRIES;
+                    }
 
                     // Always format fresh from the API result — never trust the on-disk file.
                     std::string bookText = FormatDiaryEntries(
@@ -702,10 +716,11 @@ void CreateAllVolumesForActor(
 {
     if (allEntries.empty()) return;
 
-    // Sort oldest → newest so volume 1 always has the earliest entries
+    // Sort oldest-first by (entry_date, creation_time).
     std::sort(allEntries.begin(), allEntries.end(),
         [](const SkyrimNetDiaries::DiaryEntry& a, const SkyrimNetDiaries::DiaryEntry& b) {
-            return a.entry_date < b.entry_date;
+            if (a.entry_date != b.entry_date) return a.entry_date < b.entry_date;
+            return a.creation_time < b.creation_time;
         });
 
     const int chunkSize = SkyrimNetDiaries::Config::GetSingleton()->GetEntriesPerVolume();
@@ -714,16 +729,37 @@ void CreateAllVolumesForActor(
 
     for (size_t offset = 0; offset < allEntries.size(); offset += chunkSize, ++volumeNumber) {
         size_t end = std::min(offset + static_cast<size_t>(chunkSize), allEntries.size());
-        std::vector<SkyrimNetDiaries::DiaryEntry> chunk(allEntries.begin() + offset, allEntries.begin() + end);
+        std::vector<SkyrimNetDiaries::DiaryEntry> chunk(allEntries.begin() + offset,
+                                                        allEntries.begin() + end);
 
+        // The creation_time of the last entry in the previous chunk is used by GetDiaryEntries
+        // to exclude it from this volume when both volumes share the same entry_date boundary.
+        double prevChunkLastCreationTime = (offset == 0) ? 0.0 : allEntries[offset - 1].creation_time;
+
+        // Count how many entries in the previous chunk share the boundary date with this chunk's
+        // first entry.  Those entries would be returned by the API query for this volume (because
+        // their entry_date >= this volume's startTime) but must be excluded.  Storing the exact
+        // count prevents over-removal when two entries are truly identical (same entry_date AND
+        // creation_time), which is the root cause of the "entry #10 missing" bug.
+        int prevChunkCountAtBoundary = 0;
+        if (offset > 0) {
+            double boundaryDate = chunk.front().entry_date;
+            for (int i = static_cast<int>(offset) - 1; i >= 0 && allEntries[i].entry_date == boundaryDate; --i) {
+                ++prevChunkCountAtBoundary;
+            }
+        }
+
+        // volume 1 uses 0.0 (no lower bound); later volumes start at their first entry's date,
+        // which under normal circumstances is strictly greater than the previous chunk's last date.
         double volStart = (volumeNumber == 1) ? 0.0 : chunk.front().entry_date;
         double volEnd   = chunk.back().entry_date;
 
-        SKSE::log::info("Creating volume {} for {} ({} entries, {:.2f}–{:.2f})",
+        SKSE::log::info("Creating volume {} for {} ({} entries, {:.2f}\u2013{:.2f})",
                        volumeNumber, actorName, chunk.size(), volStart, volEnd);
 
         bookManager->CreateDiaryBook(uuid, actorName, volStart, volEnd,
-                                     volumeNumber, formId, chunk, bioTemplateName);
+                                     volumeNumber, formId, chunk, bioTemplateName,
+                                     prevChunkLastCreationTime, prevChunkCountAtBoundary);
     }
 }
 
@@ -849,18 +885,19 @@ void UpdateDiaryForActorInternal(RE::FormID formId) {
         const int MAX_ENTRIES = SkyrimNetDiaries::Config::GetSingleton()->GetEntriesPerVolume();
         auto currentVolumeEntries = SkyrimNetDiaries::Database::GetDiaryEntries(
             formId, MAX_ENTRIES + 1, latestVolume->startTime, 0.0);
-        
+
         if (static_cast<int>(currentVolumeEntries.size()) >= MAX_ENTRIES) {
             // Volume is full — seal it with exactly MAX_ENTRIES entries, writing the final text,
             // then route everything strictly after the cut timestamp into new overflow volumes.
 
-            // Sort oldest → newest so we take the chronologically first MAX_ENTRIES.
+            // Sort oldest → newest before sealing.
             std::sort(currentVolumeEntries.begin(), currentVolumeEntries.end(),
                 [](const SkyrimNetDiaries::DiaryEntry& a, const SkyrimNetDiaries::DiaryEntry& b) {
-                    return a.entry_date < b.entry_date;
+                    if (a.entry_date != b.entry_date) return a.entry_date < b.entry_date;
+                    return a.creation_time < b.creation_time;
                 });
 
-            // Finalized slice: the first MAX_ENTRIES entries belonging to this volume.
+            // Finalized slice: exactly the first MAX_ENTRIES entries.
             std::vector<SkyrimNetDiaries::DiaryEntry> finalizedEntries(
                 currentVolumeEntries.begin(),
                 currentVolumeEntries.begin() + MAX_ENTRIES);
@@ -877,8 +914,12 @@ void UpdateDiaryForActorInternal(RE::FormID formId) {
             bookManager->UpdateBookEndTime(uuid, latestVolume->volumeNumber, cutTime);
             bookManager->UpdateVolumeEntryCount(uuid, latestVolume->volumeNumber, MAX_ENTRIES);
 
-            // Overflow: every entry from newEntries that falls strictly after the cut.
+            // Overflow: entries in currentVolumeEntries beyond MAX_ENTRIES (same-date stragglers
+            // at the boundary) plus any new entries strictly after cutTime.
             std::vector<SkyrimNetDiaries::DiaryEntry> overflowEntries;
+            for (size_t oi = static_cast<size_t>(MAX_ENTRIES); oi < currentVolumeEntries.size(); ++oi) {
+                overflowEntries.push_back(currentVolumeEntries[oi]);
+            }
             for (auto& e : newEntries) {
                 if (e.entry_date > cutTime) {
                     overflowEntries.push_back(std::move(e));
@@ -900,10 +941,11 @@ void UpdateDiaryForActorInternal(RE::FormID formId) {
                 bookName += ", v" + std::to_string(latestVolume->volumeNumber);
             }
             
-            // Sort current volume entries oldest-first before formatting
+            // Sort current volume entries oldest-first before formatting.
             std::sort(currentVolumeEntries.begin(), currentVolumeEntries.end(),
                 [](const SkyrimNetDiaries::DiaryEntry& a, const SkyrimNetDiaries::DiaryEntry& b) {
-                    return a.entry_date < b.entry_date;
+                    if (a.entry_date != b.entry_date) return a.entry_date < b.entry_date;
+                    return a.creation_time < b.creation_time;
                 });
             
             double newEndTime = currentVolumeEntries.back().entry_date;
@@ -1438,13 +1480,13 @@ namespace {
         std::uint32_t length;
 
         while (a_intfc->GetNextRecordInfo(type, version, length)) {
-            if (version != kSerializationVersion) {
-                SKSE::log::error("Serialization version mismatch for type {}: expected {}, got {}", type, kSerializationVersion, version);
+            if (version > kSerializationVersion) {
+                SKSE::log::error("Serialization version too new for type {}: expected <={}, got {}", type, kSerializationVersion, version);
                 continue;
             }
 
             if (type == kSerializationTypeBooks) {
-                SkyrimNetDiaries::BookManager::GetSingleton()->Load(a_intfc);
+                SkyrimNetDiaries::BookManager::GetSingleton()->Load(a_intfc, version);
             }
             else if (type == kSerializationTypeCache) {
                 // Load UUID cache
@@ -1650,32 +1692,13 @@ namespace {
         spdlog::set_default_logger(std::move(log));
         spdlog::set_pattern("[%H:%M:%S] [%l] %v"s);
 
-        SKSE::log::info("SkyrimNetPhysicalDiaries v{}", "1.0.0");
+        const auto* plugin = SKSE::PluginDeclaration::GetSingleton();
+        SKSE::log::info("{} v{}", plugin->GetName(), plugin->GetVersion());
     }
 }
 
-extern "C" DLLEXPORT constinit auto SKSEPlugin_Version = []() {
-    SKSE::PluginVersionData v{};
-    v.PluginVersion({ 1, 0, 0, 0 });
-    v.PluginName("SkyrimNetPhysicalDiaries");
-    v.AuthorName("SkyrimModder");
-    v.UsesAddressLibrary(true);
-    v.HasNoStructUse(true);
-    return v;
-}();
-
-extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Query(const SKSE::QueryInterface* a_skse, SKSE::PluginInfo* a_info)
-{
-    a_info->infoVersion = SKSE::PluginInfo::kVersion;
-    a_info->name = "SkyrimNetPhysicalDiaries";
-    a_info->version = 1;
-
-    if (a_skse->IsEditor()) {
-        return false;
-    }
-
-    return true;
-}
+// SKSEPlugin_Version and SKSEPlugin_Query are auto-generated by add_commonlibsse_plugin
+// in CMakeLists.txt via cmake/CommonLibSSE.cmake — do NOT declare them manually here.
 
 extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_skse)
 {

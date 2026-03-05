@@ -23,9 +23,11 @@ namespace SkyrimNetDiaries {
     class DPFCreateCallback : public RE::BSScript::IStackCallbackFunctor {
     public:
         DPFCreateCallback(std::string uuid, std::string actorName, double startTime, double endTime, int volumeNum, RE::FormID targetFormID,
-                       std::vector<SkyrimNetDiaries::DiaryEntry> cachedEntries = {}, std::string bioTemplate = "", std::string journalTemplate = "") 
+                       std::vector<SkyrimNetDiaries::DiaryEntry> cachedEntries = {}, std::string bioTemplate = "", std::string journalTemplate = "",
+                       double prevVolLastCreationTime = 0.0, int prevVolCountAtBoundary = 0) 
             : actorUuid(uuid), actorName(actorName), startTime(startTime), endTime(endTime), volumeNumber(volumeNum), targetActorFormID(targetFormID),
-              diaryEntries(std::move(cachedEntries)), bioTemplateName(std::move(bioTemplate)), journalTemplateName(std::move(journalTemplate)) {}
+              diaryEntries(std::move(cachedEntries)), bioTemplateName(std::move(bioTemplate)), journalTemplateName(std::move(journalTemplate)),
+              prevVolumeLastCreationTime(prevVolLastCreationTime), prevVolumeCountAtBoundary(prevVolCountAtBoundary) {}
         
         virtual void operator()(RE::BSScript::Variable a_result) override {
             SKSE::log::info("DPF.Create() callback invoked for {}", actorName);
@@ -54,9 +56,11 @@ namespace SkyrimNetDiaries {
             std::string bioTemplate = bioTemplateName;
             std::string journalTemplate = journalTemplateName;
             auto cachedEntries = diaryEntries;  // Copy diary entries for lambda capture
+            double prevVolLastCT = prevVolumeLastCreationTime;
+            int prevVolCountAtBoundary = prevVolumeCountAtBoundary;
             
             // Configure the book on the game thread
-            SKSE::GetTaskInterface()->AddTask([newBook, uuid, name, start, end, volume, targetFormID, cachedEntries, bioTemplate, journalTemplate]() {
+            SKSE::GetTaskInterface()->AddTask([newBook, uuid, name, start, end, volume, targetFormID, cachedEntries, bioTemplate, journalTemplate, prevVolLastCT, prevVolCountAtBoundary]() {
                 auto bookManager = BookManager::GetSingleton();
                 
                 // Validate the book form before proceeding
@@ -120,7 +124,7 @@ namespace SkyrimNetDiaries {
                     try {
                         uint32_t actorFormId = SkyrimNetDiaries::Database::GetFormIDForUUID(uuid);
                         if (actorFormId != 0) {
-                            allEntries = SkyrimNetDiaries::Database::GetDiaryEntries(actorFormId, 5000, start, 0.0);
+                            allEntries = SkyrimNetDiaries::Database::GetDiaryEntries(actorFormId, 5000, start, 0.0, prevVolLastCT, prevVolCountAtBoundary);
                         }
                         SKSE::log::info("Retrieved {} diary entries from API for {} (UUID: {}, startTime: {})", 
                                       allEntries.size(), name, uuid, start);
@@ -157,7 +161,7 @@ namespace SkyrimNetDiaries {
                             }
                             
                             // Register book with the calculated endTime using FormID
-                            bookManager->RegisterBook(uuid, name, newBook->GetFormID(), start, volumeEndTime, volume, journalTemplate, bioTemplate);
+                            bookManager->RegisterBook(uuid, name, newBook->GetFormID(), start, volumeEndTime, volume, journalTemplate, bioTemplate, prevVolLastCT, prevVolCountAtBoundary);
                             
                             // If there are more than max entries, log that additional volumes should be created
                             if (allEntries.size() > MAX_ENTRIES_PER_BOOK) {
@@ -335,6 +339,8 @@ namespace SkyrimNetDiaries {
         std::vector<SkyrimNetDiaries::DiaryEntry> diaryEntries;  // Cached diary entries to avoid DB reopening
         std::string bioTemplateName;  // For ESL actor lookup
         std::string journalTemplateName;  // Which journal template to use for this actor
+        double prevVolumeLastCreationTime = 0.0;  // creation_time of last entry in previous volume (boundary de-dup)
+        int prevVolumeCountAtBoundary = 0;           // how many prev-vol entries share the boundary date/CT
     };
 
     BookManager* BookManager::GetSingleton() {
@@ -422,7 +428,8 @@ namespace SkyrimNetDiaries {
 
     RE::TESObjectBOOK* BookManager::CreateDiaryBook(const std::string& actorUuid, const std::string& actorName,
                                                      double startTime, double endTime, int volumeNumber, RE::FormID targetActorFormID,
-                                                     const std::vector<DiaryEntry>& entries, const std::string& bioTemplateName) {
+                                                     const std::vector<DiaryEntry>& entries, const std::string& bioTemplateName,
+                                                     double prevVolumeLastCreationTime, int prevVolumeCountAtBoundary) {
         // Select appropriate journal template for this actor
         std::string templateToUse = SelectJournalTemplate(actorUuid, actorName);
         
@@ -472,7 +479,7 @@ namespace SkyrimNetDiaries {
         
         // Create callback that will handle the created book asynchronously
         auto callback = RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor>(
-            new DPFCreateCallback(actorUuid, actorName, startTime, endTime, volumeNumber, targetActorFormID, entries, bioTemplateName, templateToUse)
+            new DPFCreateCallback(actorUuid, actorName, startTime, endTime, volumeNumber, targetActorFormID, entries, bioTemplateName, templateToUse, prevVolumeLastCreationTime, prevVolumeCountAtBoundary)
         );
         
         RE::TESForm* templatePtr = templateBook;
@@ -685,7 +692,9 @@ namespace SkyrimNetDiaries {
     void BookManager::RegisterBook(const std::string& actorUuid, const std::string& actorName,
                                    RE::FormID bookFormId, double startTime, double endTime, int volumeNumber,
                                    const std::string& journalTemplate,
-                                   const std::string& bioTemplateName) {
+                                   const std::string& bioTemplateName,
+                                   double prevVolumeLastCreationTime,
+                                   int prevVolumeCountAtBoundary) {
         DiaryBookData data;
         data.actorUuid = actorUuid;
         data.actorName = actorName;
@@ -695,6 +704,8 @@ namespace SkyrimNetDiaries {
         data.volumeNumber = volumeNumber;
         data.journalTemplate = journalTemplate;
         data.bioTemplateName = bioTemplateName;
+        data.prevVolumeLastCreationTime = prevVolumeLastCreationTime;
+        data.prevVolumeCountAtBoundary = prevVolumeCountAtBoundary;
 
         books_[actorUuid].push_back(data);
         SKSE::log::info("Registered book for actor {}: FormID 0x{:X}, Volume {} (template: {}, subfolder: {})",
@@ -807,12 +818,20 @@ namespace SkyrimNetDiaries {
 
                     auto volumeEntries = SkyrimNetDiaries::Database::GetDiaryEntries(
                         actorFormId, MAX_ENTRIES_PER_VOLUME + 1,
-                        queryStart, queryEnd);
+                        queryStart, queryEnd, bookData.prevVolumeLastCreationTime,
+                        bookData.prevVolumeCountAtBoundary);
 
                     SKSE::log::info("[Regen] '{}' API returned {} entries; first={:.2f} last={:.2f}",
                                     bookTitle, volumeEntries.size(),
                                     volumeEntries.empty() ? 0.0 : volumeEntries.front().entry_date,
                                     volumeEntries.empty() ? 0.0 : volumeEntries.back().entry_date);
+
+                    // Same deterministic cap as the slow path — sealed volumes must never
+                    // show more than MAX_ENTRIES_PER_VOLUME entries.
+                    if (bookData.endTime > 0.0 &&
+                        static_cast<int>(volumeEntries.size()) > MAX_ENTRIES_PER_VOLUME) {
+                        volumeEntries.resize(MAX_ENTRIES_PER_VOLUME);
+                    }
 
                     std::string bookText = FormatDiaryEntries(volumeEntries, bookData.actorName,
                                                               bookData.startTime, bookData.endTime,
@@ -928,6 +947,17 @@ namespace SkyrimNetDiaries {
                         continue;
                     }
                 }
+
+                // Write prevVolumeLastCreationTime (v2: used to exclude boundary entries from previous volume)
+                if (!a_intfc->WriteRecordData(&data.prevVolumeLastCreationTime, sizeof(data.prevVolumeLastCreationTime))) {
+                    SKSE::log::error("Failed to write prevVolumeLastCreationTime");
+                    continue;
+                }
+                // Write prevVolumeCountAtBoundary (v3: exact count of prev-vol entries at boundary)
+                if (!a_intfc->WriteRecordData(&data.prevVolumeCountAtBoundary, sizeof(data.prevVolumeCountAtBoundary))) {
+                    SKSE::log::error("Failed to write prevVolumeCountAtBoundary");
+                    continue;
+                }
             }
         }
         
@@ -965,7 +995,7 @@ namespace SkyrimNetDiaries {
         SKSE::log::info("Saved {} diary volumes and {} actor template mappings", totalVolumes, actorTemplates_.size());
     }
 
-    void BookManager::Load(SKSE::SerializationInterface* a_intfc) {
+    void BookManager::Load(SKSE::SerializationInterface* a_intfc, std::uint32_t version) {
         // DPF persists the book forms, we just need to restore our tracking data
         std::uint32_t totalVolumes;
         if (!a_intfc->ReadRecordData(&totalVolumes, sizeof(totalVolumes))) {
@@ -1040,9 +1070,16 @@ namespace SkyrimNetDiaries {
                     dummyBio.resize(dummyBioLen);
                     a_intfc->ReadRecordData(dummyBio.data(), dummyBioLen);
                 }
-                // Read actor FormID (may not exist in older saves)
-                RE::FormID dummyActorFormId = 0;
-                a_intfc->ReadRecordData(&dummyActorFormId, sizeof(dummyActorFormId));
+                // Read prevVolumeLastCreationTime (version 2+)
+                if (version >= 2) {
+                    double dummyPrevLastCT = 0.0;
+                    a_intfc->ReadRecordData(&dummyPrevLastCT, sizeof(dummyPrevLastCT));
+                }
+                // Read prevVolumeCountAtBoundary (version 3+)
+                if (version >= 3) {
+                    int dummyCountAtBoundary = 0;
+                    a_intfc->ReadRecordData(&dummyCountAtBoundary, sizeof(dummyCountAtBoundary));
+                }
                 continue;
             }
             
@@ -1073,9 +1110,16 @@ namespace SkyrimNetDiaries {
                     dummyBio.resize(dummyBioLen);
                     a_intfc->ReadRecordData(dummyBio.data(), dummyBioLen);
                 }
-                // Read actor FormID (may not exist in older saves)
-                RE::FormID dummyActorFormId2 = 0;
-                a_intfc->ReadRecordData(&dummyActorFormId2, sizeof(dummyActorFormId2));
+                // Read prevVolumeLastCreationTime (version 2+)
+                if (version >= 2) {
+                    double dummyPrevLastCT2 = 0.0;
+                    a_intfc->ReadRecordData(&dummyPrevLastCT2, sizeof(dummyPrevLastCT2));
+                }
+                // Read prevVolumeCountAtBoundary (version 3+)
+                if (version >= 3) {
+                    int dummyCountAtBoundary2 = 0;
+                    a_intfc->ReadRecordData(&dummyCountAtBoundary2, sizeof(dummyCountAtBoundary2));
+                }
                 continue;
             }
 
@@ -1128,6 +1172,21 @@ namespace SkyrimNetDiaries {
                 }
             }
 
+            // Read prevVolumeLastCreationTime (version 2+: boundary de-dup for same-date entries).
+            double prevVolLastCT = 0.0;
+            if (version >= 2) {
+                if (!a_intfc->ReadRecordData(&prevVolLastCT, sizeof(prevVolLastCT))) {
+                    SKSE::log::debug("prevVolumeLastCreationTime not found in save - defaulting to 0.0");
+                }
+            }
+            // Read prevVolumeCountAtBoundary (version 3+: exact removal count at boundary).
+            int prevVolCountAtBoundary = 0;
+            if (version >= 3) {
+                if (!a_intfc->ReadRecordData(&prevVolCountAtBoundary, sizeof(prevVolCountAtBoundary))) {
+                    SKSE::log::debug("prevVolumeCountAtBoundary not found in save - defaulting to 0");
+                }
+            }
+
             // Migrate old cosaves: volume 1 should always use startTime=0.0 so the
             // oldest diary entry is never excluded by an exclusive API lower bound.
             if (volumeNumber == 1 && startTime > 0.0) {
@@ -1146,6 +1205,8 @@ namespace SkyrimNetDiaries {
             data.journalTemplate = journalTemplate;
             data.bioTemplateName = bioTemplateName;
             data.lastKnownEntryCount = entryCount;
+            data.prevVolumeLastCreationTime = prevVolLastCT;
+            data.prevVolumeCountAtBoundary = prevVolCountAtBoundary;
             
             // Add to vector for this UUID
             books_[uuid].push_back(data);

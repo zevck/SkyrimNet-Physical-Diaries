@@ -119,7 +119,7 @@ namespace SkyrimNetDiaries {
         return entries;
     }
 
-    std::vector<DiaryEntry> Database::GetDiaryEntries(uint32_t formId, int limit, double startTime, double endTime) {
+    std::vector<DiaryEntry> Database::GetDiaryEntries(uint32_t formId, int limit, double startTime, double endTime, double prevVolumeLastCreationTime, int prevVolumeCountAtBoundary) {
         if (!api_initialized_ && !InitializeAPI()) {
             SKSE::log::error("API not initialized - cannot get diary entries");
             return {};
@@ -137,9 +137,65 @@ namespace SkyrimNetDiaries {
         
         auto entries = ParseDiaryJSON(jsonResponse);
 
-        // Ensure oldest-first order regardless of what the API returns.
+        // Sort oldest-first by (entry_date, creation_time).
+        // creation_time (real-world DB write timestamp) breaks ties for entries that share
+        // the same in-game date, matching the volume-splitting order in CreateAllVolumesForActor.
         std::sort(entries.begin(), entries.end(),
-                  [](const DiaryEntry& a, const DiaryEntry& b) { return a.entry_date < b.entry_date; });
+                  [](const DiaryEntry& a, const DiaryEntry& b) {
+                      if (a.entry_date != b.entry_date) return a.entry_date < b.entry_date;
+                      return a.creation_time < b.creation_time;
+                  });
+
+        // Diagnostic: dump all entries after sort so boundary problems are visible in the log.
+        SKSE::log::info("[SNPD-DIAG] GetDiaryEntries params: limit={} startTime={:.6f} endTime={:.6f} prevVolCT={:.6f} prevVolCount={}",
+                        limit, startTime, endTime, prevVolumeLastCreationTime, prevVolumeCountAtBoundary);
+        for (size_t i = 0; i < entries.size(); ++i) {
+            SKSE::log::info("[SNPD-DIAG]   [{}] entry_date={:.6f} creation_time={:.6f}",
+                            i, entries[i].entry_date, entries[i].creation_time);
+        }
+
+        // Exclude entries belonging to the previous volume.  When two consecutive volumes share
+        // the same entry_date at their boundary, the previous volume's last entry(ies) would
+        // otherwise pass the startTime filter and appear in this volume too.
+        // We remove exactly prevVolumeCountAtBoundary entries that satisfy the boundary condition
+        // (entry_date <= startTime AND creation_time <= prevVolumeLastCreationTime), processing
+        // them in sorted order so we never over-remove when two entries are truly identical.
+        if (prevVolumeLastCreationTime > 0.0 && prevVolumeCountAtBoundary > 0) {
+            int toRemove = prevVolumeCountAtBoundary;
+            auto it = entries.begin();
+            while (it != entries.end() && toRemove > 0) {
+                if (it->entry_date <= startTime && it->creation_time <= prevVolumeLastCreationTime) {
+                    SKSE::log::info("[SNPD-DIAG]   -> prevVol filter REMOVED entry_date={:.6f} CT={:.6f} ({} left to remove)",
+                                    it->entry_date, it->creation_time, toRemove - 1);
+                    it = entries.erase(it);
+                    --toRemove;
+                } else {
+                    ++it;
+                }
+            }
+        }
+
+        // Client-side enforcement of time bounds.
+        if (startTime > 0.0) {
+            entries.erase(std::remove_if(entries.begin(), entries.end(),
+                [startTime](const DiaryEntry& e) {
+                    bool removed = e.entry_date < startTime;
+                    if (removed) {
+                        SKSE::log::info("[SNPD-DIAG]   -> startTime filter REMOVED entry_date={:.6f}", e.entry_date);
+                    }
+                    return removed;
+                }), entries.end());
+        }
+        if (endTime > 0.0) {
+            entries.erase(std::remove_if(entries.begin(), entries.end(),
+                [endTime](const DiaryEntry& e) {
+                    bool removed = e.entry_date > endTime;
+                    if (removed) {
+                        SKSE::log::info("[SNPD-DIAG]   -> endTime filter REMOVED entry_date={:.6f}", e.entry_date);
+                    }
+                    return removed;
+                }), entries.end());
+        }
 
         SKSE::log::info("Retrieved {} diary entries for FormID 0x{:X}", entries.size(), formId);
         

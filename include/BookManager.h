@@ -17,6 +17,12 @@ namespace SkyrimNetDiaries {
         std::string bioTemplateName;   // Actor-specific subfolder key (e.g. "lydia_3a2") — unique per NPC
         int lastKnownEntryCount = 0;   // Track expected entry count for deletion detection
 
+        // The creation_time of the last entry in the previous volume.  Used by
+        // GetDiaryEntries to exclude boundary entries that share an entry_date with
+        // this volume's first entry but logically belong to the previous volume.
+        double prevVolumeLastCreationTime = 0.0;
+        int prevVolumeCountAtBoundary = 0;   // how many prev-vol entries share the boundary date/CT
+
         // Runtime-only cache — never serialized, populated on first open per session.
         // Lets all subsequent opens skip SQLite + file I/O entirely.
         RE::FormID cachedActorFormId = 0;
@@ -41,7 +47,9 @@ namespace SkyrimNetDiaries {
                                            double startTime = 0.0, double endTime = 0.0, int volumeNumber = 1,
                                            RE::FormID targetActorFormID = 0,
                                            const std::vector<DiaryEntry>& entries = {},
-                                           const std::string& bioTemplateName = "");
+                                           const std::string& bioTemplateName = "",
+                                           double prevVolumeLastCreationTime = 0.0,
+                                           int prevVolumeCountAtBoundary = 0);
 
         // Update an existing book's text from database
         bool UpdateBookText(RE::TESObjectBOOK* book, const std::string& actorUuid,
@@ -80,7 +88,9 @@ namespace SkyrimNetDiaries {
         void RegisterBook(const std::string& actorUuid, const std::string& actorName,
                          RE::FormID bookFormId, double startTime, double endTime, int volumeNumber,
                          const std::string& journalTemplate = "",
-                         const std::string& bioTemplateName = "");
+                         const std::string& bioTemplateName = "",
+                         double prevVolumeLastCreationTime = 0.0,
+                         int prevVolumeCountAtBoundary = 0);
 
         // Update a book's endTime (when diary is stolen/removed)
         void UpdateBookEndTime(const std::string& actorUuid, int volumeNumber, double endTime);
@@ -100,7 +110,7 @@ namespace SkyrimNetDiaries {
 
         // Serialization
         void Save(SKSE::SerializationInterface* a_intfc);
-        void Load(SKSE::SerializationInterface* a_intfc);
+        void Load(SKSE::SerializationInterface* a_intfc, std::uint32_t version = 1);
         void Revert();
 
     private:
