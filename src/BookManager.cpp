@@ -11,7 +11,7 @@
 
 // External declarations from main.cpp
 extern std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>&, const std::string&, double, double, int maxEntries);
-extern bool WriteDynamicBookFile(const std::string& bookTitle, const std::string& text);
+extern bool WriteDynamicBookFile(const std::string& bookTitle, const std::string& text, const std::string& actorSubfolder);
 
 namespace SkyrimNetDiaries {
 
@@ -118,7 +118,10 @@ namespace SkyrimNetDiaries {
                 } else {
                     // Fallback: fetch from API if entries weren't cached (rare)
                     try {
-                        allEntries = SkyrimNetDiaries::Database::GetDiaryEntries(uuid, 5000, start);
+                        uint32_t actorFormId = SkyrimNetDiaries::Database::GetFormIDForUUID(uuid);
+                        if (actorFormId != 0) {
+                            allEntries = SkyrimNetDiaries::Database::GetDiaryEntries(actorFormId, 5000, start, 0.0);
+                        }
                         SKSE::log::info("Retrieved {} diary entries from API for {} (UUID: {}, startTime: {})", 
                                       allEntries.size(), name, uuid, start);
                     } catch (const std::exception& e) {
@@ -139,7 +142,7 @@ namespace SkyrimNetDiaries {
                             std::string bookText = FormatDiaryEntries(entriesToFormat, name, start, end, MAX_ENTRIES_PER_BOOK);
                             
                             // Write to persistent file and load into DBF memory
-                            WriteDynamicBookFile(bookName, bookText);
+                            WriteDynamicBookFile(bookName, bookText, bioTemplate);
                             DynamicBookFramework_API::SetDynamicText(bookName.c_str(), bookText.c_str());
                             
                             SKSE::log::info("Set dynamic text for '{}': {} diary entries (of {} total)", 
@@ -154,7 +157,7 @@ namespace SkyrimNetDiaries {
                             }
                             
                             // Register book with the calculated endTime using FormID
-                            bookManager->RegisterBook(uuid, name, newBook->GetFormID(), start, volumeEndTime, volume, journalTemplate);
+                            bookManager->RegisterBook(uuid, name, newBook->GetFormID(), start, volumeEndTime, volume, journalTemplate, bioTemplate);
                             
                             // If there are more than max entries, log that additional volumes should be created
                             if (allEntries.size() > MAX_ENTRIES_PER_BOOK) {
@@ -681,7 +684,8 @@ namespace SkyrimNetDiaries {
 
     void BookManager::RegisterBook(const std::string& actorUuid, const std::string& actorName,
                                    RE::FormID bookFormId, double startTime, double endTime, int volumeNumber,
-                                   const std::string& journalTemplate) {
+                                   const std::string& journalTemplate,
+                                   const std::string& bioTemplateName) {
         DiaryBookData data;
         data.actorUuid = actorUuid;
         data.actorName = actorName;
@@ -690,10 +694,11 @@ namespace SkyrimNetDiaries {
         data.endTime = endTime;
         data.volumeNumber = volumeNumber;
         data.journalTemplate = journalTemplate;
+        data.bioTemplateName = bioTemplateName;
 
         books_[actorUuid].push_back(data);
-        SKSE::log::info("Registered book for actor {}: FormID 0x{:X}, Volume {} (template: {})", 
-                       actorUuid, bookFormId, volumeNumber, journalTemplate);
+        SKSE::log::info("Registered book for actor {}: FormID 0x{:X}, Volume {} (template: {}, subfolder: {})",
+                       actorUuid, bookFormId, volumeNumber, journalTemplate, bioTemplateName);
     }
 
     void BookManager::UpdateBookEndTime(const std::string& actorUuid, int volumeNumber, double endTime) {
@@ -704,6 +709,19 @@ namespace SkyrimNetDiaries {
                     book.endTime = endTime;
                     SKSE::log::info("Updated book endTime for {} volume {} (FormID 0x{:X}) to {}", 
                                    actorUuid, volumeNumber, book.bookFormId, endTime);
+                    return;
+                }
+            }
+        }
+    }
+    
+    void BookManager::UpdateVolumeEntryCount(const std::string& actorUuid, int volumeNumber, int entryCount) {
+        auto it = books_.find(actorUuid);
+        if (it != books_.end()) {
+            for (auto& book : it->second) {
+                if (book.volumeNumber == volumeNumber) {
+                    SKSE::log::debug("Updated {} volume {} entry count: {} -> {}", book.actorName, volumeNumber, book.lastKnownEntryCount, entryCount);
+                    book.lastKnownEntryCount = entryCount;
                     return;
                 }
             }
@@ -763,46 +781,50 @@ namespace SkyrimNetDiaries {
         SKSE::log::info("[BookManager] Regenerating text for {} actors' diaries from API", books_.size());
 
         try {
-            auto calendar = RE::Calendar::GetSingleton();
-            double currentGameTime = calendar ? calendar->GetCurrentGameTime() * 86400.0 : 999999999.0;
-
             int totalRegenerated = 0;
-            for (const auto& [uuid, volumes] : books_) {
-                // Get all entries for this actor via API
-                auto allEntries = SkyrimNetDiaries::Database::GetDiaryEntries(uuid, 10000, 0.0);
+            for (auto& [uuid, volumes] : books_) {
+                uint32_t actorFormId = SkyrimNetDiaries::Database::GetFormIDForUUID(uuid);
+                if (actorFormId == 0) continue;
 
-                for (const auto& bookData : volumes) {
+                for (auto& bookData : volumes) {
+                    // Keep cached FormID warm so the next open can skip the UUID lookup.
+                    bookData.cachedActorFormId = actorFormId;
+
                     const int MAX_ENTRIES_PER_VOLUME = SkyrimNetDiaries::Config::GetSingleton()->GetEntriesPerVolume();
-                    // Filter entries by this volume's time range
-                    std::vector<SkyrimNetDiaries::DiaryEntry> volumeEntries;
-                    for (const auto& entry : allEntries) {
-                        // If startTime == endTime, include entry AT that timestamp (single-entry volume)
-                        // Otherwise use > to exclude previous volume's last entry
-                        bool afterStart = (bookData.startTime == 0.0) || 
-                                        (bookData.startTime == bookData.endTime && entry.entry_date >= bookData.startTime) ||
-                                        (entry.entry_date > bookData.startTime);
-                        bool beforeEnd = (bookData.endTime == 0.0) || (entry.entry_date <= bookData.endTime);
-                        bool notInFuture = (entry.entry_date <= currentGameTime);
 
-                        if (afterStart && beforeEnd && notInFuture) {
-                            volumeEntries.push_back(entry);
-                            if (volumeEntries.size() >= static_cast<size_t>(MAX_ENTRIES_PER_VOLUME)) break;  // Max entries per volume
-                        }
-                    }
+                    double queryStart = (bookData.volumeNumber == 1) ? 0.0 : bookData.startTime;
+                    double queryEnd = bookData.endTime; // 0.0 = no upper bound for latest volume
 
-                    // Format and set dynamic text
-                    std::string bookText = FormatDiaryEntries(volumeEntries, bookData.actorName,
-                                                              bookData.startTime, bookData.endTime, MAX_ENTRIES_PER_VOLUME);
-
-                    // Generate book title
                     std::string bookTitle = bookData.actorName + "'s Diary";
                     if (bookData.volumeNumber > 1) {
                         bookTitle += ", v" + std::to_string(bookData.volumeNumber);
                     }
 
-                    // Write to persistent file and load into DBF memory
-                    WriteDynamicBookFile(bookTitle, bookText);
+                    SKSE::log::info("[Regen] '{}' vol={} stored startTime={:.2f} endTime={:.2f} -> queryStart={:.2f} queryEnd={:.2f} limit={}",
+                                    bookTitle, bookData.volumeNumber,
+                                    bookData.startTime, bookData.endTime,
+                                    queryStart, queryEnd, MAX_ENTRIES_PER_VOLUME + 1);
+
+                    auto volumeEntries = SkyrimNetDiaries::Database::GetDiaryEntries(
+                        actorFormId, MAX_ENTRIES_PER_VOLUME + 1,
+                        queryStart, queryEnd);
+
+                    SKSE::log::info("[Regen] '{}' API returned {} entries; first={:.2f} last={:.2f}",
+                                    bookTitle, volumeEntries.size(),
+                                    volumeEntries.empty() ? 0.0 : volumeEntries.front().entry_date,
+                                    volumeEntries.empty() ? 0.0 : volumeEntries.back().entry_date);
+
+                    std::string bookText = FormatDiaryEntries(volumeEntries, bookData.actorName,
+                                                              bookData.startTime, bookData.endTime,
+                                                              MAX_ENTRIES_PER_VOLUME);
+
+                    ::WriteDynamicBookFile(bookTitle, bookText, bookData.bioTemplateName);
                     DynamicBookFramework_API::SetDynamicText(bookTitle.c_str(), bookText.c_str());
+
+                    // Update in-memory cache so future opens this session use the fast path
+                    // with the freshly regenerated (e.g. re-fonted) text.
+                    bookData.cachedBookText = bookText;
+
                     totalRegenerated++;
                 }
             }
@@ -884,6 +906,25 @@ namespace SkyrimNetDiaries {
                 if (templateLen > 0) {
                     if (!a_intfc->WriteRecordData(data.journalTemplate.c_str(), templateLen)) {
                         SKSE::log::error("Failed to write journal template");
+                        continue;
+                    }
+                }
+                
+                // Write entry count for deletion tracking
+                if (!a_intfc->WriteRecordData(&data.lastKnownEntryCount, sizeof(data.lastKnownEntryCount))) {
+                    SKSE::log::error("Failed to write entry count");
+                    continue;
+                }
+
+                // Write bio template name (actor-specific file subfolder)
+                std::uint32_t bioNameLen = static_cast<std::uint32_t>(data.bioTemplateName.length());
+                if (!a_intfc->WriteRecordData(&bioNameLen, sizeof(bioNameLen))) {
+                    SKSE::log::error("Failed to write bio template name length");
+                    continue;
+                }
+                if (bioNameLen > 0) {
+                    if (!a_intfc->WriteRecordData(data.bioTemplateName.c_str(), bioNameLen)) {
+                        SKSE::log::error("Failed to write bio template name");
                         continue;
                     }
                 }
@@ -989,6 +1030,19 @@ namespace SkyrimNetDiaries {
                     dummyTemplate.resize(dummyTemplateLen);
                     a_intfc->ReadRecordData(dummyTemplate.data(), dummyTemplateLen);
                 }
+                // Read entry count (may not exist in older saves)
+                int dummyCount = 0;
+                a_intfc->ReadRecordData(&dummyCount, sizeof(dummyCount));
+                // Read bio template name (may not exist in older saves)
+                std::uint32_t dummyBioLen = 0;
+                if (a_intfc->ReadRecordData(&dummyBioLen, sizeof(dummyBioLen)) && dummyBioLen > 0) {
+                    std::string dummyBio;
+                    dummyBio.resize(dummyBioLen);
+                    a_intfc->ReadRecordData(dummyBio.data(), dummyBioLen);
+                }
+                // Read actor FormID (may not exist in older saves)
+                RE::FormID dummyActorFormId = 0;
+                a_intfc->ReadRecordData(&dummyActorFormId, sizeof(dummyActorFormId));
                 continue;
             }
             
@@ -1009,6 +1063,19 @@ namespace SkyrimNetDiaries {
                     dummyTemplate.resize(dummyTemplateLen);
                     a_intfc->ReadRecordData(dummyTemplate.data(), dummyTemplateLen);
                 }
+                // Read entry count (may not exist in older saves)
+                int dummyCount = 0;
+                a_intfc->ReadRecordData(&dummyCount, sizeof(dummyCount));
+                // Read bio template name (may not exist in older saves)
+                std::uint32_t dummyBioLen = 0;
+                if (a_intfc->ReadRecordData(&dummyBioLen, sizeof(dummyBioLen)) && dummyBioLen > 0) {
+                    std::string dummyBio;
+                    dummyBio.resize(dummyBioLen);
+                    a_intfc->ReadRecordData(dummyBio.data(), dummyBioLen);
+                }
+                // Read actor FormID (may not exist in older saves)
+                RE::FormID dummyActorFormId2 = 0;
+                a_intfc->ReadRecordData(&dummyActorFormId2, sizeof(dummyActorFormId2));
                 continue;
             }
 
@@ -1042,6 +1109,31 @@ namespace SkyrimNetDiaries {
                     }
                 }
             }
+            
+            // Read entry count (optional - may not exist in older saves)
+            int entryCount = 0;
+            if (!a_intfc->ReadRecordData(&entryCount, sizeof(entryCount))) {
+                SKSE::log::debug("Entry count not found in save (older version), will be calculated on first check");
+                entryCount = 0;
+            }
+
+            // Read bio template name (optional - may not exist in older saves)
+            std::string bioTemplateName;
+            std::uint32_t bioNameLen = 0;
+            if (a_intfc->ReadRecordData(&bioNameLen, sizeof(bioNameLen)) && bioNameLen > 0) {
+                bioTemplateName.resize(bioNameLen);
+                if (!a_intfc->ReadRecordData(bioTemplateName.data(), bioNameLen)) {
+                    SKSE::log::warn("Failed to read bio template name - will re-derive on next book open");
+                    bioTemplateName.clear();
+                }
+            }
+
+            // Migrate old cosaves: volume 1 should always use startTime=0.0 so the
+            // oldest diary entry is never excluded by an exclusive API lower bound.
+            if (volumeNumber == 1 && startTime > 0.0) {
+                SKSE::log::info("Migrating volume 1 startTime from {} to 0.0 for {}", startTime, actorName);
+                startTime = 0.0;
+            }
 
             // Restore the tracking data (book already exists via DPF persistence)
             DiaryBookData data;
@@ -1052,6 +1144,8 @@ namespace SkyrimNetDiaries {
             data.endTime = endTime;
             data.volumeNumber = volumeNumber;
             data.journalTemplate = journalTemplate;
+            data.bioTemplateName = bioTemplateName;
+            data.lastKnownEntryCount = entryCount;
             
             // Add to vector for this UUID
             books_[uuid].push_back(data);

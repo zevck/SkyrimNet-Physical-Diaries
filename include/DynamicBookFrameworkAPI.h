@@ -51,8 +51,8 @@ namespace DynamicBookFramework_API
         }
 
         bool result = messaging->Dispatch(messageType, messageData, dataSize, FrameworkPluginName);
-        SKSE::log::info("DBF API: Dispatched message type 0x{:X} to '{}', result: {}", 
-                       messageType, FrameworkPluginName, result);
+        SKSE::log::debug("DBF API: Dispatched message type 0x{:X} to '{}', result: {}",
+                        messageType, FrameworkPluginName, result);
         return result;
     }
 
@@ -80,7 +80,7 @@ namespace DynamicBookFramework_API
     // Convenience functions for common operations
     inline bool SetDynamicText(const char* bookTitle, const char* text)
     {
-        SKSE::log::info("DBF API: SetDynamicText for '{}'", bookTitle);
+        SKSE::log::debug("DBF API: SetDynamicText for '{}'", bookTitle);
         AddDynamicTextMessage msg{bookTitle, text};
         return SendMessage(kAddDynamicText, &msg, sizeof(msg));
     }
@@ -121,7 +121,7 @@ namespace DynamicBookFramework_API
 
     inline bool ReloadBookMappings()
     {
-        SKSE::log::info("DBF API: ReloadBookMappings");
+        SKSE::log::debug("DBF API: ReloadBookMappings");
         return SendMessage(kReloadBookMappings, nullptr, 0);
     }
 

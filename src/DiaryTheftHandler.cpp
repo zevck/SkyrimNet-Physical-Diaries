@@ -1,5 +1,6 @@
 #include "PCH.h"
 #include "DiaryTheftHandler.h"
+#include "BookManager.h"
 #include <unordered_set>
 #include <mutex>
 
@@ -252,6 +253,25 @@ namespace DiaryTheftHandler {
             SKSE::log::info("[Physical Diaries] Player stole {} from {} (item flagged as stolen)", 
                            bookName, sourceActor->GetName());
 
+            // Only apply the faction flag if this is the NPC's most recent diary volume.
+            // Stealing an old volume (NPC has since written a new one) should not trigger the stolen reaction.
+            auto* bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
+            auto* bookData = bookManager->GetBookForFormID(a_event->baseObj);
+            if (bookData) {
+                auto* allVolumes = bookManager->GetAllVolumesForActor(bookData->actorUuid);
+                if (allVolumes && !allVolumes->empty()) {
+                    int maxVolume = 0;
+                    for (const auto& vol : *allVolumes) {
+                        if (vol.volumeNumber > maxVolume) maxVolume = vol.volumeNumber;
+                    }
+                    if (bookData->volumeNumber < maxVolume) {
+                        SKSE::log::info("[Physical Diaries] Stolen diary '{}' is v{} but NPC's latest is v{} - not applying faction marker",
+                                       bookName, bookData->volumeNumber, maxVolume);
+                        return;
+                    }
+                }
+            }
+
             // Apply the stolen diary effect
             ApplyStolenDiaryEffect(sourceActor, bookName);
         }
@@ -275,54 +295,39 @@ namespace DiaryTheftHandler {
                 return;
             }
 
-            // Extract volume number from the returned diary name (e.g., "Lydia's Diary, v2" -> 2)
-            int returnedVolume = 1; // Default to volume 1 if no version number
-            size_t vPos = bookName.find(", v");
-            if (vPos != std::string::npos) {
-                try {
-                    returnedVolume = std::stoi(bookName.substr(vPos + 3));
-                } catch (...) {
-                    // Failed to parse, assume v1
+            // Use BookManager as the authoritative source for volume tracking.
+            // More reliable than scanning the NPC's current inventory, which may not
+            // include newer volumes that are stored in containers elsewhere.
+            auto* bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
+            auto* bookData = bookManager->GetBookForFormID(a_event->baseObj);
+            if (!bookData) {
+                // Not one of our tracked diary volumes - nothing to do
+                return;
+            }
+
+            // Confirm the diary actually belongs to the NPC receiving it.
+            // Giving someone else's diary to an NPC must not clear that NPC's stolen marker.
+            if (bookData->actorName != destActor->GetName()) {
+                SKSE::log::info("[Physical Diaries] '{}' belongs to '{}', not '{}' - ignoring for faction purposes",
+                               bookName, bookData->actorName, destActor->GetName());
+                return;
+            }
+
+            int returnedVolume = bookData->volumeNumber;
+            int maxVolume = returnedVolume;
+
+            auto* allVolumes = bookManager->GetAllVolumesForActor(bookData->actorUuid);
+            if (allVolumes) {
+                for (const auto& vol : *allVolumes) {
+                    if (vol.volumeNumber > maxVolume) maxVolume = vol.volumeNumber;
                 }
             }
 
-            // Check if the NPC has a higher volume number in their inventory
-            // If they do, this returned diary is old and the NPC has moved on
-            std::string npcName = destActor->GetName();
-            int highestNPCVolume = returnedVolume; // Assume returned volume is highest unless we find higher
-            
-            auto npcInv = destActor->GetInventory();
-            for (const auto& [item, invData] : npcInv) {
-                if (item->GetFormType() != RE::FormType::Book) continue;
-                
-                auto* book = item->As<RE::TESObjectBOOK>();
-                if (!book) continue;
-                
-                std::string itemName = book->GetFullName();
-                
-                // Check if this is their diary
-                if ((itemName.find("Diary") == std::string::npos && itemName.find("diary") == std::string::npos) ||
-                    itemName.find(npcName) == std::string::npos) {
-                    continue;
-                }
-                
-                // Extract volume number
-                size_t vPos2 = itemName.find(", v");
-                if (vPos2 != std::string::npos) {
-                    try {
-                        int volume = std::stoi(itemName.substr(vPos2 + 3));
-                        if (volume > highestNPCVolume) {
-                            highestNPCVolume = volume;
-                        }
-                    } catch (...) {}
-                }
-            }
-            
-            if (returnedVolume < highestNPCVolume) {
-                SKSE::log::info("[Physical Diaries] {} returned v{} but NPC has v{} - they've moved on, keeping faction marker", 
-                               bookName, returnedVolume, highestNPCVolume);
+            if (returnedVolume < maxVolume) {
+                SKSE::log::info("[Physical Diaries] '{}' returned (v{}) but NPC has written up to v{} - keeping faction marker",
+                               bookName, returnedVolume, maxVolume);
             } else {
-                SKSE::log::info("[Physical Diaries] {} returned (v{}, NPC's latest) - removing faction marker", 
+                SKSE::log::info("[Physical Diaries] '{}' returned (v{}, NPC's latest) - removing faction marker",
                                bookName, returnedVolume);
                 RemoveStolenDiaryEffect(destActor, bookName);
             }

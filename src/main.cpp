@@ -1,9 +1,11 @@
 #include "Database.h"
 #include "BookManager.h"
 #include "DiaryTheftHandler.h"
+#include "SkyrimNetPhysicalDiariesAPI.h"
 #include "DynamicBookFrameworkAPI.h"
 #include "SkyrimNetAPITest.h"
 #include "Config.h"
+#include "PapyrusAPI.h"
 #include <spdlog/sinks/basic_file_sink.h>
 #include <fstream>
 #include <sstream>
@@ -175,22 +177,96 @@ namespace
 {
     // Cache actor reference ID → UUID (persistent across sessions)
     std::unordered_map<RE::FormID, std::string> g_actorUuidCache;
-
-    // Track last processed game day for daily updates
-    float g_lastProcessedDay = -1.0f;
-    double g_lastDiaryCheckTimestamp = 0.0; // Unix timestamp of last diary database check
-    constexpr float EVENING_HOUR = 20.0f; // 8 PM - when daily diary updates should occur
-    constexpr float TIME_CHECK_INTERVAL = 300.0f; // Check time every 5 minutes of real time (in seconds)
+    
+    // Cache the current save's folder name (e.g., "SkyrimNet-1772379483115-796523")
+    std::string g_currentSaveFolder;
 
     constexpr std::uint32_t kSerializationVersion = 1;
     constexpr std::uint32_t kSerializationTypeBooks = 'SNDB'; // SkyrimNet Diary Books
     constexpr std::uint32_t kSerializationTypeCache = 'SNDC'; // SkyrimNet Diary Cache (UUID mappings)
-
-    // Forward declarations
-    void CheckDailyDiaryUpdates(bool forcedUpdate = false);
-    void ScheduleTimeCheck();
+    constexpr std::uint32_t kSerializationTypeFolder = 'SNDF'; // SkyrimNet Diary Folder (save-specific database name)
 
 } // end anonymous namespace
+
+// Forward declaration — defined below after GetCurrentSaveFolder.
+std::string DetectSaveFolderFromLog();
+
+// Get the current save's folder name (e.g., "SkyrimNet-1772379483115-796523").
+// Returns the cached value when available; otherwise delegates to DetectSaveFolderFromLog
+// which reads the authoritative save ID from SkyrimNet.log.
+std::string GetCurrentSaveFolder() {
+    if (!g_currentSaveFolder.empty()) {
+        return g_currentSaveFolder;
+    }
+    return DetectSaveFolderFromLog();
+}
+
+// Parse SkyrimNet.log to detect the current save folder (more reliable than filesystem scan).
+// Finds the most recent "Using save ID: " entry, verifies the .db file exists, and caches
+// the result in g_currentSaveFolder. Returns "" on failure (caller falls back to GetCurrentSaveFolder).
+std::string DetectSaveFolderFromLog() {
+    if (!g_currentSaveFolder.empty()) {
+        return g_currentSaveFolder;
+    }
+
+    try {
+        auto logDir = SKSE::log::log_directory();
+        if (!logDir) {
+            SKSE::log::warn("DetectSaveFolderFromLog: could not get SKSE log directory");
+            return "";
+        }
+
+        auto logPath = *logDir / "SkyrimNet.log";
+        if (!std::filesystem::exists(logPath)) {
+            SKSE::log::warn("DetectSaveFolderFromLog: SkyrimNet.log not found at {}", logPath.string());
+            return "";
+        }
+
+        std::ifstream file(logPath);
+        if (!file.is_open()) {
+            SKSE::log::warn("DetectSaveFolderFromLog: could not open {}", logPath.string());
+            return "";
+        }
+
+        // Scan all lines, keeping the LAST "Using save ID: " occurrence
+        static const std::string marker = "Using save ID: ";
+        std::string lastSaveId;
+        std::string line;
+        while (std::getline(file, line)) {
+            auto pos = line.find(marker);
+            if (pos != std::string::npos) {
+                lastSaveId = line.substr(pos + marker.length());
+                // Trim trailing whitespace / CR
+                while (!lastSaveId.empty() &&
+                       (lastSaveId.back() == '\r' || lastSaveId.back() == '\n' || lastSaveId.back() == ' ')) {
+                    lastSaveId.pop_back();
+                }
+            }
+        }
+
+        if (lastSaveId.empty()) {
+            SKSE::log::warn("DetectSaveFolderFromLog: no 'Using save ID' line found in log");
+            return "";
+        }
+
+        // Verify the corresponding .db file actually exists
+        std::string folderName = "SkyrimNet-" + lastSaveId;
+        auto dbPath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "SkyrimNet" / "data" / (folderName + ".db");
+        if (!std::filesystem::exists(dbPath)) {
+            SKSE::log::warn("DetectSaveFolderFromLog: save ID '{}' found in log but DB not found at {}",
+                            lastSaveId, dbPath.string());
+            return "";
+        }
+
+        g_currentSaveFolder = folderName;
+        SKSE::log::info("DetectSaveFolderFromLog: detected save folder '{}'", g_currentSaveFolder);
+        return g_currentSaveFolder;
+
+    } catch (const std::exception& e) {
+        SKSE::log::error("DetectSaveFolderFromLog exception: {}", e.what());
+        return "";
+    }
+}
 
 // Generate bio_template_name from actor (for UUID resolution)
 std::string GetBioTemplateName(RE::Actor* actor) {
@@ -373,19 +449,22 @@ std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& 
 }
 
 // Register diary with Dynamic Book Framework INI
-bool RegisterDiaryInDBF(const std::string& bookTitle, const std::string& saveFolder)
+bool RegisterDiaryInDBF(const std::string& bookTitle, const std::string& saveFolder, const std::string& actorSubfolder)
 {
     try {
         auto iniPath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "DynamicBookFramework" / "Configs" / "SkyrimNetPhysicalDiaries.ini";
         
-        SKSE::log::info("RegisterDiaryInDBF called for '{}' in folder '{}'", bookTitle, saveFolder);
+        SKSE::log::info("RegisterDiaryInDBF called for '{}' in folder '{}/{}'", bookTitle, saveFolder, actorSubfolder);
         SKSE::log::info("INI path: {}", iniPath.string());
         
         // Ensure parent directories exist
         std::filesystem::create_directories(iniPath.parent_path());
         SKSE::log::info("Created parent directories");
         
-        // Check if this book is already registered (exact match on line start)
+        // The full expected INI line for this specific actor+volume.
+        // Two same-named NPCs get different lines because their actorSubfolder differs.
+        std::string expectedLine = bookTitle + " = " + saveFolder + "/" + actorSubfolder + "/" + bookTitle + ".txt";
+
         bool needsSection = false;
         bool alreadyRegistered = false;
         if (std::filesystem::exists(iniPath)) {
@@ -398,11 +477,9 @@ bool RegisterDiaryInDBF(const std::string& bookTitle, const std::string& saveFol
                     if (line == "[Books]") {
                         foundSection = true;
                     }
-                    // Check for exact match: line starts with "bookTitle = "
-                    std::string searchPattern = bookTitle + " = ";
-                    if (line.find(searchPattern) == 0) {
+                    if (line == expectedLine) {
                         alreadyRegistered = true;
-                        SKSE::log::info("Book '{}' already registered in DBF INI", bookTitle);
+                        SKSE::log::info("Book '{}' already registered in DBF INI (subfolder: {})", bookTitle, actorSubfolder);
                         break;
                     }
                 }
@@ -432,13 +509,12 @@ bool RegisterDiaryInDBF(const std::string& bookTitle, const std::string& saveFol
             file << "[Books]\n";
         }
         
-        // Format: BookTitle = subfolder/Filename.txt
-        std::string entry = bookTitle + " = " + saveFolder + "/" + bookTitle + ".txt\n";
-        SKSE::log::info("Writing entry: {}", entry);
-        file << entry;
+        // Format: BookTitle = saveFolder/actorSubfolder/Filename.txt
+        SKSE::log::info("Writing entry: {}", expectedLine);
+        file << expectedLine << "\n";
         file.close();
         
-        SKSE::log::info("Successfully registered '{}' in DBF INI at: {}", bookTitle, iniPath.string());
+        SKSE::log::info("Successfully registered '{}' in DBF INI", bookTitle);
         return true;
         
     } catch (const std::exception& e) {
@@ -448,15 +524,21 @@ bool RegisterDiaryInDBF(const std::string& bookTitle, const std::string& saveFol
 }
 
 // Write diary text to file for Dynamic Book Framework
-bool WriteDynamicBookFile(const std::string& bookTitle, const std::string& text)
+bool WriteDynamicBookFile(const std::string& bookTitle, const std::string& text, const std::string& actorSubfolder)
 {
     auto booksPath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "DynamicBookFramework" / "Books";
     
     try {
-        // Use fixed folder name for SkyrimNet diaries
-        std::string saveFolder = "SkyrimNet";
+        // Use save-specific folder to prevent save file conflicts
+        std::string saveFolder = GetCurrentSaveFolder();
         
-        auto saveBooksPath = booksPath / saveFolder;
+        if (saveFolder.empty()) {
+            SKSE::log::error("Cannot write diary '{}': failed to detect save folder", bookTitle);
+            return false;
+        }
+        
+        // Actor subfolder isolates same-named NPCs from each other
+        auto saveBooksPath = booksPath / saveFolder / actorSubfolder;
         std::filesystem::create_directories(saveBooksPath);
         
         auto filePath = saveBooksPath / (bookTitle + ".txt");
@@ -473,7 +555,7 @@ bool WriteDynamicBookFile(const std::string& bookTitle, const std::string& text)
         SKSE::log::info("Wrote book file: {}", filePath.string());
         
         // Register in INI with subfolder path
-        RegisterDiaryInDBF(bookTitle, saveFolder);
+        RegisterDiaryInDBF(bookTitle, saveFolder, actorSubfolder);
         
         // Reload DBF mappings
         DynamicBookFramework_API::ReloadBookMappings();
@@ -517,35 +599,79 @@ namespace {
                 auto* bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
                 
                 // Check if this is one of our diary books
-                auto volumeInfo = bookManager->GetBookByFormID(bookFormID);
-                if (volumeInfo.has_value()) {
-                    SKSE::log::info("Diary book opened: {} (FormID: 0x{:X}) - restoring content", 
-                                   volumeInfo->actorName, bookFormID);
-                    
+                auto* volumeInfo = bookManager->GetBookForFormID(bookFormID);
+                if (volumeInfo) {
+                    // Backfill bioTemplateName for saves loaded from an older co-save that didn't store it.
+                    // GetBookForFormID returns a pointer into the stored vector — mutation persists for the session.
+                    if (volumeInfo->bioTemplateName.empty()) {
+                        volumeInfo->bioTemplateName = SkyrimNetDiaries::Database::GetTemplateNameByUUID(volumeInfo->actorUuid);
+                    }
+
                     // Build book name
                     std::string bookName = volumeInfo->actorName + "'s Diary";
                     if (volumeInfo->volumeNumber > 1) {
                         bookName += ", v" + std::to_string(volumeInfo->volumeNumber);
                     }
-                    
-                    // Read content from txt file
-                    std::string saveFolder = "SkyrimNet";
-                    std::filesystem::path bookPath = std::filesystem::path("Data/SKSE/Plugins/DynamicBookFramework/Books") / saveFolder / (bookName + ".txt");
-                    
-                    std::ifstream fileStream(bookPath);
-                    if (fileStream.is_open()) {
-                        std::stringstream buffer;
-                        buffer << fileStream.rdbuf();
-                        std::string bookText = buffer.str();
-                        fileStream.close();
-                        
-                        // Pass content to DBF for display (session-only, doesn't rewrite file)
-                        DynamicBookFramework_API::SetDynamicText(bookName.c_str(), bookText.c_str());
-                        
-                        SKSE::log::info("Restored diary content from file: {}", bookPath.string());
-                    } else {
-                        SKSE::log::error("Failed to read diary file: {}", bookPath.string());
+
+                    // ---------------------------------------------------------------
+                    // FAST PATH: text was already fetched and rendered this session.
+                    // Re-push it to DBF (in case DBF doesn't retain it between opens)
+                    // but skip all SQL, file I/O, and formatting.
+                    // ---------------------------------------------------------------
+                    if (!volumeInfo->cachedBookText.empty()) {
+                        SKSE::log::debug("[SNPD] FAST PATH hit for '{}'", bookName);
+                        DynamicBookFramework_API::SetDynamicText(bookName.c_str(), volumeInfo->cachedBookText.c_str());
+                        return RE::BSEventNotifyControl::kContinue;
                     }
+
+                    // ---------------------------------------------------------------
+                    // SLOW PATH: first open this session for this volume.
+                    // Always regenerate from the API so stale files are never served.
+                    // ---------------------------------------------------------------
+                    SKSE::log::debug("[SNPD] SLOW PATH: '{}' vol={} startTime={:.2f} endTime={:.2f}",
+                                    bookName, volumeInfo->volumeNumber, volumeInfo->startTime, volumeInfo->endTime);
+
+                    // Lazy-cache actor FormID — look it up at most once per session.
+                    if (volumeInfo->cachedActorFormId == 0) {
+                        volumeInfo->cachedActorFormId = SkyrimNetDiaries::Database::GetFormIDForUUID(volumeInfo->actorUuid);
+                    }
+                    RE::FormID actorFormId = volumeInfo->cachedActorFormId;
+
+                    if (actorFormId == 0) {
+                        SKSE::log::error("Cannot open diary '{}': failed to resolve actor FormID", bookName);
+                        return RE::BSEventNotifyControl::kContinue;
+                    }
+
+                    const int MAX_ENTRIES = SkyrimNetDiaries::Config::GetSingleton()->GetEntriesPerVolume();
+                    double queryStart = (volumeInfo->volumeNumber == 1) ? 0.0 : volumeInfo->startTime;
+                    // Use endTime exactly (no +1.0). The API treats endTime as inclusive so the
+                    // entry at exactly endTime is returned. Adding +1.0 risks including one entry
+                    // from beyond this volume if the API returns newest-first, displacing entry 1.
+                    // Use MAX_ENTRIES+1 as the limit so a boundary off-by-one never drops entry 1;
+                    // FormatDiaryEntries' own endTime filter trims any out-of-range entry.
+                    double queryEnd = volumeInfo->endTime; // 0.0 = no upper bound for latest volume
+
+                    auto liveEntries = SkyrimNetDiaries::Database::GetDiaryEntries(
+                        actorFormId, MAX_ENTRIES + 1, queryStart, queryEnd);
+                    int liveCount = static_cast<int>(liveEntries.size());
+
+                    SKSE::log::debug("[SNPD] API returned {} entries (was {}) for '{}'", liveCount, volumeInfo->lastKnownEntryCount, bookName);
+
+                    // Always format fresh from the API result — never trust the on-disk file.
+                    std::string bookText = FormatDiaryEntries(
+                        liveEntries, volumeInfo->actorName,
+                        volumeInfo->startTime, volumeInfo->endTime, MAX_ENTRIES);
+
+                    if (liveCount != volumeInfo->lastKnownEntryCount) {
+                        // Write updated file and persist new count only when something changed.
+                        ::WriteDynamicBookFile(bookName, bookText, volumeInfo->bioTemplateName);
+                        auto* bm = SkyrimNetDiaries::BookManager::GetSingleton();
+                        bm->UpdateVolumeEntryCount(volumeInfo->actorUuid, volumeInfo->volumeNumber, liveCount);
+                    }
+
+                    DynamicBookFramework_API::SetDynamicText(bookName.c_str(), bookText.c_str());
+                    // Cache rendered text so every subsequent open this session is instant.
+                    volumeInfo->cachedBookText = std::move(bookText);
                 }
             }
 
@@ -558,536 +684,533 @@ namespace {
         BookMenuEventSink& operator=(const BookMenuEventSink&) = delete;
     };
 
-    // Sleep event sink to check for diary updates after sleeping
-    class SleepEventSink : public RE::BSTEventSink<RE::TESSleepStopEvent> {
-    public:
-        static SleepEventSink* GetSingleton() {
-            static SleepEventSink singleton;
-            return &singleton;
+} // end anonymous namespace (event sinks)
+
+// =============================================================================
+// Create all diary volumes for an actor from a flat list of entries.
+// Entries are sorted oldest-first and chunked into EntriesPerVolume batches.
+// startingVolumeNumber is 1 for a fresh actor, or latestVolume+1 for additions.
+// =============================================================================
+
+void CreateAllVolumesForActor(
+    const std::string& uuid,
+    const std::string& actorName,
+    RE::FormID formId,
+    const std::string& bioTemplateName,
+    std::vector<SkyrimNetDiaries::DiaryEntry> allEntries,
+    int startingVolumeNumber)
+{
+    if (allEntries.empty()) return;
+
+    // Sort oldest → newest so volume 1 always has the earliest entries
+    std::sort(allEntries.begin(), allEntries.end(),
+        [](const SkyrimNetDiaries::DiaryEntry& a, const SkyrimNetDiaries::DiaryEntry& b) {
+            return a.entry_date < b.entry_date;
+        });
+
+    const int chunkSize = SkyrimNetDiaries::Config::GetSingleton()->GetEntriesPerVolume();
+    auto bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
+    int volumeNumber = startingVolumeNumber;
+
+    for (size_t offset = 0; offset < allEntries.size(); offset += chunkSize, ++volumeNumber) {
+        size_t end = std::min(offset + static_cast<size_t>(chunkSize), allEntries.size());
+        std::vector<SkyrimNetDiaries::DiaryEntry> chunk(allEntries.begin() + offset, allEntries.begin() + end);
+
+        double volStart = (volumeNumber == 1) ? 0.0 : chunk.front().entry_date;
+        double volEnd   = chunk.back().entry_date;
+
+        SKSE::log::info("Creating volume {} for {} ({} entries, {:.2f}–{:.2f})",
+                       volumeNumber, actorName, chunk.size(), volStart, volEnd);
+
+        bookManager->CreateDiaryBook(uuid, actorName, volStart, volEnd,
+                                     volumeNumber, formId, chunk, bioTemplateName);
+    }
+}
+
+// =============================================================================
+// ModEvent-triggered diary update for single actor
+// =============================================================================
+
+void UpdateDiaryForActorInternal(RE::FormID formId) {
+    SKSE::log::info("=== UpdateDiaryForActorInternal called for FormID 0x{:X} ===", formId);
+    
+    // Initialize SkyrimNet API if not already done
+    if (!SkyrimNetDiaries::Database::InitializeAPI()) {
+        SKSE::log::error("Failed to initialize SkyrimNet API - diary update skipped");
+        return;
+    }
+    
+    // Check if memory system is ready
+    if (!SkyrimNetDiaries::Database::IsMemorySystemReady()) {
+        SKSE::log::warn("SkyrimNet memory system not ready yet - diary update deferred");
+        return;
+    }
+    
+    try {
+        auto bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
+        std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(formId);
+        
+        if (uuid.empty() || uuid == "0") {
+            SKSE::log::warn("Could not resolve FormID 0x{:X} to UUID - skipping update", formId);
+            return;
         }
-
-        RE::BSEventNotifyControl ProcessEvent(const RE::TESSleepStopEvent* a_event,
-                                               RE::BSTEventSource<RE::TESSleepStopEvent>*) override {
-            if (!a_event) {
-                return RE::BSEventNotifyControl::kContinue;
+        
+        std::string actorName = SkyrimNetDiaries::Database::GetActorName(uuid);
+        // Fallback: if SkyrimNet hasn't registered this NPC yet, use the RE game name directly.
+        if (actorName.empty()) {
+            if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(formId)) {
+                actorName = actor->GetName();
             }
-
-            SKSE::log::info("Player finished sleeping (interrupted: {}) - scheduling delayed diary update", a_event->interrupted);
+        }
+        if (actorName.empty()) {
+            SKSE::log::warn("UpdateDiaryForActor: could not resolve actor name for FormID 0x{:X}, skipping", formId);
+            return;
+        }
+        SKSE::log::info("Processing diary update for {} (UUID: {})", actorName, uuid);
+        
+        auto latestVolume = bookManager->GetBookForActor(uuid);
+        
+        if (!latestVolume) {
+            // ----------------------------------------------------------------
+            // No volumes at all — fetch every entry ever written and build all
+            // volumes from the beginning in chronological order.
+            // ----------------------------------------------------------------
+            auto allEntries = SkyrimNetDiaries::Database::GetDiaryEntries(formId, 10000, 0.0, 0.0);
             
-            // Delay the update to ensure the game is in a stable state after sleep
-            auto task = SKSE::GetTaskInterface();
-            if (task) {
-                task->AddTask([]() {
-                    SKSE::log::info("Executing delayed diary update after sleep");
-                    CheckDailyDiaryUpdates(true);
-                    
-                    // Run API tests to verify diary API integration
-                    SKSE::log::info("Running SkyrimNet API tests after sleep...");
-                    SkyrimNetAPITest::RunAllTests();
-                });
+            if (allEntries.empty()) {
+                SKSE::log::info("No diary entries for {} (UUID: {})", actorName, uuid);
+                return;
             }
-
-            return RE::BSEventNotifyControl::kContinue;
-        }
-
-    private:
-        SleepEventSink() = default;
-        SleepEventSink(const SleepEventSink&) = delete;
-        SleepEventSink& operator=(const SleepEventSink&) = delete;
-    };
-
-    // Wait event sink to check for diary updates after waiting
-    class WaitEventSink : public RE::BSTEventSink<RE::TESWaitStopEvent> {
-    public:
-        static WaitEventSink* GetSingleton() {
-            static WaitEventSink singleton;
-            return &singleton;
-        }
-
-        RE::BSEventNotifyControl ProcessEvent(const RE::TESWaitStopEvent* a_event,
-                                               RE::BSTEventSource<RE::TESWaitStopEvent>*) override {
-            if (!a_event) {
-                return RE::BSEventNotifyControl::kContinue;
-            }
-
-            SKSE::log::info("Player finished waiting (interrupted: {}) - scheduling delayed diary update", a_event->interrupted);
             
-            // Delay the update to ensure the game is in a stable state after wait
-            auto task = SKSE::GetTaskInterface();
-            if (task) {
-                task->AddTask([]() {
-                    SKSE::log::info("Executing delayed diary update after wait");
-                    CheckDailyDiaryUpdates(true);
-                    
-                    // Run API tests to verify diary API integration
-                    SKSE::log::info("Running SkyrimNet API tests after wait...");
-                    SkyrimNetAPITest::RunAllTests();
-                });
+            SKSE::log::info("First-time init for {}: {} total entries → creating all volumes from 1",
+                           actorName, allEntries.size());
+            
+            std::string bioTemplateName = SkyrimNetDiaries::Database::GetTemplateNameByUUID(uuid);
+            CreateAllVolumesForActor(uuid, actorName, formId, bioTemplateName, std::move(allEntries), 1);
+            return;
+        }
+        
+        // Volumes exist — only care about entries strictly newer than the latest volume's end.
+        // Backfill bioTemplateName for saves loaded from an older co-save that didn't store it.
+        // GetBookForActor returns a raw pointer into the stored vector — safe to mutate on the game thread.
+        if (latestVolume->bioTemplateName.empty()) {
+            latestVolume->bioTemplateName = SkyrimNetDiaries::Database::GetTemplateNameByUUID(uuid);
+            if (!latestVolume->bioTemplateName.empty()) {
+                SKSE::log::info("Backfilled bioTemplateName '{}' for {} (migrated save)",
+                               latestVolume->bioTemplateName, actorName);
             }
-
-            return RE::BSEventNotifyControl::kContinue;
         }
 
-    private:
-        WaitEventSink() = default;
-        WaitEventSink(const WaitEventSink&) = delete;
-        WaitEventSink& operator=(const WaitEventSink&) = delete;
-    };
+        // GetDiaryEntries startTime is inclusive, so we fetch from endTime and then strip
+        // any entries whose timestamp is <= endTime (they belong to the previous volume).
+        auto newEntries = SkyrimNetDiaries::Database::GetDiaryEntries(formId, 10000, latestVolume->endTime, 0.0);
+        newEntries.erase(
+            std::remove_if(newEntries.begin(), newEntries.end(),
+                [&](const SkyrimNetDiaries::DiaryEntry& e) { return e.entry_date <= latestVolume->endTime; }),
+            newEntries.end());
 
-    // Periodic time check function (runs every few minutes)
-    void CheckGameTime()
-    {
-        auto calendar = RE::Calendar::GetSingleton();
-        if (!calendar) {
-            ScheduleTimeCheck(); // Reschedule
+        if (newEntries.empty()) {
+            SKSE::log::info("No new entries for {} since {:.2f}", actorName, latestVolume->endTime);
+            return;
+        }
+        
+        SKSE::log::info("Found {} new entries for {} since {:.2f}", newEntries.size(), actorName, latestVolume->endTime);
+        
+        auto npcActor = RE::TESForm::LookupByID<RE::Actor>(formId);
+        if (!npcActor) {
+            SKSE::log::warn("Actor 0x{:X} not found - cannot update diary", formId);
+            return;
+        }
+        
+        // Check if NPC still has the latest volume
+        bool npcHasBook = false;
+        auto inv = npcActor->GetInventory();
+        for (const auto& [item, invData] : inv) {
+            if (item->GetFormID() == latestVolume->bookFormId && invData.first > 0) {
+                npcHasBook = true;
+                break;
+            }
+        }
+        
+        if (!npcHasBook) {
+            // Player took it or it was stolen — start a fresh volume.
+            // Clear the stolen diary faction marker now that the NPC is writing again.
+            DiaryTheftHandler::ClearStolenDiaryMarker(npcActor);
+
+            SKSE::log::info("{} no longer has volume {} — creating new volumes from {} ({} new entries)",
+                           actorName, latestVolume->volumeNumber, latestVolume->volumeNumber + 1, newEntries.size());
+            std::string bioTemplateName = SkyrimNetDiaries::Database::GetTemplateNameByUUID(uuid);
+            CreateAllVolumesForActor(uuid, actorName, formId, bioTemplateName, std::move(newEntries),
+                                     latestVolume->volumeNumber + 1);
+            return;
+        }
+        
+        // NPC has the book — check if it's full
+        const int MAX_ENTRIES = SkyrimNetDiaries::Config::GetSingleton()->GetEntriesPerVolume();
+        auto currentVolumeEntries = SkyrimNetDiaries::Database::GetDiaryEntries(
+            formId, MAX_ENTRIES + 1, latestVolume->startTime, 0.0);
+        
+        if (static_cast<int>(currentVolumeEntries.size()) >= MAX_ENTRIES) {
+            // Volume is full — seal it with exactly MAX_ENTRIES entries, writing the final text,
+            // then route everything strictly after the cut timestamp into new overflow volumes.
+
+            // Sort oldest → newest so we take the chronologically first MAX_ENTRIES.
+            std::sort(currentVolumeEntries.begin(), currentVolumeEntries.end(),
+                [](const SkyrimNetDiaries::DiaryEntry& a, const SkyrimNetDiaries::DiaryEntry& b) {
+                    return a.entry_date < b.entry_date;
+                });
+
+            // Finalized slice: the first MAX_ENTRIES entries belonging to this volume.
+            std::vector<SkyrimNetDiaries::DiaryEntry> finalizedEntries(
+                currentVolumeEntries.begin(),
+                currentVolumeEntries.begin() + MAX_ENTRIES);
+            double cutTime = finalizedEntries.back().entry_date;
+
+            // Write the sealed volume with its complete, final content.
+            std::string bookName = actorName + "'s Diary";
+            if (latestVolume->volumeNumber > 1) {
+                bookName += ", v" + std::to_string(latestVolume->volumeNumber);
+            }
+            std::string sealedText = FormatDiaryEntries(finalizedEntries, actorName,
+                                                        latestVolume->startTime, cutTime, MAX_ENTRIES);
+            WriteDynamicBookFile(bookName, sealedText, latestVolume->bioTemplateName);
+            bookManager->UpdateBookEndTime(uuid, latestVolume->volumeNumber, cutTime);
+            bookManager->UpdateVolumeEntryCount(uuid, latestVolume->volumeNumber, MAX_ENTRIES);
+
+            // Overflow: every entry from newEntries that falls strictly after the cut.
+            std::vector<SkyrimNetDiaries::DiaryEntry> overflowEntries;
+            for (auto& e : newEntries) {
+                if (e.entry_date > cutTime) {
+                    overflowEntries.push_back(std::move(e));
+                }
+            }
+
+            SKSE::log::info("{} volume {} sealed at {} entries (cutTime {:.2f}), {} entry/entries overflow",
+                           actorName, latestVolume->volumeNumber, MAX_ENTRIES, cutTime, overflowEntries.size());
+
+            if (!overflowEntries.empty()) {
+                std::string bioTemplateName = SkyrimNetDiaries::Database::GetTemplateNameByUUID(uuid);
+                CreateAllVolumesForActor(uuid, actorName, formId, bioTemplateName, std::move(overflowEntries),
+                                         latestVolume->volumeNumber + 1);
+            }
+        } else {
+            // Update the current volume in place
+            std::string bookName = actorName + "'s Diary";
+            if (latestVolume->volumeNumber > 1) {
+                bookName += ", v" + std::to_string(latestVolume->volumeNumber);
+            }
+            
+            // Sort current volume entries oldest-first before formatting
+            std::sort(currentVolumeEntries.begin(), currentVolumeEntries.end(),
+                [](const SkyrimNetDiaries::DiaryEntry& a, const SkyrimNetDiaries::DiaryEntry& b) {
+                    return a.entry_date < b.entry_date;
+                });
+            
+            double newEndTime = currentVolumeEntries.back().entry_date;
+            std::string bookText = FormatDiaryEntries(currentVolumeEntries, actorName,
+                                                      latestVolume->startTime, newEndTime, MAX_ENTRIES);
+            WriteDynamicBookFile(bookName, bookText, latestVolume->bioTemplateName);
+            
+            bookManager->UpdateBookEndTime(uuid, latestVolume->volumeNumber, newEndTime);
+            bookManager->UpdateVolumeEntryCount(uuid, latestVolume->volumeNumber,
+                                                static_cast<int>(currentVolumeEntries.size()));
+            
+            SKSE::log::info("Updated {} volume {} with {} entries",
+                           actorName, latestVolume->volumeNumber, currentVolumeEntries.size());
+        }
+        
+    } catch (const std::exception& e) {
+        SKSE::log::error("Exception in UpdateDiaryForActor: {}", e.what());
+    } catch (...) {
+        SKSE::log::error("Unknown exception in UpdateDiaryForActor");
+    }
+}
+
+// =============================================================================
+// Queued batch catch-up scan used on save load.
+//
+// Pass 1 (discovery): Calls PublicGetDiaryEntries(formId=0) in pages of 50
+//   entries to cheaply discover which actor UUIDs have any diary content,
+//   without loading every entry into memory at once.  Each page is one game-
+//   thread task, chained until fewer than 50 raw entries are returned.
+//
+// Pass 2 (per-actor fetch): Once discovery finishes, one task per actor does a
+//   full GetDiaryEntries call for just that FormID, creates all its volumes,
+//   then frees the memory.  Tasks run on successive game-thread ticks so the
+//   load is spread out.
+//
+// The whole scan is skipped if any volumes are already tracked (i.e. this save
+// has been loaded before with the mod active).
+// =============================================================================
+
+// Shared state carried across discovery batch tasks via shared_ptr.
+struct DiscoveryState {
+    std::unordered_map<std::string, std::string> actorUuidToName; // uuid -> name
+    double oldestTimestampSeen = 0.0; // lower bound for next page query
+};
+
+// Forward declaration so QueueBatchCatchUpScan can reference it.
+void RunDiscoveryBatch(std::shared_ptr<DiscoveryState> state);
+
+void QueueBatchCatchUpScan() {
+    // Only run when no volumes exist yet (first load after mod install).
+    if (!SkyrimNetDiaries::BookManager::GetSingleton()->GetAllBooks().empty()) {
+        SKSE::log::info("QueueBatchCatchUpScan: existing volumes found, skipping");
+        return;
+    }
+
+    SKSE::log::info("QueueBatchCatchUpScan: no volumes found, starting discovery pass");
+    auto state = std::make_shared<DiscoveryState>();
+    SKSE::GetTaskInterface()->AddTask([state]() { RunDiscoveryBatch(state); });
+}
+
+void RunDiscoveryBatch(std::shared_ptr<DiscoveryState> state) {
+    try {
+        // Fetch next page of up to 50 entries across all actors.
+        // endTime=0.0 on the first call means no upper bound.
+        // On subsequent calls we pass the oldest timestamp seen so far to page backward.
+        double endTime = state->oldestTimestampSeen;
+        auto rawEntries = SkyrimNetDiaries::Database::GetDiaryEntries(0, 50, 0.0, endTime);
+        bool morePages = (static_cast<int>(rawEntries.size()) >= 50);
+
+        // endTime is treated as inclusive by the API (same as startTime), so
+        // filter out any entries at or after the boundary to avoid re-processing.
+        if (state->oldestTimestampSeen > 0.0) {
+            rawEntries.erase(
+                std::remove_if(rawEntries.begin(), rawEntries.end(),
+                    [&](const SkyrimNetDiaries::DiaryEntry& e) {
+                        return e.entry_date >= state->oldestTimestampSeen;
+                    }),
+                rawEntries.end());
+        }
+
+        if (rawEntries.empty() && morePages) {
+            // Entire batch was boundary duplicates — stop to avoid an infinite loop.
+            morePages = false;
+        }
+
+        // Accumulate actor UUIDs and find the oldest timestamp for the next page.
+        for (const auto& e : rawEntries) {
+            if (!e.actor_uuid.empty()) {
+                state->actorUuidToName.emplace(e.actor_uuid, e.actor_name);
+            }
+            if (state->oldestTimestampSeen == 0.0 || e.entry_date < state->oldestTimestampSeen) {
+                state->oldestTimestampSeen = e.entry_date;
+            }
+        }
+
+        SKSE::log::info("DiscoveryBatch: got {} entries ({}), {} distinct actors so far",
+                        rawEntries.size(), morePages ? "more pages" : "last page",
+                        state->actorUuidToName.size());
+
+        if (morePages) {
+            // Chain the next discovery batch as a separate task.
+            SKSE::GetTaskInterface()->AddTask([state]() { RunDiscoveryBatch(state); });
             return;
         }
 
-        float currentDay = calendar->GetDaysPassed();
-        float currentHour = calendar->GetHour();
-        
-        // Check if we've crossed into a new day and it's evening
-        if (static_cast<int>(currentDay) != static_cast<int>(g_lastProcessedDay)) {
-            if (currentHour >= EVENING_HOUR || g_lastProcessedDay < 0.0f) {
-                SKSE::log::info("Daily diary check triggered at day {:.2f}, hour {:.2f}", 
-                              currentDay, currentHour);
-                CheckDailyDiaryUpdates();
+        // Discovery complete — queue one full-fetch task per actor.
+        if (state->actorUuidToName.empty()) {
+            SKSE::log::info("QueueBatchCatchUpScan: no actors with diary entries found");
+            return;
+        }
+
+        SKSE::log::info("QueueBatchCatchUpScan: discovery done, queuing {} per-actor tasks",
+                        state->actorUuidToName.size());
+
+        auto bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
+        auto taskInterface = SKSE::GetTaskInterface();
+
+        for (const auto& [uuid, name] : state->actorUuidToName) {
+            // Skip actors that got volumes from a regular diary event during discovery.
+            if (bookManager->GetBookForActor(uuid)) continue;
+
+            taskInterface->AddTask(
+                [uuid, name]() {
+                    try {
+                        // Skip if volumes appeared between queue time and execution.
+                        auto* bm = SkyrimNetDiaries::BookManager::GetSingleton();
+                        if (bm->GetBookForActor(uuid)) return;
+
+                        RE::FormID formId = SkyrimNetDiaries::Database::GetFormIDForUUID(uuid);
+                        if (formId == 0) {
+                            SKSE::log::warn("CatchUp: cannot resolve UUID {} to FormID, skipping", uuid);
+                            return;
+                        }
+
+                        auto entries = SkyrimNetDiaries::Database::GetDiaryEntries(
+                            formId, 10000, 0.0, 0.0);
+                        if (entries.empty()) return;
+
+                        // Resolve actor name — fall back to RE game name if the diary JSON had no name.
+                        std::string actorName = name;
+                        if (actorName.empty()) {
+                            actorName = SkyrimNetDiaries::Database::GetActorName(uuid);
+                        }
+                        if (actorName.empty()) {
+                            if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(formId)) {
+                                actorName = actor->GetName();
+                            }
+                        }
+                        if (actorName.empty()) {
+                            SKSE::log::warn("CatchUp: could not resolve actor name for UUID {} (FormID 0x{:X}), skipping", uuid, formId);
+                            return;
+                        }
+
+                        // formId already in hand — skip the redundant UUID→FormID call inside GetTemplateNameByUUID.
+                        std::string bioTemplate = SkyrimNetDiaries::Database::GetBioTemplateName(formId);
+                        SKSE::log::info("CatchUp: creating books for {} ({} entries)", actorName, entries.size());
+                        CreateAllVolumesForActor(uuid, actorName, formId, bioTemplate, std::move(entries), 1);
+
+                    } catch (const std::exception& e) {
+                        SKSE::log::error("CatchUp task exception for {}: {}", name, e.what());
+                    } catch (...) {
+                        SKSE::log::error("CatchUp task unknown exception for {}", name);
+                    }
+                });
+        }
+
+    } catch (const std::exception& e) {
+        SKSE::log::error("RunDiscoveryBatch exception: {}", e.what());
+    } catch (...) {
+        SKSE::log::error("RunDiscoveryBatch unknown exception");
+    }
+}
+
+// =============================================================================
+// MCM Reset: remove all tracked diary books from NPC inventories, delete their
+// .txt files, and clear all BookManager tracking.  SkyrimNet diary ENTRIES are
+// NOT touched - books will be regenerated on the next diary event or Rebuild.
+// Returns the number of actor records cleared (negative on exception).
+// =============================================================================
+int ResetAllDiariesInternal() {
+    SKSE::log::info("ResetAllDiariesInternal: starting");
+
+    auto bookManager   = SkyrimNetDiaries::BookManager::GetSingleton();
+    auto booksBasePath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "DynamicBookFramework" / "Books";
+    std::string saveFolder = g_currentSaveFolder; // snapshot before clearing
+
+    int actorsAffected = 0;
+    int booksRemoved   = 0;
+
+    try {
+        const auto& allBooks = bookManager->GetAllBooks();
+
+        // Build a flat list of (uuid, bookFormId) pairs to remove from inventory,
+        // plus delete .txt files now (filesystem ops are safe off the game thread).
+        // Inventory removal MUST happen on the game thread — queue a single task for it.
+        // We use uuid (not a cached FormID) so ESL load-order shifts don't matter.
+        struct RemovalEntry { std::string uuid; RE::FormID bookFormId; std::string label; };
+        std::vector<RemovalEntry> pendingRemovals;
+
+        for (const auto& [uuid, volumes] : allBooks) {
+            if (volumes.empty()) continue;
+            ++actorsAffected;
+
+            for (const auto& vol : volumes) {
+                pendingRemovals.push_back({uuid, vol.bookFormId,
+                    vol.actorName + " vol " + std::to_string(vol.volumeNumber)});
+
+                // Delete .txt file (safe to do here on the Papyrus thread).
+                if (!saveFolder.empty() && !vol.bioTemplateName.empty()) {
+                    std::string bookName = vol.actorName + "'s Diary";
+                    if (vol.volumeNumber > 1) {
+                        bookName += ", v" + std::to_string(vol.volumeNumber);
+                    }
+                    auto txtPath = booksBasePath / saveFolder / vol.bioTemplateName / (bookName + ".txt");
+                    if (std::filesystem::exists(txtPath)) {
+                        std::filesystem::remove(txtPath);
+                        SKSE::log::info("  Deleted {}", txtPath.string());
+                    }
+                }
+                ++booksRemoved;
             }
         }
-        
-        // Schedule next check
-        ScheduleTimeCheck();
-    }
 
-    // Schedule the next time check
-    void ScheduleTimeCheck()
-    {
-        auto taskInterface = SKSE::GetTaskInterface();
-        if (taskInterface) {
-            // Schedule to run again after interval (in milliseconds)
-            taskInterface->AddTask([]() {
-                // Use a delayed task to run after TIME_CHECK_INTERVAL seconds
-                std::thread([]() {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(TIME_CHECK_INTERVAL * 1000)));
-                    SKSE::GetTaskInterface()->AddTask(CheckGameTime);
-                }).detach();
+        // Clear all in-memory tracking immediately (safe — no game-thread state involved).
+        bookManager->Revert();
+        g_actorUuidCache.clear();
+        g_currentSaveFolder.clear();
+
+        // Dispatch inventory removals and DPF disposal to the game thread.
+        if (!pendingRemovals.empty()) {
+            SKSE::GetTaskInterface()->AddTask([pendingRemovals]() {
+                auto  vm     = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+
+                for (const auto& entry : pendingRemovals) {
+                    auto* bookForm = RE::TESForm::LookupByID<RE::TESObjectBOOK>(entry.bookFormId);
+                    if (!bookForm) {
+                        SKSE::log::warn("  Reset: book form 0x{:X} not found for {}", entry.bookFormId, entry.label);
+                        continue;
+                    }
+
+                    // --- Step 1: Sweep all currently-loaded references ---
+                    // ForEachReference covers the active worldspace/interior, so books in
+                    // nearby NPC inventories, containers, shelves, etc. are removed
+                    // immediately without waiting for a reload.
+                    {
+                        auto* tesWorld = RE::TES::GetSingleton();
+                        if (tesWorld) {
+                            RE::TESBoundObject* filterForm = bookForm;
+                            auto filter = [filterForm](RE::TESBoundObject& obj) {
+                                return &obj == filterForm;
+                            };
+                            tesWorld->ForEachReference([&](RE::TESObjectREFR* ref) -> RE::BSContainer::ForEachResult {
+                                if (!ref || ref->IsDeleted()) return RE::BSContainer::ForEachResult::kContinue;
+                                auto inv = ref->GetInventory(filter);
+                                auto it  = inv.find(bookForm);
+                                if (it != inv.end() && it->second.first > 0) {
+                                    ref->RemoveItem(bookForm, it->second.first,
+                                        RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+                                    SKSE::log::info("  Removed {} from ref 0x{:X} ({})",
+                                        entry.label, ref->GetFormID(),
+                                        ref->GetBaseObject() ? ref->GetBaseObject()->GetName() : "?");
+                                }
+                                return RE::BSContainer::ForEachResult::kContinue;
+                            });
+                        }
+                    }
+
+                    // --- Step 2: Tell DPF to stop persisting this form ---
+                    // Removes the entry from DPF's save data so it won't be recreated
+                    // on the next game load.
+                    if (vm) {
+                        RE::TESForm* formPtr = bookForm;
+                        auto disposeArgs = RE::MakeFunctionArguments(std::move(formPtr));
+                        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> noopCallback;
+                        vm->DispatchStaticCall("DynamicPersistentForms", "Dispose", disposeArgs, noopCallback);
+                        SKSE::log::info("  Disposed DPF form 0x{:X} for {}", entry.bookFormId, entry.label);
+                    }
+
+                    // --- Step 3: Mark the base form as deleted globally ---
+                    // SetDelete(true) sets the kDeleted flag on the TESObjectBOOK base form.
+                    // Any reference to this form ID in an unloaded cell (a chest in a far-
+                    // away dungeon, a shelf in an unloaded house, etc.) will be treated as
+                    // a missing/orphaned form reference when those cells eventually load,
+                    // and Skyrim silently drops such references. This is the only reliable
+                    // way to "reach" containers that are not currently in memory.
+                    bookForm->SetDelete(true);
+                    SKSE::log::info("  Marked base form 0x{:X} as deleted for {}", entry.bookFormId, entry.label);
+                }
             });
         }
+
+        SKSE::log::info("ResetAllDiariesInternal: cleared {} volumes for {} actor(s), {} inventory removals queued",
+                        booksRemoved, actorsAffected, pendingRemovals.size());
+        return actorsAffected;
+
+    } catch (const std::exception& e) {
+        SKSE::log::error("ResetAllDiariesInternal exception: {}", e.what());
+        return -1;
     }
+}
 
-    void CheckDailyDiaryUpdates(bool forcedUpdate)
-    {
-        SKSE::log::info("=== CheckDailyDiaryUpdates called (forcedUpdate={}) ===", forcedUpdate);
-        
-        auto calendar = RE::Calendar::GetSingleton();
-        if (!calendar) {
-            SKSE::log::error("Calendar is null - cannot check diaries");
-            return;
-        }
-        
-        // Initialize SkyrimNet API if not already done
-        if (!SkyrimNetDiaries::Database::InitializeAPI()) {
-            SKSE::log::error("Failed to initialize SkyrimNet API - diaries cannot be created");
-            return;
-        }
-        
-        // Check if memory system is ready
-        if (!SkyrimNetDiaries::Database::IsMemorySystemReady()) {
-            SKSE::log::warn("SkyrimNet memory system not ready yet - diary processing deferred");
-            return;
-        }
+// =============================================================================
+// MCM Rebuild: reset then immediately recreate all books from existing entries.
+// Requires that the SkyrimNet database can be found (save folder detectable).
+// =============================================================================
 
-        float currentDay = calendar->GetDaysPassed();
-        
-        // Only process once per game day (but allow forced updates from sleep/wait)
-        if (!forcedUpdate && g_lastProcessedDay >= 0.0f && static_cast<int>(currentDay) == static_cast<int>(g_lastProcessedDay)) {
-            SKSE::log::info("Already processed diaries today (day {:.2f}), skipping", currentDay);
-            return;
-        }
-
-        SKSE::log::info("{} game day detected ({:.2f}) - processing diary updates", 
-                      forcedUpdate ? "Forced update" : "New", currentDay);
-        g_lastProcessedDay = currentDay;
-
-        // Structure to cache actor data from API
-        struct CachedActorData {
-            std::string uuid;
-            std::string name;
-            std::string bioTemplateName;  // For ESL actor lookup (name + last 3 digits)
-            uint32_t formID;
-            std::vector<SkyrimNetDiaries::DiaryEntry> allEntries;
-        };
-
-        // Process all actors with diary entries
-        try {
-            double currentGameTime = calendar->GetCurrentGameTime() * 86400.0;
-            SKSE::log::info("Starting diary processing for game time {:.2f}", currentGameTime);
-
-            // STEP 1: Quickly batch all database queries and close connection immediately
-            // Database is opened in READ-ONLY mode to avoid blocking SkyrimNet's writes
-            // Uses API instead of direct database access - no retry logic needed
-            std::unordered_map<std::string, CachedActorData> cachedData;
-            {
-                SKSE::log::info("Fetching diary entries via SkyrimNet API (thread-safe)...");
-
-                try {
-                    // PERFORMANCE OPTIMIZATION: Fetch and group ALL diary entries in ONE API call
-                    // This eliminates 50+ redundant GetDiaryEntries calls on first load
-                    SKSE::log::info("Querying for entries since timestamp: {:.2f} (current game time: {:.2f})", 
-                                  g_lastDiaryCheckTimestamp, currentGameTime);
-                    auto entriesByActor = SkyrimNetDiaries::Database::GetAllDiaryEntriesGroupedByActor(g_lastDiaryCheckTimestamp);
-                    SKSE::log::info("Found {} actors with diary entries", entriesByActor.size());
-                
-                // Also check all existing diary holders for deletions
-                auto bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
-                std::unordered_set<std::string> actorsToProcess;
-                
-                // Add actors with new entries from the grouped data
-                for (const auto& [uuid, entries] : entriesByActor) {
-                    if (!entries.empty()) {
-                        SKSE::log::info("  - {} ({} entries, UUID: {})", entries[0].actor_name, entries.size(), uuid);
-                        actorsToProcess.insert(uuid);
-                    }
-                }
-                
-                // Add actors with existing diaries (to check for deletions/updates)
-                int existingDiaryHolders = 0;
-                for (const auto& [uuid, volumes] : bookManager->GetAllBooks()) {
-                    actorsToProcess.insert(uuid);
-                    existingDiaryHolders++;
-                }
-                
-                if (actorsToProcess.empty()) {
-                    SKSE::log::warn("No diary updates needed: {} actors with new entries, {} existing diary holders", 
-                                   entriesByActor.size(), existingDiaryHolders);
-                    SKSE::log::warn("If you expect diary entries, check that SkyrimNet is writing to the database");
-                    // Only update timestamp after successful processing
-                    g_lastDiaryCheckTimestamp = currentGameTime;
-                    return;
-                }
-
-                SKSE::log::info("Prefetching data for {} actors...", actorsToProcess.size());
-
-                // Batch-fetch ALL data we need (using pre-grouped entries from above)
-                for (const auto& uuid : actorsToProcess) {
-                    CachedActorData data;
-                    data.uuid = uuid;
-                    data.name = SkyrimNetDiaries::Database::GetActorName(uuid);
-                    data.bioTemplateName = SkyrimNetDiaries::Database::GetTemplateNameByUUID(uuid);
-                    data.formID = SkyrimNetDiaries::Database::GetFormIDForUUID(uuid);
-                    
-                    SKSE::log::info("Cached actor: name='{}', formID=0x{:X}, bioTemplate='{}'", data.name, data.formID, data.bioTemplateName);
-                    
-                    // Use pre-fetched entries if available, otherwise query API
-                    auto entriesIt = entriesByActor.find(uuid);
-                    if (entriesIt != entriesByActor.end()) {
-                        data.allEntries = entriesIt->second;  // OPTIMIZATION: Use cached entries
-                        SKSE::log::info("Using pre-fetched {} entries for {}", data.allEntries.size(), data.name);
-                    } else {
-                        // Existing diary holder with no new entries - fetch all their entries
-                        data.allEntries = SkyrimNetDiaries::Database::GetDiaryEntries(uuid, 10000, 0.0);
-                        SKSE::log::info("Fetched {} entries for existing diary holder {}", data.allEntries.size(), data.name);
-                    }
-                    
-                    cachedData[uuid] = std::move(data);
-                    SKSE::log::info("Cached {} entries for {} (FormID: 0x{:X})", 
-                                   data.allEntries.size(), data.name, data.formID);
-                }
-                
-                } catch (const std::exception& e) {
-                    SKSE::log::error("API query error: {}", e.what());
-                    SKSE::log::info("Diary processing aborted");
-                    return;
-                }
-
-               SKSE::log::info("All data fetched from API. Processing {} actors...", cachedData.size());
-            }
-
-            // STEP 2: Process all actors from cached data
-            auto bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
-            int diariesCreated = 0;
-            int diariesUpdated = 0;
-
-            for (const auto& [uuid, cachedActor] : cachedData) {
-                try {
-                    // Use cached data instead of database calls
-                    const std::string& actorName = cachedActor.name;
-                    const uint32_t actorFormID = cachedActor.formID;
-                    
-                    if (actorFormID == 0) {
-                        SKSE::log::warn("Skipping {} - no FormID found", actorName);
-                        continue;
-                    }
-
-                    // Helper lambda to filter diary entries by time range from cached data
-                    // NOTE: For subsequent volumes, exclude boundary to avoid duplicate entries
-                    // IMPORTANT: Filters out entries dated in the future (handles old save + kept future events)
-                    auto filterEntries = [&cachedActor, currentGameTime](double startTime, double endTime = 0.0, int maxCount = 10000) {
-                        std::vector<SkyrimNetDiaries::DiaryEntry> filtered;
-                        for (const auto& entry : cachedActor.allEntries) {
-                            // First volume (startTime==0): include all from start
-                            // Subsequent volumes: use > to exclude previous volume's last entry (prevents duplicates)  
-                            bool afterStart = (startTime == 0.0) ? true : (entry.entry_date > startTime);
-                            
-                            // CRITICAL: Never include entries dated in the future relative to current save time
-                            // This handles the case where user loads an old save but SkyrimNet kept future event history
-                            bool notInFuture = (entry.entry_date <= currentGameTime);
-                            
-                            if (afterStart && notInFuture && (endTime == 0.0 || entry.entry_date <= endTime)) {
-                                filtered.push_back(entry);
-                                if (static_cast<int>(filtered.size()) >= maxCount) break;
-                            }
-                        }
-                        return filtered;
-                    };
-
-                    auto latestVolume = bookManager->GetBookForActor(uuid);
-                    
-                    // Check if actor has an existing diary volume
-                    if (latestVolume) {
-                        // Check if NPC still has the book in their inventory
-                        auto npcActor = RE::TESForm::LookupByID<RE::Actor>(actorFormID);
-                        if (npcActor) {
-                            auto inv = npcActor->GetInventory();
-                            bool npcHasBook = false;
-                            
-                            for (const auto& [item, invData] : inv) {
-                                if (item->GetFormID() == latestVolume->bookFormId && invData.first > 0) {
-                                    npcHasBook = true;
-                                    break;
-                                }
-                            }
-                            
-                            if (npcHasBook) {
-                                // Check for new entries since this volume's endTime
-                                double currentTime = calendar->GetCurrentGameTime() * 86400.0;
-                                
-                                // First, check how many entries this volume currently has
-                                const int MAX_ENTRIES_PER_VOLUME = SkyrimNetDiaries::Config::GetSingleton()->GetEntriesPerVolume();
-                                auto currentVolumeEntries = filterEntries(latestVolume->startTime, latestVolume->endTime, MAX_ENTRIES_PER_VOLUME);
-                                bool volumeIsFull = (currentVolumeEntries.size() >= MAX_ENTRIES_PER_VOLUME);
-                                
-                                // DELETION DETECTION: Check if entries were deleted from this volume's time range
-                                // We can't track the exact count, but if the volume was supposedly full and now isn't, entries were deleted
-                                bool possibleDeletion = false;
-                                if (volumeIsFull && currentVolumeEntries.size() < MAX_ENTRIES_PER_VOLUME) {
-                                    SKSE::log::warn("{} volume {} may have had entries deleted (expected {}, found {})", 
-                                                   actorName, latestVolume->volumeNumber, MAX_ENTRIES_PER_VOLUME, currentVolumeEntries.size());
-                                    possibleDeletion = true;
-                                }
-                                
-                                // Check for new entries after this volume's endTime
-                                auto newEntries = filterEntries(latestVolume->endTime, currentTime, 10000);
-                                
-                                if (!newEntries.empty() || possibleDeletion) {
-                                    if (volumeIsFull && !possibleDeletion) {
-                                        // Volume is full - create new volumes for new entries
-                                        SKSE::log::info("{} volume {} is full ({} entries), creating new volume(s) for {} new entries", 
-                                                          actorName, latestVolume->volumeNumber, MAX_ENTRIES_PER_VOLUME, newEntries.size());
-                                        
-                                        int totalNewEntries = static_cast<int>(newEntries.size());
-                                        int volumesNeeded = (totalNewEntries + MAX_ENTRIES_PER_VOLUME - 1) / MAX_ENTRIES_PER_VOLUME;
-                                        
-                                        // Use background thread to stagger creation without freezing game
-                                        std::thread([volumesNeeded, latestVolume, newEntries, MAX_ENTRIES_PER_VOLUME, totalNewEntries,
-                                                    uuid, actorName, actorFormID, bookManager, bioTemplateName = cachedActor.bioTemplateName]() {
-                                            for (int i = 0; i < volumesNeeded; ++i) {
-                                                int volumeNumber = latestVolume->volumeNumber + 1 + i;
-                                                int entryStartIndex = i * MAX_ENTRIES_PER_VOLUME;
-                                                int entryEndIndex = std::min((i + 1) * MAX_ENTRIES_PER_VOLUME, totalNewEntries);
-                                                
-                                                double volumeStartTime = newEntries[entryStartIndex].entry_date;
-                                                double volumeEndTime = newEntries[entryEndIndex - 1].entry_date;
-                                                
-                                                // Extract entries for this volume to avoid DB reopening in callback
-                                                std::vector<SkyrimNetDiaries::DiaryEntry> volumeEntries(
-                                                    newEntries.begin() + entryStartIndex, 
-                                                    newEntries.begin() + entryEndIndex
-                                                );
-                                                
-                                                // Stagger with 100ms delay (on background thread - doesn't freeze game)
-                                                if (i > 0) {
-                                                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                                                }
-                                                
-                                                bookManager->CreateDiaryBook(uuid, actorName, volumeStartTime, volumeEndTime, volumeNumber, actorFormID, volumeEntries, bioTemplateName);
-                                                SKSE::log::info("Created new volume {} for {} with {} entries (no DB access needed)", 
-                                                              volumeNumber, actorName, volumeEntries.size());
-                                                
-                                                // Clear stolen diary marker after first new volume (NPC has now written about it)
-                                                if (i == 0) {
-                                                    auto* npcActor = RE::TESForm::LookupByID<RE::Actor>(actorFormID);
-                                                    if (npcActor && DiaryTheftHandler::ClearStolenDiaryMarker(npcActor)) {
-                                                        SKSE::log::info("{} wrote about stolen diary in new volume - marker cleared", actorName);
-                                                    }
-                                                }
-                                            }
-                                        }).detach();
-                                        diariesCreated += volumesNeeded;
-                                    } else {
-                                        // Volume has < max entries - update it with new entries (up to max total)
-                                        // OR entries were deleted and we need to update the book
-                                        if (possibleDeletion) {
-                                            SKSE::log::info("Detected deletions in {} volume {} - updating book content", 
-                                                          actorName, latestVolume->volumeNumber);
-                                        } else {
-                                            SKSE::log::info("Found {} new entries for {} since volume {} endTime {}", 
-                                                          newEntries.size(), actorName, latestVolume->volumeNumber, latestVolume->endTime);
-                                        }
-                                        
-                                        // Get all entries for this volume (from startTime to now, up to max entries)
-                                        auto allVolumeEntries = filterEntries(latestVolume->startTime, currentTime, MAX_ENTRIES_PER_VOLUME);
-                                    
-                                        if (!allVolumeEntries.empty()) {
-                                            // Reformat the book with updated entries (reflects both additions and deletions)
-                                            std::string bookText = FormatDiaryEntries(allVolumeEntries, actorName, 
-                                                                                     latestVolume->startTime, currentTime, MAX_ENTRIES_PER_VOLUME);
-                                            
-                                            // Update the book text via file persistence
-                                            std::string bookName = actorName + "'s Diary";
-                                            if (latestVolume->volumeNumber > 1) {
-                                                bookName += ", v" + std::to_string(latestVolume->volumeNumber);
-                                            }
-                                            
-                                            // Write to file, will display on next book open
-                                            WriteDynamicBookFile(bookName, bookText);
-                                            
-                                            // Update the volume's endTime
-                                            double newEndTime = allVolumeEntries.back().entry_date;
-                                            bookManager->UpdateBookEndTime(uuid, latestVolume->volumeNumber, newEndTime);
-                                            
-                                            SKSE::log::info("Updated {} volume {} with {} total entries (endTime: {})", 
-                                                          actorName, latestVolume->volumeNumber, allVolumeEntries.size(), newEndTime);
-                                            diariesUpdated++;
-                                            
-                                            // Clear stolen diary marker if present (NPC has now written about it)
-                                            if (DiaryTheftHandler::ClearStolenDiaryMarker(npcActor)) {
-                                                SKSE::log::info("{} wrote about stolen diary - marker cleared", actorName);
-                                            }
-                                        } else {
-                                            // All entries were deleted - the book becomes empty
-                                            SKSE::log::warn("{} volume {} has no remaining entries - all were deleted", 
-                                                          actorName, latestVolume->volumeNumber);
-                                            
-                                            std::string bookName = actorName + "'s Diary";
-                                            if (latestVolume->volumeNumber > 1) {
-                                                bookName += ", v" + std::to_string(latestVolume->volumeNumber);
-                                            }
-                                            
-                                            // Create empty diary with deletion notice
-                                            std::string emptyBookText = FormatDiaryEntries({}, actorName, 
-                                                                                          latestVolume->startTime, currentTime, MAX_ENTRIES_PER_VOLUME);
-                                            // Write to file, will display on next book open
-                                            WriteDynamicBookFile(bookName, emptyBookText);
-                                            diariesUpdated++;
-                                        }
-                                    }
-                                }
-                                
-                                // NPC has diary and it's updated - skip creation
-                                continue;
-                            } else {
-                                // NPC doesn't have the book anymore (player stole it or it was lost)
-                                SKSE::log::info("{} no longer has volume {} - checking if new volume needed", 
-                                              actorName, latestVolume->volumeNumber);
-                            }
-                        }
-                    }
-
-                    // NPC doesn't have latest volume (stolen/lost) OR no diary exists yet
-                    // Determine starting point for new volume
-                    double startTime = 0.0;
-                    int startingVolumeNumber = 1;
-                    
-                    // Check if we have an existing diary record
-                    if (latestVolume && latestVolume->endTime > 0.0) {
-                        startingVolumeNumber = latestVolume->volumeNumber + 1;
-                        startTime = latestVolume->endTime;
-                        SKSE::log::info("{} has existing volume {}, next volume will be {} starting from {}", 
-                                       actorName, latestVolume->volumeNumber, startingVolumeNumber, startTime);
-                    }
-
-                    // Get all entries from startTime onward (from cached data)
-                    SKSE::log::info("Filtering cached entries for {} (UUID: {}) from timestamp {}", 
-                                   actorName, uuid, startTime);
-                    auto allEntries = filterEntries(startTime, 0.0, 10000);
-                    
-                    if (allEntries.empty()) {
-                        SKSE::log::warn("No diary entries found for {} (UUID: {}) - no book will be created", 
-                                       actorName, uuid);
-                        continue;
-                    }
-                    
-                    SKSE::log::info("Found {} diary entries for {}", allEntries.size(), actorName);
-
-                    const int ENTRIES_PER_VOLUME = SkyrimNetDiaries::Config::GetSingleton()->GetEntriesPerVolume();
-                    int totalEntries = static_cast<int>(allEntries.size());
-                    int volumesNeeded = (totalEntries + ENTRIES_PER_VOLUME - 1) / ENTRIES_PER_VOLUME;
-                    
-                    SKSE::log::info("NPC {} has {} entries, creating {} volume(s) starting from v{}", 
-                                  actorName, totalEntries, volumesNeeded, startingVolumeNumber);
-
-                    // Create all needed volumes with staggered timing to avoid frame drops
-                    // Use background thread to handle delays without freezing game
-                    std::thread([volumesNeeded, startingVolumeNumber, allEntries, ENTRIES_PER_VOLUME, totalEntries, 
-                                uuid, actorName, actorFormID, bookManager, bioTemplateName = cachedActor.bioTemplateName]() {
-                        for (int i = 0; i < volumesNeeded; ++i) {
-                            int volumeNumber = startingVolumeNumber + i;
-                            int entryStartIndex = i * ENTRIES_PER_VOLUME;
-                            int entryEndIndex = std::min((i + 1) * ENTRIES_PER_VOLUME, totalEntries);
-                            
-                            // Use the first and last entry timestamps as boundaries for this volume
-                            double volumeStartTime = allEntries[entryStartIndex].entry_date;
-                            double volumeEndTime = allEntries[entryEndIndex - 1].entry_date;
-                            
-                            // Extract entries for this volume to avoid DB reopening in callback
-                            std::vector<SkyrimNetDiaries::DiaryEntry> volumeEntries(
-                                allEntries.begin() + entryStartIndex, 
-                                allEntries.begin() + entryEndIndex
-                            );
-                            
-                            // Stagger with 100ms delay per volume (on background thread - doesn't freeze game)
-                            if (i > 0) {
-                                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                            }
-                            
-                            SKSE::log::info("Creating volume {} with entries {}-{} (time {}-{})", 
-                                          volumeNumber, entryStartIndex + 1, entryEndIndex, volumeStartTime, volumeEndTime);
-                            
-                            bookManager->CreateDiaryBook(uuid, actorName, volumeStartTime, volumeEndTime, volumeNumber, actorFormID, volumeEntries, bioTemplateName);
-                            
-                            // Clear stolen diary marker after first volume (NPC has now written about it)
-                            if (i == 0) {
-                                auto* npcActor = RE::TESForm::LookupByID<RE::Actor>(actorFormID);
-                                if (npcActor && DiaryTheftHandler::ClearStolenDiaryMarker(npcActor)) {
-                                    SKSE::log::info("{} wrote about stolen diary in first volume - marker cleared", actorName);
-                                }
-                            }
-                        }
-                    }).detach();
-
-                    SKSE::log::info("Dispatched {} diary volume(s) for {} - target actor 0x{:X}", 
-                                  volumesNeeded, actorName, actorFormID);
-                    
-                    diariesCreated += volumesNeeded;
-
-                } catch (const std::exception& e) {
-                    SKSE::log::error("Error processing actor diary: {}", e.what());
-                }
-            }
-
-            // Database was already closed after fetching data
-            
-            // Update last check timestamp
-            g_lastDiaryCheckTimestamp = currentGameTime;
-            SKSE::log::info("Diary processing complete: {} created, {} updated (timestamp: {:.2f})", 
-                          diariesCreated, diariesUpdated, currentGameTime);
-
-        } catch (const std::exception& e) {
-            SKSE::log::error("Exception during daily diary check: {}", e.what());
-        }
-    }
-
+namespace {
 
     // Container change event sink to track diary theft/removal
     class ContainerChangedEventSink : public RE::BSTEventSink<RE::TESContainerChangedEvent> {
@@ -1284,9 +1407,31 @@ namespace {
         }
 
         SKSE::log::info("Saved {} UUID cache entries", cacheSize);
+        
+        // Save current save folder name
+        if (!g_currentSaveFolder.empty()) {
+            if (!a_intfc->OpenRecord(kSerializationTypeFolder, kSerializationVersion)) {
+                SKSE::log::error("Failed to open folder serialization record");
+                return;
+            }
+            
+            std::uint32_t folderLen = static_cast<std::uint32_t>(g_currentSaveFolder.length());
+            if (!a_intfc->WriteRecordData(&folderLen, sizeof(folderLen))) {
+                SKSE::log::error("Failed to write folder name length");
+                return;
+            }
+            if (!a_intfc->WriteRecordData(g_currentSaveFolder.c_str(), folderLen)) {
+                SKSE::log::error("Failed to write folder name");
+                return;
+            }
+            
+            SKSE::log::info("Saved current save folder: {}", g_currentSaveFolder);
+        }
     }
 
     void LoadCallback(SKSE::SerializationInterface* a_intfc) {
+        // Clear save folder cache - will be restored from serialized data below (or detected on first diary event)
+        g_currentSaveFolder.clear();
         
         std::uint32_t type;
         std::uint32_t version;
@@ -1353,6 +1498,23 @@ namespace {
 
                 SKSE::log::info("Restored {} UUID cache entries", g_actorUuidCache.size());
             }
+            else if (type == kSerializationTypeFolder) {
+                // Load save folder name
+                std::uint32_t folderLen;
+                if (!a_intfc->ReadRecordData(&folderLen, sizeof(folderLen))) {
+                    SKSE::log::error("Failed to read folder name length");
+                    continue;
+                }
+                
+                g_currentSaveFolder.resize(folderLen);
+                if (!a_intfc->ReadRecordData(g_currentSaveFolder.data(), folderLen)) {
+                    SKSE::log::error("Failed to read folder name");
+                    g_currentSaveFolder.clear();
+                    continue;
+                }
+                
+                SKSE::log::info("Restored save folder from co-save: {}", g_currentSaveFolder);
+            }
         }
     }
 
@@ -1360,6 +1522,7 @@ namespace {
         // Called when starting a new game - clear all books and tracking
         SkyrimNetDiaries::BookManager::GetSingleton()->Revert();
         g_actorUuidCache.clear();
+        g_currentSaveFolder.clear();
         SKSE::log::info("Reverted all diary data and caches (new game)");
     }
 
@@ -1380,12 +1543,6 @@ namespace {
                 if (scriptEventSource) {
                     scriptEventSource->AddEventSink<RE::TESContainerChangedEvent>(ContainerChangedEventSink::GetSingleton());
                     SKSE::log::info("Registered TESContainerChangedEvent sink");
-
-                    scriptEventSource->AddEventSink<RE::TESSleepStopEvent>(SleepEventSink::GetSingleton());
-                    SKSE::log::info("Registered TESSleepStopEvent sink");
-
-                    scriptEventSource->AddEventSink<RE::TESWaitStopEvent>(WaitEventSink::GetSingleton());
-                    SKSE::log::info("Registered TESWaitStopEvent sink");
                 }
 
                 auto ui = RE::UI::GetSingleton();
@@ -1393,10 +1550,6 @@ namespace {
                     ui->AddEventSink<RE::MenuOpenCloseEvent>(BookMenuEventSink::GetSingleton());
                     SKSE::log::info("Registered BookMenu event sink");
                 }
-                
-                // Start periodic time checking for daily updates
-                SKSE::log::info("Starting periodic game time monitoring (every {:.0f} seconds)", TIME_CHECK_INTERVAL);
-                ScheduleTimeCheck();
 
             } catch (const std::exception& e) {
                 SKSE::log::error("Exception in kDataLoaded: {}", e.what());
@@ -1405,32 +1558,78 @@ namespace {
             }
             break;
         }
-        case SKSE::MessagingInterface::kPostLoadGame: {
-            // Initialize SkyrimNet API after save load
-            SKSE::log::info("Save loaded - initializing SkyrimNet API");
-            
-            if (SkyrimNetDiaries::Database::InitializeAPI()) {
-                SKSE::log::info("✓ SkyrimNet API ready");
-            } else {
-                SKSE::log::warn("Failed to initialize API (SkyrimNet may not be loaded yet)");
+        // ── Inter-plugin API ───────────────────────────────────────────────
+        case SkyrimNetPhysicalDiaries_API::SNPD_QUERY_BOOK: {
+            if (!msg->data || msg->dataLen < sizeof(SkyrimNetPhysicalDiaries_API::SNPDBookQuery)) {
+                SKSE::log::warn("SNPD_QUERY_BOOK: invalid message size {} from '{}'",
+                               msg->dataLen, msg->sender ? msg->sender : "unknown");
+                break;
             }
-            
-            // Initialize last processed day to current day to prevent immediate processing on load
-            if (auto calendar = RE::Calendar::GetSingleton()) {
-                g_lastProcessedDay = calendar->GetDaysPassed();
-                // DON'T set g_lastDiaryCheckTimestamp here - need to process existing entries!
-                // It will be set to 0.0 by default, which will catch all existing entries on first check
-                SKSE::log::info("Initialized daily check at day {:.2f} (timestamp at 0.0 to process existing entries)", 
-                              g_lastProcessedDay);
+            auto* query = static_cast<SkyrimNetPhysicalDiaries_API::SNPDBookQuery*>(msg->data);
+            query->isDiaryBook = false;
+            query->filePath[0] = '\0';
+
+            auto* bookData = SkyrimNetDiaries::BookManager::GetSingleton()
+                                 ->GetBookForFormID(static_cast<RE::FormID>(query->bookFormId));
+            if (bookData) {
+                std::string saveFolder = GetCurrentSaveFolder();
+                if (!saveFolder.empty()) {
+                    std::string bookTitle = bookData->actorName + "'s Diary";
+                    if (bookData->volumeNumber > 1) {
+                        bookTitle += ", v" + std::to_string(bookData->volumeNumber);
+                    }
+                    auto path = std::filesystem::current_path()
+                        / "Data" / "SKSE" / "Plugins" / "DynamicBookFramework" / "Books"
+                        / saveFolder / bookData->bioTemplateName / (bookTitle + ".txt");
+                    std::string pathStr = path.string();
+                    if (pathStr.size() < sizeof(query->filePath)) {
+                        std::memcpy(query->filePath, pathStr.c_str(), pathStr.size() + 1);
+                        query->isDiaryBook = true;
+                        SKSE::log::info("SNPD_QUERY_BOOK: resolved FormID 0x{:X} → '{}'",
+                                       query->bookFormId, pathStr);
+                    } else {
+                        SKSE::log::error("SNPD_QUERY_BOOK: path too long for FormID 0x{:X}",
+                                        query->bookFormId);
+                    }
+                }
             }
             break;
         }
-        case SKSE::MessagingInterface::kNewGame:
-            SKSE::log::info("New game started - resetting diary state");
-            // Reset tracking for new game
-            g_lastProcessedDay = -1.0f;
-            g_lastDiaryCheckTimestamp = 0.0;
+
+        case SKSE::MessagingInterface::kPostLoadGame: {
+            
+            if (!SkyrimNetDiaries::Database::InitializeAPI()) {
+                SKSE::log::warn("Failed to initialize API (SkyrimNet may not be loaded yet)");
+                break;
+            }
+            SKSE::log::info("✓ SkyrimNet API ready");
+
+            // Proactively detect the save folder from SkyrimNet.log so the MCM
+            // can offer Force Rebuild immediately without waiting for a diary event.
+            if (g_currentSaveFolder.empty()) {
+                DetectSaveFolderFromLog();
+            }
+            
+            // Preload: push fresh SetDynamicText for every volume already in cosave so DBF's
+            // in-memory cache is warm before the player can open any book.  Without this,
+            // DBF reads the stale on-disk .txt file on the first open of each session,
+            // which misses any entries written since that file was last regenerated.
+            // This runs independently of catch-up; catch-up handles actors not yet in cosave.
+            SKSE::GetTaskInterface()->AddTask([]() {
+                SkyrimNetDiaries::BookManager::GetSingleton()->RegenerateAllDiaryTexts();
+            });
+
+            // Catch-up: create books for any actor that has diary entries but no book yet.
+            // This handles old-save installs and any entries that were missed while the mod
+            // wasn't installed. Actors that already have all their volumes are skipped.
+            //
+            // The discovery task fires first (fetching all entries in one API call), then
+            // queues one additional task per actor so book creation is spread across ticks.
+            SKSE::GetTaskInterface()->AddTask([]() {
+                QueueBatchCatchUpScan();
+            });
             break;
+        }
         }
     }
 
@@ -1516,6 +1715,10 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
     // Register C++ event handler for diary theft/return detection
     SKSE::log::info("Registering diary theft/return event handler...");
     DiaryTheftHandler::Register();
+
+    // Register Papyrus native functions
+    SKSE::log::info("Registering Papyrus native functions...");
+    PapyrusAPI::Register();
 
     SKSE::log::info("SkyrimNetPhysicalDiaries loaded successfully!");
     

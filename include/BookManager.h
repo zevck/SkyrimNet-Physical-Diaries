@@ -9,11 +9,18 @@ namespace SkyrimNetDiaries {
     struct DiaryBookData {
         std::string actorUuid;
         std::string actorName;
-        RE::FormID bookFormId;     // The actual book FormID (unique identifier)
-        double startTime;          // Unix timestamp - show entries after this (0 = beginning)
-        double endTime;            // Unix timestamp - show entries before this (0 = present/no limit)
+        RE::FormID bookFormId;         // The actual book FormID (unique identifier)
+        double startTime;              // Unix timestamp - show entries after this (0 = beginning)
+        double endTime;                // Unix timestamp - show entries before this (0 = present/no limit)
         int volumeNumber = 1;
-        std::string journalTemplate;  // Which template book was used (for consistent appearance)
+        std::string journalTemplate;   // Which template book was used (for consistent appearance)
+        std::string bioTemplateName;   // Actor-specific subfolder key (e.g. "lydia_3a2") — unique per NPC
+        int lastKnownEntryCount = 0;   // Track expected entry count for deletion detection
+
+        // Runtime-only cache — never serialized, populated on first open per session.
+        // Lets all subsequent opens skip SQLite + file I/O entirely.
+        RE::FormID cachedActorFormId = 0;
+        std::string cachedBookText;
     };
 
     class BookManager {
@@ -72,10 +79,14 @@ namespace SkyrimNetDiaries {
         // Track a book creation
         void RegisterBook(const std::string& actorUuid, const std::string& actorName,
                          RE::FormID bookFormId, double startTime, double endTime, int volumeNumber,
-                         const std::string& journalTemplate = "");
+                         const std::string& journalTemplate = "",
+                         const std::string& bioTemplateName = "");
 
         // Update a book's endTime (when diary is stolen/removed)
         void UpdateBookEndTime(const std::string& actorUuid, int volumeNumber, double endTime);
+        
+        // Update a volume's entry count for deletion detection
+        void UpdateVolumeEntryCount(const std::string& actorUuid, int volumeNumber, int entryCount);
 
         // Unregister a book (when it becomes obsolete due to deletions)
         void UnregisterBook(const std::string& actorUuid);

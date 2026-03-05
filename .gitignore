@@ -889,3 +889,11 @@ build/vcpkg_installed/x64-windows-static/include/nlohmann/byte_container_with_su
 build/vcpkg_installed/x64-windows-static/include/nlohmann/adl_serializer.hpp
 build/vcpkg_installed/vcpkg/info/nlohmann-json_3.12.0_x64-windows-static.list
 build/SkyrimNetPhysicalDiaries.dir/Release/SkyrimNetAPITest.obj
+/.resources
+build/SkyrimNetPhysicalDiaries.dir/Release/PapyrusAPI.obj
+build/x64/Release/INSTALL/INSTALL.recipe
+build/x64/Release/INSTALL/INSTALL.tlog/CustomBuild.command.1.tlog
+build/x64/Release/INSTALL/INSTALL.tlog/CustomBuild.read.1.tlog
+build/x64/Release/INSTALL/INSTALL.tlog/CustomBuild.write.1.tlog
+build/x64/Release/INSTALL/INSTALL.tlog/INSTALL.lastbuildstate
+build/x64/Release/INSTALL/INSTALL.tlog/unsuccessfulbuild

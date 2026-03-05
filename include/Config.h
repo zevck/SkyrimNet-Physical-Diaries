@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PCH.h"
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -17,6 +18,7 @@ namespace SkyrimNetDiaries {
 
         // Load configuration from INI file
         bool Load(const std::filesystem::path& iniPath) {
+            iniPath_ = iniPath;
             try {
                 if (!std::filesystem::exists(iniPath)) {
                     SKSE::log::warn("Config file not found: {} - using defaults", iniPath.string());
@@ -110,6 +112,68 @@ namespace SkyrimNetDiaries {
         int GetFontSizeContent() const { return GetInt("Fonts", "ContentSize", 14); }
         int GetFontSizeSmall() const { return GetInt("Fonts", "SmallSize", 12); }
 
+        // Set an integer value in memory (does not persist until Save() is called)
+        void SetInt(const std::string& section, const std::string& key, int value) {
+            settings_[section + "." + key] = std::to_string(value);
+        }
+
+        // Convenience setters
+        void SetEntriesPerVolume(int v) { SetInt("Diary", "EntriesPerVolume", std::clamp(v, 1, 50)); }
+        void SetFontSizeTitle(int v)    { SetInt("Fonts", "TitleSize",        std::clamp(v, 8, 24)); }
+        void SetFontSizeDate(int v)     { SetInt("Fonts", "DateSize",         std::clamp(v, 8, 24)); }
+        void SetFontSizeContent(int v)  { SetInt("Fonts", "ContentSize",      std::clamp(v, 8, 24)); }
+        void SetFontSizeSmall(int v)    { SetInt("Fonts", "SmallSize",        std::clamp(v, 8, 24)); }
+
+        // Persist current settings back to the INI file loaded via Load()
+        bool Save() const {
+            if (iniPath_.empty()) {
+                SKSE::log::error("Config::Save() called before Load() - iniPath unknown");
+                return false;
+            }
+            return SaveToPath(iniPath_);
+        }
+
+        bool SaveToPath(const std::filesystem::path& path) const {
+            try {
+                std::filesystem::create_directories(path.parent_path());
+                std::ofstream file(path, std::ios::trunc);
+                if (!file.is_open()) {
+                    SKSE::log::error("Config::Save() - failed to open: {}", path.string());
+                    return false;
+                }
+
+                // Write in canonical section order so the file is human-readable
+                struct SectionKey { const char* section; const char* key; int defaultVal; };
+                const SectionKey order[] = {
+                    { "Diary", "EntriesPerVolume", 10 },
+                    { "Fonts", "TitleSize",        18 },
+                    { "Fonts", "DateSize",         16 },
+                    { "Fonts", "ContentSize",      14 },
+                    { "Fonts", "SmallSize",        12 },
+                };
+
+                std::string currentSection;
+                for (auto& sk : order) {
+                    if (sk.section != currentSection) {
+                        if (!currentSection.empty()) file << "\n";
+                        file << "[" << sk.section << "]\n";
+                        currentSection = sk.section;
+                    }
+                    std::string fullKey = std::string(sk.section) + "." + sk.key;
+                    auto it = settings_.find(fullKey);
+                    int val = (it != settings_.end()) ? std::stoi(it->second) : sk.defaultVal;
+                    file << sk.key << " = " << val << "\n";
+                }
+
+                SKSE::log::info("Config saved to: {}", path.string());
+                return true;
+
+            } catch (const std::exception& e) {
+                SKSE::log::error("Exception saving config: {}", e.what());
+                return false;
+            }
+        }
+
     private:
         Config() = default;
         ~Config() = default;
@@ -126,6 +190,7 @@ namespace SkyrimNetDiaries {
         }
 
         std::unordered_map<std::string, std::string> settings_;
+        std::filesystem::path iniPath_;
     };
 
 }  // namespace SkyrimNetDiaries

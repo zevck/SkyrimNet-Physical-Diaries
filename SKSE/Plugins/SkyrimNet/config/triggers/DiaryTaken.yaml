@@ -10,7 +10,7 @@ eventCriteria:
 
 response:
   type: "direct_narration"
-  content: "{{player.name}} now has {{actor.name}}'s diary."
+  content: "{{player.name}} takes {{actor.name}}'s diary."
 
 audience: "target"
 

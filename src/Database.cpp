@@ -1,5 +1,6 @@
 #include "Database.h"
 #include "SkyrimNetPublicAPI.h"
+#include <algorithm>
 #include <sstream>
 
 using json = nlohmann::json;
@@ -129,13 +130,17 @@ namespace SkyrimNetDiaries {
             return {};
         }
 
-        SKSE::log::info("Calling PublicGetDiaryEntries(formId=0x{:X}, limit={}, startTime={:.2f}, endTime={:.2f})",
-                       formId, limit, startTime, endTime);
+        SKSE::log::debug("Calling PublicGetDiaryEntries(formId=0x{:X}, limit={}, startTime={:.2f}, endTime={:.2f})",
+                        formId, limit, startTime, endTime);
 
         std::string jsonResponse = PublicGetDiaryEntries(formId, limit, startTime, endTime);
         
         auto entries = ParseDiaryJSON(jsonResponse);
-        
+
+        // Ensure oldest-first order regardless of what the API returns.
+        std::sort(entries.begin(), entries.end(),
+                  [](const DiaryEntry& a, const DiaryEntry& b) { return a.entry_date < b.entry_date; });
+
         SKSE::log::info("Retrieved {} diary entries for FormID 0x{:X}", entries.size(), formId);
         
         return entries;
@@ -162,39 +167,6 @@ namespace SkyrimNetDiaries {
         }
         
         return templateName;
-    }
-
-    uint32_t Database::GetFormIDByName(const std::string& actorName) {
-        if (!api_initialized_ && !InitializeAPI()) {
-            return 0;
-        }
-
-        // Use engagement API to find actor by name
-        if (!PublicGetActorEngagement) {
-            return 0;
-        }
-
-        // Get top 100 actors and search for matching name
-        std::string engagementJson = PublicGetActorEngagement(100, false, false, 86400.0, 604800.0);
-        
-        try {
-            auto jsonArray = json::parse(engagementJson);
-            
-            if (jsonArray.is_array()) {
-                for (const auto& item : jsonArray) {
-                    if (item.contains("name") && item.contains("formId")) {
-                        std::string name = item["name"].get<std::string>();
-                        if (name == actorName) {
-                            return item["formId"].get<uint32_t>();
-                        }
-                    }
-                }
-            }
-        } catch (const json::exception& e) {
-            SKSE::log::error("Error parsing engagement JSON: {}", e.what());
-        }
-
-        return 0;
     }
 
     // UUID ↔ FormID conversion
@@ -255,93 +227,6 @@ namespace SkyrimNetDiaries {
             return "";
         }
         return GetBioTemplateName(formId);
-    }
-
-    // Get UUID by bio template name
-    std::string Database::GetUUIDByTemplateName(const std::string& templateName) {
-        if (!api_initialized_ && !InitializeAPI()) {
-            return "";
-        }
-
-        // Strategy: Get all diary entries, find first entry with matching template name
-        // This is not efficient but necessary without a direct API
-        auto allEntries = GetAllDiaryEntries(1000);
-        
-        for (const auto& entry : allEntries) {
-            // Get FormID for this entry's UUID
-            uint32_t formId = GetFormIDForUUID(entry.actor_uuid);
-            if (formId != 0) {
-                std::string entryTemplate = GetBioTemplateName(formId);
-                if (entryTemplate == templateName) {
-                    SKSE::log::info("Found UUID for template '{}': {}", templateName, entry.actor_uuid);
-                    return entry.actor_uuid;
-                }
-            }
-        }
-
-        SKSE::log::warn("No UUID found for template name: {}", templateName);
-        return "";
-    }
-
-    // Query diary entries by UUID
-    std::vector<DiaryEntry> Database::GetDiaryEntries(const std::string& uuid, int limit, double startTime) {
-        uint32_t formId = GetFormIDForUUID(uuid);
-        if (formId == 0) {
-            SKSE::log::error("Cannot convert UUID {} to FormID", uuid);
-            return {};
-        }
-        
-        // Call FormID version (endTime = 0.0 means no end limit)
-        return GetDiaryEntries(formId, limit, startTime, 0.0);
-    }
-
-    // Get actors with new diary entries since a timestamp
-    std::unordered_map<std::string, std::string> Database::GetActorUUIDsWithNewEntries(double sinceTimestamp) {
-        std::unordered_map<std::string, std::string> actorsWithNewEntries;
-
-        if (!api_initialized_ && !InitializeAPI()) {
-            return actorsWithNewEntries;
-        }
-
-        // Get all diary entries and filter by timestamp
-        auto allEntries = GetAllDiaryEntries(10000);
-        
-        for (const auto& entry : allEntries) {
-            // Check if entry is newer than timestamp
-            if (entry.entry_date > sinceTimestamp) {
-                // Add to map (UUID → actor name)
-                actorsWithNewEntries[entry.actor_uuid] = entry.actor_name;
-            }
-        }
-
-        SKSE::log::info("Found {} actors with entries since timestamp {:.2f}", 
-                       actorsWithNewEntries.size(), sinceTimestamp);
-        
-        return actorsWithNewEntries;
-    }
-
-    // OPTIMIZED: Fetch all entries once and partition by actor
-    std::unordered_map<std::string, std::vector<DiaryEntry>> Database::GetAllDiaryEntriesGroupedByActor(double sinceTimestamp) {
-        std::unordered_map<std::string, std::vector<DiaryEntry>> entriesByActor;
-
-        if (!api_initialized_ && !InitializeAPI()) {
-            return entriesByActor;
-        }
-
-        // Fetch ALL diary entries from API in one call
-        auto allEntries = GetAllDiaryEntries(10000);
-        
-        // Partition entries by actor UUID locally (avoids N API calls)
-        for (const auto& entry : allEntries) {
-            if (entry.entry_date > sinceTimestamp) {
-                entriesByActor[entry.actor_uuid].push_back(entry);
-            }
-        }
-
-        SKSE::log::info("Grouped {} diary entries across {} actors (since timestamp {:.2f})", 
-                       allEntries.size(), entriesByActor.size(), sinceTimestamp);
-        
-        return entriesByActor;
     }
 
 } // namespace SkyrimNetDiaries
