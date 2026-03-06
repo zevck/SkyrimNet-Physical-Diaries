@@ -1,6 +1,7 @@
 #include "PapyrusAPI.h"
 #include "BookManager.h"
 #include "Config.h"
+#include <spdlog/spdlog.h>
 
 // Forward declarations from main.cpp (defined in global namespace)
 extern void UpdateDiaryForActorInternal(RE::FormID formId);
@@ -71,6 +72,20 @@ namespace PapyrusAPI {
     // MCM Maintenance natives
     // -------------------------------------------------------------------------
 
+    // -------------------------------------------------------------------------
+    // MCM Debug log toggle
+    // -------------------------------------------------------------------------
+
+    bool MCM_GetDebugLog(RE::StaticFunctionTag*) {
+        return SkyrimNetDiaries::Config::GetSingleton()->GetDebugLog();
+    }
+    void MCM_SetDebugLog(RE::StaticFunctionTag*, bool v) {
+        SkyrimNetDiaries::Config::GetSingleton()->SetDebugLog(v);
+        SkyrimNetDiaries::Config::GetSingleton()->Save();
+        spdlog::default_logger()->set_level(v ? spdlog::level::debug : spdlog::level::info);
+        SKSE::log::info("Debug logging {}", v ? "enabled" : "disabled");
+    }
+
     bool MCM_RegenerateTextsOnly(RE::StaticFunctionTag*) {
         SKSE::log::info("[PapyrusAPI] MCM_RegenerateTextsOnly called");
         auto* bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
@@ -138,6 +153,10 @@ namespace PapyrusAPI {
         a_vm->RegisterFunction("ApplyStolenDiaryEffect", "PhysicalDiaryAPI", ApplyStolenDiaryEffect);
         a_vm->RegisterFunction("RemoveStolenDiaryEffect", "PhysicalDiaryAPI", RemoveStolenDiaryEffect);
         a_vm->RegisterFunction("UpdateDiaryForActor", "SkyrimNetDiaries_Native", UpdateDiaryForActorWrapper);
+
+        // MCM Debug log
+        a_vm->RegisterFunction("GetDebugLog", "SkyrimNetDiaries_MCM", MCM_GetDebugLog);
+        a_vm->RegisterFunction("SetDebugLog", "SkyrimNetDiaries_MCM", MCM_SetDebugLog);
 
         // MCM Maintenance
         a_vm->RegisterFunction("RegenerateTextsOnly", "SkyrimNetDiaries_MCM", MCM_RegenerateTextsOnly);

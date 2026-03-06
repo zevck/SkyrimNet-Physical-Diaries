@@ -58,10 +58,6 @@ namespace SkyrimNetDiaries {
         // Set book text directly (for runtime injection)
         void SetBookText(RE::TESObjectBOOK* book, const std::string& text);
 
-        // Write book text to Dynamic Book Framework files
-        bool WriteDynamicBookFile(const std::string& bookTitle, const std::string& text);
-        bool RegisterDiaryInDBF(const std::string& bookTitle);
-
         // Find book by actor UUID
         // Get latest volume for an actor by UUID
         DiaryBookData* GetBookForActor(const std::string& actorUuid);

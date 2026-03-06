@@ -1,8 +1,8 @@
 #include "Database.h"
 #include "BookManager.h"
+#include "BookTextHook.h"
 #include "DiaryTheftHandler.h"
 #include "SkyrimNetPhysicalDiariesAPI.h"
-#include "DynamicBookFrameworkAPI.h"
 #include "SkyrimNetAPITest.h"
 #include "Config.h"
 #include "PapyrusAPI.h"
@@ -327,31 +327,31 @@ std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& 
     int fontSmall = config->GetFontSizeSmall();
     
     // Blank first page
-    bookText = "<font size='" + std::to_string(fontTitle) + "'> </font>\n\n\n\n";
-    
-    // Title page with centering
+    bookText = "[pagebreak]\n\n";
+
+    // Title page — handwriting font, centred; leading newlines push it down visually
+    bookText += "\n\n\n\n";
     bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontTitle) + "'><p align='center'>";
     bookText += actorName + "'s Diary";
     bookText += "</p></font>\n\n";
-    
+
     if (entries.empty()) {
-        bookText += "\n\n<font size='" + std::to_string(fontContent) + "'><p align='center'>All entries from this time period have been removed.</p></font>";
+        bookText += "[pagebreak]\n\n";
+        bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontContent) + "'><p align='center'>All entries from this time period have been removed.</p></font>";
     } else {
-        // Add date range showing first and last entry dates (without day of week for title page)
+        // Date range below title
         std::string firstDate = FormatGameDateShort(entries.front().entry_date);
         std::string lastDate = FormatGameDateShort(entries.back().entry_date);
-        
-        bookText += "<font size='" + std::to_string(fontSmall) + "'><p align='center'>";
+
+        bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontSmall) + "'><p align='center'>";
         if (firstDate == lastDate) {
-            // All entries on same day - just show single date
             bookText += firstDate;
         } else {
-            // Multiple days - show range
             bookText += firstDate + " - " + lastDate;
         }
         bookText += "</p></font>\n\n";
-        
-        // Page break after title page
+
+        // Page break — entries start on the next page
         bookText += "[pagebreak]\n\n";
         
         int entriesIncluded = 0;
@@ -369,10 +369,10 @@ std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& 
             std::string dateStr = FormatGameDate(entry.entry_date);
             
             // Reset font size explicitly before date header (title page font might bleed through pagebreak)
-            bookText += "<font size='" + std::to_string(fontDate) + "'></font>";
+            bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontDate) + "'></font>";
             // Date header
-            bookText += "<font size='" + std::to_string(fontDate) + "'>" + dateStr + "</font>";
-            bookText += "<font size='" + std::to_string(fontContent) + "'></font>\n\n";  // Reset to content font size
+            bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontDate) + "'>" + dateStr + "</font>";
+            bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontContent) + "'></font>\n\n";  // Reset to content font size
             
             // Entry content - wrap EACH paragraph in font tag since Skyrim resets after \n\n
             std::string content = SanitizeBookText(entry.content);
@@ -426,14 +426,14 @@ std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& 
             while ((found = content.find("\n\n", pos)) != std::string::npos) {
                 std::string paragraph = content.substr(pos, found - pos);
                 if (!paragraph.empty()) {
-                    bookText += "<font size='" + std::to_string(fontContent) + "'>" + paragraph + "</font>\n\n";
+                    bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontContent) + "'>" + paragraph + "</font>\n\n";
                 }
                 pos = found + 2;
             }
             // Last paragraph
             std::string lastParagraph = content.substr(pos);
             if (!lastParagraph.empty()) {
-                bookText += "<font size='" + std::to_string(fontContent) + "'>" + lastParagraph + "</font>\n\n";
+                bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontContent) + "'>" + lastParagraph + "</font>\n\n";
             }
             
             bookText += "\n\n";
@@ -448,85 +448,10 @@ std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& 
     return bookText;
 }
 
-// Register diary with Dynamic Book Framework INI
-bool RegisterDiaryInDBF(const std::string& bookTitle, const std::string& saveFolder, const std::string& actorSubfolder)
-{
-    try {
-        auto iniPath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "DynamicBookFramework" / "Configs" / "SkyrimNetPhysicalDiaries.ini";
-        
-        SKSE::log::info("RegisterDiaryInDBF called for '{}' in folder '{}/{}'", bookTitle, saveFolder, actorSubfolder);
-        SKSE::log::info("INI path: {}", iniPath.string());
-        
-        // Ensure parent directories exist
-        std::filesystem::create_directories(iniPath.parent_path());
-        SKSE::log::info("Created parent directories");
-        
-        // The full expected INI line for this specific actor+volume.
-        // Two same-named NPCs get different lines because their actorSubfolder differs.
-        std::string expectedLine = bookTitle + " = " + saveFolder + "/" + actorSubfolder + "/" + bookTitle + ".txt";
-
-        bool needsSection = false;
-        bool alreadyRegistered = false;
-        if (std::filesystem::exists(iniPath)) {
-            SKSE::log::info("INI file exists, checking for existing registration");
-            std::ifstream checkFile(iniPath);
-            if (checkFile.is_open()) {
-                std::string line;
-                bool foundSection = false;
-                while (std::getline(checkFile, line)) {
-                    if (line == "[Books]") {
-                        foundSection = true;
-                    }
-                    if (line == expectedLine) {
-                        alreadyRegistered = true;
-                        SKSE::log::info("Book '{}' already registered in DBF INI (subfolder: {})", bookTitle, actorSubfolder);
-                        break;
-                    }
-                }
-                needsSection = !foundSection;
-                checkFile.close();
-                
-                if (alreadyRegistered) {
-                    return true;
-                }
-            }
-        } else {
-            SKSE::log::info("INI file does not exist, will create");
-            needsSection = true;
-        }
-        
-        // Append to INI file
-        SKSE::log::info("Opening INI file for append");
-        std::ofstream file(iniPath, std::ios::app);
-        if (!file.is_open()) {
-            SKSE::log::error("Failed to open DBF INI for writing: {}", iniPath.string());
-            return false;
-        }
-        
-        // Add [Books] section if needed
-        if (needsSection) {
-            SKSE::log::info("Adding [Books] section");
-            file << "[Books]\n";
-        }
-        
-        // Format: BookTitle = saveFolder/actorSubfolder/Filename.txt
-        SKSE::log::info("Writing entry: {}", expectedLine);
-        file << expectedLine << "\n";
-        file.close();
-        
-        SKSE::log::info("Successfully registered '{}' in DBF INI", bookTitle);
-        return true;
-        
-    } catch (const std::exception& e) {
-        SKSE::log::error("Exception registering diary in DBF INI: {}", e.what());
-        return false;
-    }
-}
-
-// Write diary text to file for Dynamic Book Framework
+// Write diary text to file (used by SNPD_QUERY_BOOK inter-plugin API so SkyrimNet can read diary contents)
 bool WriteDynamicBookFile(const std::string& bookTitle, const std::string& text, const std::string& actorSubfolder)
 {
-    auto booksPath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "DynamicBookFramework" / "Books";
+    auto booksPath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "SkyrimNetPhysicalDiaries" / "Books";
     
     try {
         // Use save-specific folder to prevent save file conflicts
@@ -553,12 +478,6 @@ bool WriteDynamicBookFile(const std::string& bookTitle, const std::string& text,
         file.close();
         
         SKSE::log::info("Wrote book file: {}", filePath.string());
-        
-        // Register in INI with subfolder path
-        RegisterDiaryInDBF(bookTitle, saveFolder, actorSubfolder);
-        
-        // Reload DBF mappings
-        DynamicBookFramework_API::ReloadBookMappings();
         
         return true;
         
@@ -620,7 +539,7 @@ namespace {
                     // ---------------------------------------------------------------
                     if (!volumeInfo->cachedBookText.empty()) {
                         SKSE::log::debug("[SNPD] FAST PATH hit for '{}'", bookName);
-                        DynamicBookFramework_API::SetDynamicText(bookName.c_str(), volumeInfo->cachedBookText.c_str());
+                        // cachedBookText is already set; the OpenBookMenu hook will inject it.
                         return RE::BSEventNotifyControl::kContinue;
                     }
 
@@ -630,8 +549,6 @@ namespace {
                     // ---------------------------------------------------------------
                     SKSE::log::debug("[SNPD] SLOW PATH: '{}' vol={} startTime={:.2f} endTime={:.2f}",
                                     bookName, volumeInfo->volumeNumber, volumeInfo->startTime, volumeInfo->endTime);
-                    SKSE::log::info("[SNPD-DIAG] SLOW PATH '{}': startTime={:.6f} endTime={:.6f} prevVolCT={:.6f}",
-                                    bookName, volumeInfo->startTime, volumeInfo->endTime, volumeInfo->prevVolumeLastCreationTime);
 
                     // Lazy-cache actor FormID — look it up at most once per session.
                     if (volumeInfo->cachedActorFormId == 0) {
@@ -665,8 +582,6 @@ namespace {
                     // +1 sentinel may return MAX_ENTRIES+1 results; std::sort is not stable for
                     // equal keys, so without this cap, which entry is shown is non-deterministic.
                     if (volumeInfo->endTime > 0.0 && static_cast<int>(liveEntries.size()) > MAX_ENTRIES) {
-                        SKSE::log::info("[SNPD-DIAG] SLOW PATH resize: {} -> {} entries for '{}'",
-                                        liveEntries.size(), MAX_ENTRIES, bookName);
                         liveEntries.resize(MAX_ENTRIES);
                         liveCount = MAX_ENTRIES;
                     }
@@ -683,8 +598,7 @@ namespace {
                         bm->UpdateVolumeEntryCount(volumeInfo->actorUuid, volumeInfo->volumeNumber, liveCount);
                     }
 
-                    DynamicBookFramework_API::SetDynamicText(bookName.c_str(), bookText.c_str());
-                    // Cache rendered text so every subsequent open this session is instant.
+                    // Update text cache; the OpenBookMenu hook will inject it on the next open.
                     volumeInfo->cachedBookText = std::move(bookText);
                 }
             }
@@ -1129,7 +1043,7 @@ int ResetAllDiariesInternal() {
     SKSE::log::info("ResetAllDiariesInternal: starting");
 
     auto bookManager   = SkyrimNetDiaries::BookManager::GetSingleton();
-    auto booksBasePath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "DynamicBookFramework" / "Books";
+    auto booksBasePath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "SkyrimNetPhysicalDiaries" / "Books";
     std::string saveFolder = g_currentSaveFolder; // snapshot before clearing
 
     int actorsAffected = 0;
@@ -1372,26 +1286,26 @@ namespace {
     };
 
     void WriteDiaryEntriesToLog(const std::vector<SkyrimNetDiaries::DiaryEntry>& entries) {
-        SKSE::log::info("========================================");
-        SKSE::log::info("DIARY ENTRIES FOUND: {}", entries.size());
-        SKSE::log::info("========================================");
+        SKSE::log::debug("========================================");
+        SKSE::log::debug("DIARY ENTRIES FOUND: {}", entries.size());
+        SKSE::log::debug("========================================");
 
         for (size_t i = 0; i < entries.size(); ++i) {
             const auto& entry = entries[i];
             
-            SKSE::log::info("");
-            SKSE::log::info("--- Entry {} ---", i + 1);
-            SKSE::log::info("Actor: {} (UUID: {})", entry.actor_name, entry.actor_uuid);
-            SKSE::log::info("Location: {}", entry.location);
-            SKSE::log::info("Emotion: {}", entry.emotion);
-            SKSE::log::info("Date: {}", entry.entry_date);
-            SKSE::log::info("Importance: {}", entry.importance_score);
-            SKSE::log::info("Content:");
-            SKSE::log::info("{}", entry.content);
-            SKSE::log::info("");
+            SKSE::log::debug("");
+            SKSE::log::debug("--- Entry {} ---", i + 1);
+            SKSE::log::debug("Actor: {} (UUID: {})", entry.actor_name, entry.actor_uuid);
+            SKSE::log::debug("Location: {}", entry.location);
+            SKSE::log::debug("Emotion: {}", entry.emotion);
+            SKSE::log::debug("Date: {}", entry.entry_date);
+            SKSE::log::debug("Importance: {}", entry.importance_score);
+            SKSE::log::debug("Content:");
+            SKSE::log::debug("{}", entry.content);
+            SKSE::log::debug("");
         }
 
-        SKSE::log::info("========================================");
+        SKSE::log::debug("========================================");
     }
 
     // DEPRECATED: Database polling functions - no longer needed with API
@@ -1621,7 +1535,7 @@ namespace {
                         bookTitle += ", v" + std::to_string(bookData->volumeNumber);
                     }
                     auto path = std::filesystem::current_path()
-                        / "Data" / "SKSE" / "Plugins" / "DynamicBookFramework" / "Books"
+                        / "Data" / "SKSE" / "Plugins" / "SkyrimNetPhysicalDiaries" / "Books"
                         / saveFolder / bookData->bioTemplateName / (bookTitle + ".txt");
                     std::string pathStr = path.string();
                     if (pathStr.size() < sizeof(query->filePath)) {
@@ -1652,10 +1566,9 @@ namespace {
                 DetectSaveFolderFromLog();
             }
             
-            // Preload: push fresh SetDynamicText for every volume already in cosave so DBF's
-            // in-memory cache is warm before the player can open any book.  Without this,
-            // DBF reads the stale on-disk .txt file on the first open of each session,
-            // which misses any entries written since that file was last regenerated.
+            // Preload: regenerate diary text into the in-memory cache for every volume already
+            // in the cosave. The OpenBookMenu hook reads from this cache, so books must be warm
+            // before the player can open any diary. Runs independently of catch-up.
             // This runs independently of catch-up; catch-up handles actors not yet in cosave.
             SKSE::GetTaskInterface()->AddTask([]() {
                 SkyrimNetDiaries::BookManager::GetSingleton()->RegenerateAllDiaryTexts();
@@ -1710,6 +1623,12 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
     // Load configuration
     auto configPath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "SkyrimNetPhysicalDiaries.ini";
     SkyrimNetDiaries::Config::GetSingleton()->Load(configPath);
+
+    // Apply log level from config (must come after Load so INI value is available)
+    if (SkyrimNetDiaries::Config::GetSingleton()->GetDebugLog()) {
+        spdlog::default_logger()->set_level(spdlog::level::debug);
+        SKSE::log::info("Debug logging enabled via config");
+    }
     
     SKSE::log::info("Registering for SKSE messaging interface...");
     auto messaging = SKSE::GetMessagingInterface();
@@ -1738,6 +1657,10 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
     // Register C++ event handler for diary theft/return detection
     SKSE::log::info("Registering diary theft/return event handler...");
     DiaryTheftHandler::Register();
+
+    // Install book text injection hook (replaces Dynamic Book Framework text delivery,
+    // works on both SSE and VR via RELOCATION_ID(50122, 51053)).
+    BookTextHook::Install();
 
     // Register Papyrus native functions
     SKSE::log::info("Registering Papyrus native functions...");

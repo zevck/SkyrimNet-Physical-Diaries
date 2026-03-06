@@ -1,20 +1,22 @@
 #include "PCH.h"
 #include "DiaryTheftHandler.h"
 #include "BookManager.h"
-#include <unordered_set>
 #include <mutex>
 
 namespace DiaryTheftHandler {
     
-    // Track NPCs the player recently interacted with for legitimate trades
+    // Track dialogue/container state for legitimate trade detection.
+    // We only need to know whether dialogue was open when a container opened —
+    // not which specific NPC, so we avoid MenuTopicManager::speaker.get()
+    // which uses a REL::ID lookup that is unavailable without the VR Address Library.
     namespace {
-        std::unordered_set<RE::FormID> g_currentDialogueNPCs; // NPCs currently in active dialogue
-        std::unordered_set<RE::FormID> g_currentLegitimateTradeNPCs; // NPCs in legitimate trade (dialogue+container)
-        bool g_consoleIsOpen = false; // Track if console is currently open
+        bool g_dialogueIsOpen = false;      // Is "Dialogue Menu" currently open?
+        bool g_consoleIsOpen = false;        // Is the console currently open?
+        bool g_legitimateTradeActive = false; // Container opened during dialogue (no console)
         std::mutex g_dialogueMutex;
     }
     
-    // Menu event handler to track dialogue
+    // Menu event handler to track dialogue (open/close only — no speaker lookup)
     class MenuEventHandler : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
     public:
         static MenuEventHandler* GetSingleton() {
@@ -28,23 +30,8 @@ namespace DiaryTheftHandler {
                 return RE::BSEventNotifyControl::kContinue;
             }
 
-            if (a_event->opening) {
-                // Dialogue menu opened - track the NPC
-                auto* menuTopicManager = RE::MenuTopicManager::GetSingleton();
-                if (menuTopicManager && menuTopicManager->speaker) {
-                    std::lock_guard<std::mutex> lock(g_dialogueMutex);
-                    auto formID = menuTopicManager->speaker.get()->GetFormID();
-                    g_currentDialogueNPCs.insert(formID);
-                }
-            } else {
-                // Dialogue menu closed - untrack the NPC
-                auto* menuTopicManager = RE::MenuTopicManager::GetSingleton();
-                if (menuTopicManager && menuTopicManager->speaker) {
-                    std::lock_guard<std::mutex> lock(g_dialogueMutex);
-                    auto formID = menuTopicManager->speaker.get()->GetFormID();
-                    g_currentDialogueNPCs.erase(formID);
-                }
-            }
+            std::lock_guard<std::mutex> lock(g_dialogueMutex);
+            g_dialogueIsOpen = a_event->opening;
 
             return RE::BSEventNotifyControl::kContinue;
         }
@@ -99,25 +86,12 @@ namespace DiaryTheftHandler {
                 return RE::BSEventNotifyControl::kContinue;
             }
 
+            std::lock_guard<std::mutex> lock(g_dialogueMutex);
             if (a_event->opening) {
-                // Container menu opened - check if Dialogue Menu is currently open AND console is NOT open
-                // If dialogue is open and console is closed, this is a legitimate trade
-                std::lock_guard<std::mutex> lock(g_dialogueMutex);
-                
-                g_currentLegitimateTradeNPCs.clear();
-                
-                if (g_consoleIsOpen) {
-                    // Console is open - this is a console command (openactorcontainer)
-                } else if (!g_currentDialogueNPCs.empty()) {
-                    // Dialogue is open and console is not - legitimate trade
-                    g_currentLegitimateTradeNPCs = g_currentDialogueNPCs;
-                } else {
-                    // Neither dialogue nor console - probably container activation
-                }
+                // Legitimate trade = container opened while dialogue is active and console is not
+                g_legitimateTradeActive = !g_consoleIsOpen && g_dialogueIsOpen;
             } else {
-                // Container menu closed - clear legitimate trade flags
-                std::lock_guard<std::mutex> lock(g_dialogueMutex);
-                g_currentLegitimateTradeNPCs.clear();
+                g_legitimateTradeActive = false;
             }
 
             return RE::BSEventNotifyControl::kContinue;
@@ -230,12 +204,10 @@ namespace DiaryTheftHandler {
             }
 
             if (!wasStolen) {
-                // Check if this NPC is currently in a legitimate trade session (container menu opened within 3s of dialogue)
                 bool isLegitimateTransfer = false;
-                
                 {
                     std::lock_guard<std::mutex> lock(g_dialogueMutex);
-                    isLegitimateTransfer = g_currentLegitimateTradeNPCs.contains(sourceActor->GetFormID());
+                    isLegitimateTransfer = g_legitimateTradeActive;
                 }
                 
                 if (isLegitimateTransfer) {

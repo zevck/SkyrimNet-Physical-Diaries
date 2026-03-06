@@ -900,3 +900,4 @@ build/x64/Release/INSTALL/INSTALL.tlog/unsuccessfulbuild
 /build/.resources
 /build
 /vcpkg_installed
+build/SkyrimNetPhysicalDiaries.dir/Release/SkyrimNetAPITest.obj

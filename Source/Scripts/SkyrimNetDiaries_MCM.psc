@@ -22,6 +22,8 @@ Scriptname SkyrimNetDiaries_MCM extends SKI_ConfigBase
 bool Function RegenerateTextsOnly() global native
 bool Function ResetAllDiaries() global native
 ; Config getters / setters  (each setter persists the change to the INI file)
+bool Function GetDebugLog()                      global native
+     Function SetDebugLog(bool value)            global native
 int  Function GetEntriesPerVolume()              global native
      Function SetEntriesPerVolume(int value)     global native
 int  Function GetFontSizeTitle()                 global native
@@ -37,6 +39,7 @@ int  Function GetFontSizeSmall()                 global native
 ; Option handles  (populated in OnPageReset, used in event callbacks)
 ; ============================================================================
 int oidEntriesPerVolume = -1
+int oidDebugLog         = -1
 int oidFontSizeTitle    = -1
 int oidFontSizeDate     = -1
 int oidFontSizeContent  = -1
@@ -82,6 +85,7 @@ event OnPageReset(string page)
 
     ; Reset all option handles so stale IDs cannot be matched
     oidEntriesPerVolume = -1
+    oidDebugLog         = -1
     oidFontSizeTitle    = -1
     oidFontSizeDate     = -1
     oidFontSizeContent  = -1
@@ -121,6 +125,9 @@ function RenderMaintenancePage()
     AddHeaderOption("Diary Maintenance")
     oidResetAll = AddTextOption("Reset All Diaries", "")
 
+    AddHeaderOption("Logging")
+    oidDebugLog = AddToggleOption("Debug Logging", GetDebugLog())
+
 endfunction
 
 ; ============================================================================
@@ -129,7 +136,11 @@ endfunction
 
 event OnOptionSelect(int oid)
 
-    if oid == oidResetAll
+    if oid == oidDebugLog
+        bool newVal = !GetDebugLog()
+        SetDebugLog(newVal)
+        SetToggleOptionValue(oid, newVal)
+    elseif oid == oidResetAll
         bool confirmed = ShowMessage( \
             "Remove all physical diary books from NPCs and delete their text files?\n\n" + \
             "Your SkyrimNet diary entries are NOT affected - books can be regenerated ", \
@@ -218,6 +229,8 @@ event OnOptionHighlight(int oid)
 
     if oid == oidEntriesPerVolume
         SetInfoText("How many diary entries fit in one book volume. Range 1-50, default 10.")
+    elseif oid == oidDebugLog
+        SetInfoText("Write verbose debug information to SkyrimNetPhysicalDiaries.log. Disable for normal use.")
     elseif oid == oidFontSizeTitle
         SetInfoText("Font size for the diary title heading. Range 8-24, default 18.")
     elseif oid == oidFontSizeDate
@@ -241,6 +254,9 @@ event OnOptionDefault(int oid)
     if oid == oidEntriesPerVolume
         SetEntriesPerVolume(10)
         SetSliderOptionValue(oid, 10.0, "{0}")
+    elseif oid == oidDebugLog
+        SetDebugLog(false)
+        SetToggleOptionValue(oid, false)
     elseif oid == oidFontSizeTitle
         SetFontSizeTitle(18)
         SetSliderOptionValue(oid, 18.0, "{0}")

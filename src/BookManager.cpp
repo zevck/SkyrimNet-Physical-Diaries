@@ -1,6 +1,5 @@
 #include "BookManager.h"
 #include "Database.h"
-#include "DynamicBookFrameworkAPI.h"
 #include "DPF_API.h"
 #include <fstream>
 #include <cstring>
@@ -74,10 +73,6 @@ namespace SkyrimNetDiaries {
                 auto templateBook = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>(journalTemplate.c_str());
                 
                 if (templateBook) {
-                    // DEBUG: Check if template already has clean teaches.spell
-                    SKSE::log::info("Template book teaches.spell = 0x{:X}, flags = 0x{:X}",
-                                   reinterpret_cast<uintptr_t>(templateBook->data.teaches.spell),
-                                   templateBook->data.flags.underlying());
                     // Copy basic properties
                     newBook->data.type = templateBook->data.type;
                     newBook->inventoryModel = templateBook->inventoryModel;
@@ -93,14 +88,14 @@ namespace SkyrimNetDiaries {
                     // Template already has clean teaches data - don't touch it
                     // Clearing/nullifying causes DPF serializer to crash on save
                     
-                    SKSE::log::info("Book initialization complete with flags: 0x{:X}", newBook->data.flags.underlying());
+                    SKSE::log::debug("Book initialization complete with flags: 0x{:X}", newBook->data.flags.underlying());
                 } else {
                     SKSE::log::error("Failed to find template book - using minimal initialization");
                     // Without template, zero out teaches structure but let DPF handle the rest
                     std::memset(&newBook->data.teaches, 0, sizeof(newBook->data.teaches));
                     newBook->data.flags.set(RE::OBJ_BOOK::Flag::kCantTake);
                     
-                    SKSE::log::info("Cleared teaches data without template");
+                    SKSE::log::debug("Cleared teaches data without template");
                 }
                 
                 // Set book name with volume number
@@ -117,7 +112,7 @@ namespace SkyrimNetDiaries {
                 
                 if (!cachedEntries.empty()) {
                     // Use pre-cached entries (avoids database reopening)
-                    SKSE::log::info("Using {} pre-cached diary entries for {} (no DB access needed)", cachedEntries.size(), name);
+                    SKSE::log::debug("Using {} pre-cached diary entries for {} (no DB access needed)", cachedEntries.size(), name);
                     allEntries = cachedEntries;
                 } else {
                     // Fallback: fetch from API if entries weren't cached (rare)
@@ -145,9 +140,8 @@ namespace SkyrimNetDiaries {
                             
                             std::string bookText = FormatDiaryEntries(entriesToFormat, name, start, end, MAX_ENTRIES_PER_BOOK);
                             
-                            // Write to persistent file and load into DBF memory
+                            // Write .txt file (used by SNPD_QUERY_BOOK inter-plugin API)
                             WriteDynamicBookFile(bookName, bookText, bioTemplate);
-                            DynamicBookFramework_API::SetDynamicText(bookName.c_str(), bookText.c_str());
                             
                             SKSE::log::info("Set dynamic text for '{}': {} diary entries (of {} total)", 
                                           bookName, entriesToTake, allEntries.size());
@@ -162,6 +156,12 @@ namespace SkyrimNetDiaries {
                             
                             // Register book with the calculated endTime using FormID
                             bookManager->RegisterBook(uuid, name, newBook->GetFormID(), start, volumeEndTime, volume, journalTemplate, bioTemplate, prevVolLastCT, prevVolCountAtBoundary);
+
+                            // Cache text immediately so the OpenBookMenu hook can inject it at first open
+                            auto* registeredVol = bookManager->GetBookForFormID(newBook->GetFormID());
+                            if (registeredVol) {
+                                registeredVol->cachedBookText = bookText;
+                            }
                             
                             // If there are more than max entries, log that additional volumes should be created
                             if (allEntries.size() > MAX_ENTRIES_PER_BOOK) {
@@ -192,19 +192,19 @@ namespace SkyrimNetDiaries {
                                         targetActor = it->second;
                                         foundInCache = true;
                                         if (targetActor) {
-                                            SKSE::log::info("✓ Found actor 0x{:X} ({}) in cache - skipping search", targetFormID, name);
+                                            SKSE::log::debug("✓ Found actor 0x{:X} ({}) in cache - skipping search", targetFormID, name);
                                         }
                                     }
                                 }
                                 
                                 // Only do expensive search if not in cache
                                 if (!foundInCache) {
-                                    SKSE::log::info("Looking up actor for book '{}', targetFormID=0x{:X}, bioTemplate='{}'", bookName, targetFormID, bioTemplate);
+                                    SKSE::log::debug("Looking up actor for book '{}', targetFormID=0x{:X}, bioTemplate='{}'", bookName, targetFormID, bioTemplate);
                                 
                                 // For actors with bio_template_name, use name + last 3 digits matching
                                 // bio_template_name format: "actorname_XYZ" where XYZ are last 3 hex digits of REFERENCE FormID
                                 if (!bioTemplate.empty() && bioTemplate.find('_') != std::string::npos) {
-                                    SKSE::log::info("Using bio_template_name matching for: '{}'", bioTemplate);
+                                    SKSE::log::debug("Using bio_template_name matching for: '{}'", bioTemplate);
                                     
                                     // Extract last 3 digits from bio_template_name (e.g., "fetri_el_874" -> "874")
                                     size_t lastUnderscore = bioTemplate.find_last_of('_');
@@ -213,7 +213,7 @@ namespace SkyrimNetDiaries {
                                         expectedLast3 = bioTemplate.substr(lastUnderscore + 1);
                                         // Convert to lowercase for case-insensitive matching
                                         std::transform(expectedLast3.begin(), expectedLast3.end(), expectedLast3.begin(), ::tolower);
-                                        SKSE::log::info("Searching for actor '{}' with REFERENCE FormID ending in '{}'", name, expectedLast3);
+                                        SKSE::log::debug("Searching for actor '{}' with REFERENCE FormID ending in '{}'", name, expectedLast3);
                                     }
                                     
                                     if (!expectedLast3.empty()) {
@@ -226,7 +226,14 @@ namespace SkyrimNetDiaries {
                                             // Helper lambda to search an actor list
                                             auto searchActorList = [&](RE::BSTArray<RE::ActorHandle>& actorHandles) {
                                                 for (auto& handle : actorHandles) {
-                                                    auto actorRef = handle.get();
+                                                    // Use LookupByHandle (RELOCATION_ID 12204/12332) instead of
+                                                    // handle.get() which uses BSPointerHandle::get() (ID 12785/12922)
+                                                    // and crashes in VR if the address library entry is missing.
+                                                    RE::NiPointer<RE::Actor> actorPtr;
+                                                    if (!RE::Actor::LookupByHandle(handle.native_handle(), actorPtr)) {
+                                                        continue;
+                                                    }
+                                                    auto* actorRef = actorPtr.get(); // NiPointer::get() - safe raw ptr
                                                     if (actorRef) {
                                                         auto actorBase = actorRef->GetActorBase();
                                                         if (actorBase) {
@@ -242,12 +249,12 @@ namespace SkyrimNetDiaries {
                                                                 char refLast3[4];
                                                                 snprintf(refLast3, sizeof(refLast3), "%03x", refFormID & 0xFFF);
                                                                 
-                                                                SKSE::log::info("  Found '{}' at 0x{:X} (last3: {})", actorName, refFormID, refLast3);
+                                                                SKSE::log::debug("  Found '{}' at 0x{:X} (last3: {})", actorName, refFormID, refLast3);
                                                                 
                                                                 // Match last 3 digits of reference FormID
                                                                 if (expectedLast3 == refLast3) {
-                                                                    targetActor = actorRef.get();
-                                                                    SKSE::log::info("✓ Matched! Found actor via bio_template_name: '{}' (0x{:X})", actorName, refFormID);
+                                                                    targetActor = actorRef;
+                                                                    SKSE::log::debug("✓ Matched! Found actor via bio_template_name: '{}' (0x{:X})", actorName, refFormID);
                                                                     return true; // Found!
                                                                 }
                                                             }
@@ -276,7 +283,7 @@ namespace SkyrimNetDiaries {
                                     }
                                 } else {
                                     // No bio_template_name - use FormID lookup (vanilla actors)
-                                    SKSE::log::info("No bio_template_name, using FormID lookup for 0x{:X}", targetFormID);
+                                    SKSE::log::debug("No bio_template_name, using FormID lookup for 0x{:X}", targetFormID);
                                     targetActor = RE::TESForm::LookupByID<RE::Actor>(targetFormID);
                                 }
                                 
@@ -285,9 +292,9 @@ namespace SkyrimNetDiaries {
                                         std::lock_guard<std::mutex> lock(g_actorCacheMutex);
                                         g_actorCache[targetFormID] = targetActor;
                                         if (targetActor) {
-                                            SKSE::log::info("✓ Cached actor 0x{:X} ({}) for subsequent volumes", targetFormID, name);
+                                            SKSE::log::debug("✓ Cached actor 0x{:X} ({}) for subsequent volumes", targetFormID, name);
                                         } else {
-                                            SKSE::log::warn("Cached nullptr for actor 0x{:X} to avoid repeated searches", targetFormID);
+                                            SKSE::log::debug("Cached nullptr for actor 0x{:X} to avoid repeated searches", targetFormID);
                                         }
                                     }
                                 } // End of !foundInCache block
@@ -384,7 +391,7 @@ namespace SkyrimNetDiaries {
         // Check if we already selected a template for this actor
         auto it = actorTemplates_.find(actorUuid);
         if (it != actorTemplates_.end()) {
-            SKSE::log::info("Using cached journal template for {}: {}", actorName, it->second);
+            SKSE::log::debug("Using cached journal template for {}: {}", actorName, it->second);
             return it->second;
         }
         
@@ -394,7 +401,7 @@ namespace SkyrimNetDiaries {
         if (!nightingaleTemplate_.empty()) {
             if (actorName == "Karliah" || actorName == "Gallus" || actorName == "Mercer Frey") {
                 selectedTemplate = nightingaleTemplate_;
-                SKSE::log::info("Selected Nightingale journal for {}", actorName);
+                SKSE::log::debug("Selected Nightingale journal for {}", actorName);
                 actorTemplates_[actorUuid] = selectedTemplate;
                 return selectedTemplate;
             }
@@ -403,7 +410,7 @@ namespace SkyrimNetDiaries {
         // If no variants configured, use base template
         if (journalTemplates_.empty()) {
             selectedTemplate = templateBookEditorId_;
-            SKSE::log::info("No journal variants - using base template for {}", actorName);
+            SKSE::log::debug("No journal variants - using base template for {}", actorName);
             actorTemplates_[actorUuid] = selectedTemplate;
             return selectedTemplate;
         }
@@ -421,7 +428,7 @@ namespace SkyrimNetDiaries {
             selectedTemplate = journalTemplates_[0];
         }
         
-        SKSE::log::info("Selected journal template for {}: {}", actorName, selectedTemplate);
+        SKSE::log::debug("Selected journal template for {}: {}", actorName, selectedTemplate);
         actorTemplates_[actorUuid] = selectedTemplate;
         return selectedTemplate;
     }
@@ -445,7 +452,7 @@ namespace SkyrimNetDiaries {
             return nullptr;
         }
 
-        SKSE::log::info("Looking for template book with Editor ID: {}", templateToUse);
+        SKSE::log::debug("Looking for template book with Editor ID: {}", templateToUse);
         
         // Find book by Editor ID - need to iterate since there's no direct lookup
         RE::TESObjectBOOK* templateBook = nullptr;
@@ -455,7 +462,7 @@ namespace SkyrimNetDiaries {
                 std::string editorId = book->GetFormEditorID();
                 if (editorId == templateToUse) {
                     templateBook = book;
-                    SKSE::log::info("Found template book: {} (FormID: 0x{:X})", 
+                    SKSE::log::debug("Found template book: {} (FormID: 0x{:X})", 
                         book->GetName(), 
                         book->GetFormID());
                     break;
@@ -538,103 +545,6 @@ namespace SkyrimNetDiaries {
         
         SKSE::log::info("Set book text ({} characters) for book 0x{:X}", text.length(), book->GetFormID());
         SKSE::log::warn("Note: Book text injection via memory is limited - text may not display");
-    }
-
-    // Register diary with Dynamic Book Framework INI
-    bool BookManager::RegisterDiaryInDBF(const std::string& bookTitle)
-    {
-        try {
-            auto iniPath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "DynamicBookFramework" / "Configs" / "SkyrimNetPhysicalDiaries.ini";
-            
-            // Ensure parent directories exist
-            std::filesystem::create_directories(iniPath.parent_path());
-            
-            // Check if this book is already registered
-            bool needsSection = false;
-            if (std::filesystem::exists(iniPath)) {
-                std::ifstream checkFile(iniPath);
-                if (checkFile.is_open()) {
-                    std::string line;
-                    bool foundSection = false;
-                    while (std::getline(checkFile, line)) {
-                        if (line == "[Books]") {
-                            foundSection = true;
-                        }
-                        if (line.find(bookTitle) != std::string::npos) {
-                            checkFile.close();
-                            SKSE::log::info("Book '{}' already registered in DBF INI", bookTitle);
-                            return true;
-                        }
-                    }
-                    needsSection = !foundSection;
-                    checkFile.close();
-                }
-            } else {
-                needsSection = true;
-            }
-            
-            // Append to INI file
-            std::ofstream file(iniPath, std::ios::app);
-            if (!file.is_open()) {
-                SKSE::log::error("Failed to open DBF INI for writing: {}", iniPath.string());
-                return false;
-            }
-            
-            // Add [Books] section if needed
-            if (needsSection) {
-                file << "[Books]\n";
-            }
-            
-            // Format: BookTitle = Filename.txt
-            file << bookTitle << " = " << bookTitle << ".txt\n";
-            file.close();
-            
-            SKSE::log::info("Registered '{}' in DBF INI", bookTitle);
-            return true;
-            
-        } catch (const std::exception& e) {
-            SKSE::log::error("Exception registering diary in DBF INI: {}", e.what());
-            return false;
-        }
-    }
-
-    // Write diary text to file for Dynamic Book Framework
-    bool BookManager::WriteDynamicBookFile(const std::string& bookTitle, const std::string& text)
-    {
-        auto booksPath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "DynamicBookFramework" / "Books";
-        
-        try {
-            // Use fixed folder name for SkyrimNet diaries
-            std::string saveFolder = "SkyrimNet";
-            
-            auto saveBooksPath = booksPath / saveFolder;
-            std::filesystem::create_directories(saveBooksPath);
-            
-            auto filePath = saveBooksPath / (bookTitle + ".txt");
-            std::ofstream file(filePath);
-            
-            if (!file.is_open()) {
-                SKSE::log::error("Failed to open file for writing: {}", filePath.string());
-                return false;
-            }
-            
-            file << text;
-            file.close();
-            
-            SKSE::log::info("Wrote book file: {}", filePath.string());
-            
-            // Register in INI
-            RegisterDiaryInDBF(bookTitle);
-            
-            // Reload DBF mappings
-            DynamicBookFramework_API::ReloadBookMappings();
-            
-            return true;
-            
-        } catch (const std::exception& e) {
-            SKSE::log::error("Exception writing diary file: {}", e.what());
-            return false;
-        }
     }
 
     DiaryBookData* BookManager::GetBookForActor(const std::string& actorUuid) {
@@ -837,11 +747,10 @@ namespace SkyrimNetDiaries {
                                                               bookData.startTime, bookData.endTime,
                                                               MAX_ENTRIES_PER_VOLUME);
 
+                    // Write .txt file (used by SNPD_QUERY_BOOK inter-plugin API)
                     ::WriteDynamicBookFile(bookTitle, bookText, bookData.bioTemplateName);
-                    DynamicBookFramework_API::SetDynamicText(bookTitle.c_str(), bookText.c_str());
 
-                    // Update in-memory cache so future opens this session use the fast path
-                    // with the freshly regenerated (e.g. re-fonted) text.
+                    // Update in-memory cache so the OpenBookMenu hook injects the latest text.
                     bookData.cachedBookText = bookText;
 
                     totalRegenerated++;
