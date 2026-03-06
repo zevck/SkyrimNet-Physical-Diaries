@@ -330,7 +330,7 @@ std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& 
     bookText = "[pagebreak]\n\n";
 
     // Title page — handwriting font, centred; leading newlines push it down visually
-    bookText += "\n\n\n\n";
+    bookText += "\n\n\n";
     bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontTitle) + "'><p align='center'>";
     bookText += actorName + "'s Diary";
     bookText += "</p></font>\n\n";
