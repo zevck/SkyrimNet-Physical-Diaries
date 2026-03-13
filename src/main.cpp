@@ -1545,6 +1545,7 @@ namespace {
             }
             auto* query = static_cast<SkyrimNetPhysicalDiaries_API::SNPDBookQuery*>(msg->data);
             query->isDiaryBook = false;
+            query->resultCode  = SkyrimNetPhysicalDiaries_API::SNPDResultCode::NotADiary;
             query->text[0] = '\0';
 
             auto* bm       = SkyrimNetDiaries::BookManager::GetSingleton();
@@ -1560,12 +1561,14 @@ namespace {
                 // Don't expose the "entries removed" placeholder — it would be read aloud by TTS mods.
                 // Leave text empty so callers know there's nothing to read for this volume.
                 if (t.find("All entries from this time period have been removed") == std::string::npos) {
+                    query->resultCode = SkyrimNetPhysicalDiaries_API::SNPDResultCode::Success;
                     size_t copyLen = std::min(t.size(), sizeof(query->text) - 1);
                     std::memcpy(query->text, t.c_str(), copyLen);
                     query->text[copyLen] = '\0';
                     SKSE::log::debug("SNPD_QUERY_BOOK: returned {} chars for FormID 0x{:X} (vol {}/{}, {} entries)",
                                    copyLen, query->bookFormId, query->volumeNumber, query->totalVolumes, query->entryCount);
                 } else {
+                    query->resultCode = SkyrimNetPhysicalDiaries_API::SNPDResultCode::NoEntries;
                     SKSE::log::debug("SNPD_QUERY_BOOK: FormID 0x{:X} is a diary but has no readable entries (all removed)", query->bookFormId);
                 }
             } else if (bookData) {
@@ -1582,6 +1585,7 @@ namespace {
             }
             auto* query = static_cast<SkyrimNetPhysicalDiaries_API::SNPDEntryQuery*>(msg->data);
             query->isValid       = false;
+            query->resultCode    = SkyrimNetPhysicalDiaries_API::SNPDResultCode::NotADiary;
             query->totalEntries  = 0;
             query->returnedIndex = -1;
             query->content[0]    = '\0';
@@ -1610,6 +1614,7 @@ namespace {
             int entryPageCount = static_cast<int>(pages.size()) - 2;
             if (entryPageCount <= 0 ||
                 pages[2].find("All entries from this time period have been removed") != std::string_view::npos) {
+                query->resultCode = SkyrimNetPhysicalDiaries_API::SNPDResultCode::NoEntries;
                 SKSE::log::debug("SNPD_QUERY_ENTRY: FormID 0x{:X} has no entries", query->bookFormId);
                 break;
             }
@@ -1619,6 +1624,7 @@ namespace {
             std::int32_t idx = query->entryIndex;
             if (idx < 0) idx = entryPageCount - 1;
             if (idx >= entryPageCount) {
+                query->resultCode = SkyrimNetPhysicalDiaries_API::SNPDResultCode::IndexOutOfRange;
                 SKSE::log::warn("SNPD_QUERY_ENTRY: entryIndex {} out of range (0-{})",
                                query->entryIndex, entryPageCount - 1);
                 break;
@@ -1628,6 +1634,7 @@ namespace {
             while (!page.empty() && (page.back() == '\n' || page.back() == '\r'))
                 page.remove_suffix(1);
             query->isValid       = true;
+            query->resultCode    = SkyrimNetPhysicalDiaries_API::SNPDResultCode::Success;
             query->returnedIndex = idx;
 
             std::size_t copyLen = std::min(page.size(), sizeof(query->content) - 1);
@@ -1647,6 +1654,7 @@ namespace {
             }
             auto* query = static_cast<SkyrimNetPhysicalDiaries_API::SNPDAllEntriesQuery*>(msg->data);
             query->isValid        = false;
+            query->resultCode     = SkyrimNetPhysicalDiaries_API::SNPDResultCode::NotADiary;
             query->entryCount     = 0;
             query->truncatedCount = 0;
             query->content[0]     = '\0';
@@ -1671,7 +1679,8 @@ namespace {
                 pos = found + kPageSep.size();
             }
 
-            query->isValid = true;
+            query->isValid    = true;
+            query->resultCode = SkyrimNetPhysicalDiaries_API::SNPDResultCode::Success;
 
             int entryPageCount = static_cast<int>(pages.size()) - 2;
             if (entryPageCount <= 0 ||

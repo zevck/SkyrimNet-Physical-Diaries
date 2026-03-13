@@ -48,6 +48,19 @@ namespace SkyrimNetPhysicalDiaries_API
     constexpr std::uint32_t SNPD_QUERY_BOOK  = 'SNPD'; // query full volume text + metadata
     constexpr std::uint32_t SNPD_QUERY_ENTRY = 'SNPE'; // query a single diary entry by index
 
+    // ── Buffer size constants ──────────────────────────────────────────────────
+    constexpr std::size_t SNPD_MAX_BOOK_TEXT    = 65536;  // SNPDBookQuery::text capacity
+    constexpr std::size_t SNPD_MAX_ENTRY_TEXT   = 8192;   // SNPDEntryQuery::content capacity
+    constexpr std::size_t SNPD_MAX_ALL_ENTRIES  = 262144; // SNPDAllEntriesQuery::content capacity
+
+    // ── Result codes ──────────────────────────────────────────────────────────
+    enum class SNPDResultCode : std::int32_t {
+        Success         = 0, // Query completed successfully
+        NotADiary       = 1, // FormID is not one of our diary books
+        IndexOutOfRange = 2, // entryIndex was out of range
+        NoEntries       = 3, // Volume is registered but has no readable entries
+    };
+
     // ── SNPD_QUERY_BOOK ───────────────────────────────────────────────────────
     //
     // Allocate SNPDBookQuery on the stack, fill bookFormId, Dispatch to us.
@@ -62,6 +75,7 @@ namespace SkyrimNetPhysicalDiaries_API
         std::uint32_t bookFormId = 0;                // FormID of the book to query
 
         // ── Response (filled by SkyrimNetPhysicalDiaries) ─────────────────
+        SNPDResultCode resultCode = SNPDResultCode::Success; // see SNPDResultCode
         bool isDiaryBook = false;  // true  → this FormID is one of our diaries
                                    // false → not ours; all other fields are zeroed
 
@@ -78,8 +92,8 @@ namespace SkyrimNetPhysicalDiaries_API
         // Null-terminated rendered diary text (font-tagged, ready for display).
         // Empty (text[0]=='\0') when the volume has no readable entries.
         // Only valid when isDiaryBook == true.
-        // Max length: 65535 characters + null terminator.
-        char text[65536] = {};
+        // Max length: SNPD_MAX_BOOK_TEXT - 1 characters + null terminator.
+        char text[SNPD_MAX_BOOK_TEXT] = {};
     };
 
     // ── SNPD_QUERY_ENTRY ──────────────────────────────────────────────────────
@@ -102,13 +116,14 @@ namespace SkyrimNetPhysicalDiaries_API
         std::int32_t  entryIndex = -1;
 
         // ── Response (filled by SkyrimNetPhysicalDiaries) ─────────────────
+        SNPDResultCode resultCode    = SNPDResultCode::Success; // see SNPDResultCode
         bool          isValid        = false; // false → index out of range or volume not found
         std::int32_t  totalEntries   = 0;     // total entries in this volume
         std::int32_t  returnedIndex  = -1;    // actual 0-based index returned
 
         // Entry text (font-tagged, same as vanilla books) — ready for display or TTS.
-        // Max length: 8191 characters + null terminator.
-        char content[8192]  = {};
+        // Max length: SNPD_MAX_ENTRY_TEXT - 1 characters + null terminator.
+        char content[SNPD_MAX_ENTRY_TEXT]  = {};
     };
 
     // ── SNPD_QUERY_ALL_ENTRIES ───────────────────────────────────────────────
@@ -126,8 +141,8 @@ namespace SkyrimNetPhysicalDiaries_API
     // If the total content exceeds the buffer, as many entries as fit are
     // included and truncatedCount holds how many were dropped from the end.
     //
-    // NOTE: sizeof(SNPDAllEntriesQuery) ~= 64 KB. Prefer heap allocation:
-    // NOTE: sizeof(SNPDAllEntriesQuery) ~= 256 KB. Always heap-allocate:\n    //   auto query = std::make_unique<SNPDAllEntriesQuery>();
+    // NOTE: sizeof(SNPDAllEntriesQuery) ~= 256 KB. Always heap-allocate:
+    //   auto query = std::make_unique<SNPDAllEntriesQuery>();
     struct SNPDAllEntriesQuery
     {
         // ── Request (caller fills in) ──────────────────────────────────────
@@ -135,14 +150,15 @@ namespace SkyrimNetPhysicalDiaries_API
         std::uint32_t bookFormId = 0;
 
         // ── Response (filled by SkyrimNetPhysicalDiaries) ─────────────────
+        SNPDResultCode resultCode    = SNPDResultCode::Success; // see SNPDResultCode
         bool          isValid        = false; // false → volume not found
         std::int32_t  entryCount     = 0;     // number of strings packed in content[]
         std::int32_t  truncatedCount = 0;     // entries that didn't fit (0 = complete)
 
         // Plain entry text (no font tags), packed null-terminated strings.
         // Sized for worst case: 50 entries × ~4 KB average = ~200 KB, plus headroom.
-        // Total capacity: 262143 bytes of text + final '\0' guard.
-        char content[262144] = {};
+        // Total capacity: SNPD_MAX_ALL_ENTRIES - 1 bytes of text + final '\0' guard.
+        char content[SNPD_MAX_ALL_ENTRIES] = {};
     };
 
     constexpr std::uint32_t SNPD_QUERY_ALL_ENTRIES = 'SNPA';
