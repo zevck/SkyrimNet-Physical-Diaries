@@ -109,7 +109,7 @@ namespace SkyrimNetDiaries {
                 entries.push_back(entry);
             }
 
-            SKSE::log::info("Parsed {} diary entries from API JSON", entries.size());
+            SKSE::log::debug("Parsed {} diary entries from API JSON", entries.size());
 
         } catch (const json::exception& e) {
             SKSE::log::error("JSON parsing error: {}", e.what());
@@ -175,7 +175,7 @@ namespace SkyrimNetDiaries {
                 [endTime](const DiaryEntry& e) { return e.entry_date > endTime; }), entries.end());
         }
 
-        SKSE::log::info("Retrieved {} diary entries for FormID 0x{:X}", entries.size(), formId);
+        SKSE::log::debug("Retrieved {} diary entries for FormID 0x{:X}", entries.size(), formId);
         
         return entries;
     }
@@ -197,7 +197,7 @@ namespace SkyrimNetDiaries {
         std::string templateName = PublicGetBioTemplateName(formId);
         
         if (!templateName.empty()) {
-            SKSE::log::info("Bio template for 0x{:X}: {}", formId, templateName);
+            SKSE::log::debug("Bio template for 0x{:X}: {}", formId, templateName);
         }
         
         return templateName;

@@ -5,6 +5,12 @@ Scriptname SkyrimNetDiaries_EventListener extends Quest
 Event OnInit()
     RegisterForModEvent("SkyrimNet_DiaryCreated", "OnDiaryCreated")
     Debug.Trace("[SkyrimNetDiaries] Registered for SkyrimNet_DiaryCreated ModEvent")
+    
+    ; Register decorator for SkyrimNet prompts.
+    ; NOTE: SkyrimNet resets decorators on every load. Re-registration on subsequent
+    ; loads is handled by the C++ plugin (kPostLoadGame → Papyrus VM dispatch).
+    SkyrimNetApi.RegisterDecorator("snpd_diary_stolen", "SkyrimNetDiaries_Decorators", "IsDiaryStolen")
+    Debug.Trace("[SkyrimNetDiaries] Registered snpd_diary_stolen decorator")
 EndEvent
 
 Event OnDiaryCreated(string eventName, string strArg, float numArg, Form sender)
@@ -35,7 +41,12 @@ Event OnDiaryCreated(string eventName, string strArg, float numArg, Form sender)
                 
                 if formId > 0
                     Debug.Trace("[SkyrimNetDiaries] Diary created for FormID: " + formId)
-                    ; Call native C++ function to handle the update
+                    
+                    ; UpdateDiaryForActor handles theft clearing in C++ (doesn't need a loaded Actor).
+                    ; Calling SetTheftCleared from Papyrus was unreliable because Game.GetForm() returns
+                    ; None for NPCs not in a loaded cell, silently skipping the theft clear.
+                    
+                    ; Call native C++ function to handle the diary update (also clears theft tracking)
                     SkyrimNetDiaries_Native.UpdateDiaryForActor(formId)
                 else
                     Debug.Trace("[SkyrimNetDiaries] Failed to parse FormID from JSON: " + strArg)

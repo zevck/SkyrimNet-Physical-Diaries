@@ -50,23 +50,28 @@ namespace
                           bool                 a_useDefaultPos)
         {
             if (a_book) {
-                auto* vol = SkyrimNetDiaries::BookManager::GetSingleton()
-                                ->GetBookForFormID(a_book->GetFormID());
-                if (vol && !vol->cachedBookText.empty()) {
-                    // Use a static BSString so the underlying storage persists beyond
-                    // this stack frame. VR defers book rendering to the next frame, so a
-                    // stack-allocated BSString would be a dangling reference by then.
-                    // We also write to BookMenu::GetDescription() — the engine-side global
-                    // that VR's renderer reads directly rather than using the parameter.
-                    static RE::BSString s_injectedText;
-                    s_injectedText = vol->cachedBookText.c_str();
-                    // GetDescription() uses RELOCATION_ID(519297, 405837) — the VR side
-                    // (405837) is absent from the VR address library, so only call it on SSE.
-                    if (!REL::Module::IsVR()) {
-                        RE::BookMenu::GetDescription() = s_injectedText;
+                auto* bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
+                auto* vol = bookManager->GetBookForFormID(a_book->GetFormID());
+                if (vol) {
+                    // Refresh text before injection: detects new/deleted entries and
+                    // reformats if the live count differs from the cached count.
+                    bookManager->RefreshVolumeOnOpen(vol);
+                    if (!vol->cachedBookText.empty()) {
+                        // Use a static BSString so the underlying storage persists beyond
+                        // this stack frame. VR defers book rendering to the next frame, so a
+                        // stack-allocated BSString would be a dangling reference by then.
+                        // We also write to BookMenu::GetDescription() — the engine-side global
+                        // that VR's renderer reads directly rather than using the parameter.
+                        static RE::BSString s_injectedText;
+                        s_injectedText = vol->cachedBookText.c_str();
+                        // GetDescription() uses RELOCATION_ID(519297, 405837) — the VR side
+                        // (405837) is absent from the VR address library, so only call it on SSE.
+                        if (!REL::Module::IsVR()) {
+                            RE::BookMenu::GetDescription() = s_injectedText;
+                        }
+                        return func(s_injectedText, a_extra, a_ref, a_book,
+                                    a_pos, a_rot, a_scale, a_useDefaultPos);
                     }
-                    return func(s_injectedText, a_extra, a_ref, a_book,
-                                a_pos, a_rot, a_scale, a_useDefaultPos);
                 }
             }
             return func(a_desc, a_extra, a_ref, a_book,

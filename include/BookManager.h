@@ -3,6 +3,7 @@
 #include "PCH.h"
 #include "Database.h"  // For DiaryEntry struct
 #include "Config.h"    // For configuration settings
+#include "DiaryDB.h"   // Persistent SQLite store
 
 namespace SkyrimNetDiaries {
 
@@ -23,10 +24,18 @@ namespace SkyrimNetDiaries {
         double prevVolumeLastCreationTime = 0.0;
         int prevVolumeCountAtBoundary = 0;   // how many prev-vol entries share the boundary date/CT
 
+        // Actor FormID stored at creation time — authoritative, never derived from UUID roundtrip.
+        RE::FormID actorFormId = 0;
+
         // Runtime-only cache — never serialized, populated on first open per session.
         // Lets all subsequent opens skip SQLite + file I/O entirely.
         RE::FormID cachedActorFormId = 0;
         std::string cachedBookText;
+
+        // True once this volume has been included in a Skyrim .ess save file.
+        // Set by kPostSaveGame.  When false the NPC's inventory state is not
+        // authoritative (reload-without-save) and QueueInventoryCheck may re-add.
+        bool persistedInSave = false;
     };
 
     class BookManager {
@@ -79,6 +88,7 @@ namespace SkyrimNetDiaries {
 
         // Get all books (for checking volume numbers)
         const std::unordered_map<std::string, std::vector<DiaryBookData>>& GetAllBooks() const { return books_; }
+        std::unordered_map<std::string, std::vector<DiaryBookData>>& GetAllBooksRef() { return books_; }
 
         // Track a book creation
         void RegisterBook(const std::string& actorUuid, const std::string& actorName,
@@ -86,7 +96,8 @@ namespace SkyrimNetDiaries {
                          const std::string& journalTemplate = "",
                          const std::string& bioTemplateName = "",
                          double prevVolumeLastCreationTime = 0.0,
-                         int prevVolumeCountAtBoundary = 0);
+                         int prevVolumeCountAtBoundary = 0,
+                         RE::FormID actorFormId = 0);
 
         // Update a book's endTime (when diary is stolen/removed)
         void UpdateBookEndTime(const std::string& actorUuid, int volumeNumber, double endTime);
@@ -104,7 +115,34 @@ namespace SkyrimNetDiaries {
         // Regenerate all diary texts from database (called on game load)
         void RegenerateAllDiaryTexts();
 
-        // Serialization
+        // Load all volumes from DiaryDB into books_ / actorTemplates_.
+        // Validates DPF form IDs — volumes with invalid forms are removed from the
+        // DB so UpdateDiaryForActorInternal will recreate them.  Returns UUIDs of
+        // actors whose latest volume was invalid (useful for logging).
+        std::vector<std::string> LoadFromDB();
+
+        // Clears the actor reference cache so the next inventory-add does a fresh
+        // lookup.  Must be called on each kPostLoadGame to avoid stale pointers.
+        static void ClearActorCache();
+
+        // For every volume currently in books_, queues a game-thread task that checks
+        // whether the owning NPC has the book in their inventory and re-adds it if not.
+        // Call this after LoadFromDB to recover books whose DPF forms survived an
+        // in-session reload but whose inventory entries did not.
+        void QueueInventoryCheck();
+
+        // Write every in-memory book and actor template to DiaryDB.
+        // Safe to call when DB is not open (no-op in that case).
+        // Used at save time to flush books created before the DB was opened
+        // (e.g. first session on a brand-new save).
+        void FlushToDB();
+
+        // Called by BookTextHook immediately before a diary volume's text is injected
+        // into the book UI.  Queries live entry count, reformats if it changed, and
+        // updates the sealed endTime if entries were deleted.
+        void RefreshVolumeOnOpen(DiaryBookData* vol);
+
+        // Serialization (co-save — legacy; data now lives in DiaryDB)
         void Save(SKSE::SerializationInterface* a_intfc);
         void Load(SKSE::SerializationInterface* a_intfc, std::uint32_t version = 1);
         void Revert();

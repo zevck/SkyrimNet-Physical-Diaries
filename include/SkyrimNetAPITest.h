@@ -84,4 +84,12 @@ namespace SkyrimNetAPITest {
      */
     void TestSpecificActor(uint32_t formId);
 
+    /**
+     * Test all three inter-plugin API messages (SNPD_QUERY_BOOK, SNPD_QUERY_ENTRY,
+     * SNPD_QUERY_ALL_ENTRIES) using the first available tracked diary book.
+     * Results are written to the SKSE log as PASS/FAIL lines.
+     * No-ops if no books are loaded yet.
+     */
+    void TestInterPluginAPI();
+
 } // namespace SkyrimNetAPITest

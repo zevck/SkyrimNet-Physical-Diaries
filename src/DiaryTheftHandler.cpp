@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "DiaryTheftHandler.h"
 #include "BookManager.h"
+#include "Database.h"
 #include <mutex>
 
 namespace DiaryTheftHandler {
@@ -155,7 +156,16 @@ namespace DiaryTheftHandler {
     private:
         void HandleDiaryAcquired(const RE::TESContainerChangedEvent* a_event, const std::string& bookName) {
             auto* player = RE::PlayerCharacter::GetSingleton();
-            
+
+            // Look up our tracking data first — this is the authoritative ownership check.
+            // actorFormId was stored at DPF book-creation time and is more reliable than
+            // a substring name search (handles titled NPCs, apostrophes, etc.).
+            auto* bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
+            auto* bookData = bookManager->GetBookForFormID(a_event->baseObj);
+            if (!bookData) {
+                return; // Not one of our tracked diary volumes
+            }
+
             // Get source actor (who had the diary)
             auto* sourceRef = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_event->oldContainer);
             if (!sourceRef) {
@@ -172,10 +182,27 @@ namespace DiaryTheftHandler {
                 return;
             }
 
-            // Check if this diary actually belongs to the source NPC
-            std::string sourceName = sourceActor->GetName();
-            if (bookName.find(sourceName) == std::string::npos) {
-                return;
+            // Confirm this diary belongs to the source actor via UUID comparison.
+            // UUIDs are stable across load-order changes (unlike stored FormIDs which break
+            // for ESL-flagged plugins). We resolve the source actor's UUID from its live
+            // FormID (safe — we hold an in-memory actor pointer, so the runtime FormID is
+            // always correct). Falls back to name-in-title for volumes whose actorUuid was
+            // not yet assigned by SkyrimNet at creation time.
+            std::string sourceUuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(sourceActor->GetFormID());
+            if (!sourceUuid.empty() && sourceUuid != "0" &&
+                !bookData->actorUuid.empty() && bookData->actorUuid != "0") {
+                if (sourceUuid != bookData->actorUuid) {
+                    SKSE::log::info("[Physical Diaries] Diary '{}' belongs to UUID '{}', not {} ('{}') — ignoring",
+                                   bookName, bookData->actorUuid,
+                                   sourceActor->GetName(), sourceUuid);
+                    return;
+                }
+            } else {
+                // Legacy fallback: UUID not yet available, use name-in-title check
+                std::string sourceName = sourceActor->GetName();
+                if (bookName.find(sourceName) == std::string::npos) {
+                    return;
+                }
             }
 
             // Check if the book was flagged as stolen (has ownership data)
@@ -225,27 +252,28 @@ namespace DiaryTheftHandler {
             SKSE::log::info("[Physical Diaries] Player stole {} from {} (item flagged as stolen)", 
                            bookName, sourceActor->GetName());
 
-            // Only apply the faction flag if this is the NPC's most recent diary volume.
-            // Stealing an old volume (NPC has since written a new one) should not trigger the stolen reaction.
-            auto* bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
-            auto* bookData = bookManager->GetBookForFormID(a_event->baseObj);
+            // Apply the stolen diary effect for ANY volume that belongs to this NPC
+            // Even old volumes matter - they are still personal diaries
             if (bookData) {
-                auto* allVolumes = bookManager->GetAllVolumesForActor(bookData->actorUuid);
-                if (allVolumes && !allVolumes->empty()) {
-                    int maxVolume = 0;
-                    for (const auto& vol : *allVolumes) {
-                        if (vol.volumeNumber > maxVolume) maxVolume = vol.volumeNumber;
-                    }
-                    if (bookData->volumeNumber < maxVolume) {
-                        SKSE::log::info("[Physical Diaries] Stolen diary '{}' is v{} but NPC's latest is v{} - not applying faction marker",
-                                       bookName, bookData->volumeNumber, maxVolume);
-                        return;
-                    }
+                SKSE::log::debug("[Physical Diaries] Applying theft tracking for {} volume {} - any diary theft matters", 
+                               sourceActor->GetName(), bookData->volumeNumber);
+                // Derive UUID fresh from the actor's FormID so it always matches what
+                // IsDiaryStolen uses (GetUUIDFromFormID on the same FormID).  Using
+                // bookData->actorUuid caused mismatches when SkyrimNet hadn't yet
+                // assigned a stable UUID at book-creation time.
+                std::string liveUuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(sourceActor->GetFormID());
+                if (liveUuid.empty() || liveUuid == "0") {
+                    SKSE::log::warn("[Physical Diaries] Could not resolve UUID for {} (FormID 0x{:X}) — falling back to stored UUID",
+                                   sourceActor->GetName(), sourceActor->GetFormID());
+                    liveUuid = bookData->actorUuid;
                 }
+                SKSE::log::debug("[Physical Diaries] Using live UUID {} for theft tracking (stored: {})",
+                               liveUuid, bookData->actorUuid);
+                ApplyStolenDiaryEffect(sourceActor, bookName, liveUuid, bookData->volumeNumber);
+            } else {
+                SKSE::log::warn("[Physical Diaries] Could not find book data for stolen diary FormID 0x{:X}", 
+                               a_event->baseObj);
             }
-
-            // Apply the stolen diary effect
-            ApplyStolenDiaryEffect(sourceActor, bookName);
         }
 
         void HandleDiaryReturned(const RE::TESContainerChangedEvent* a_event, const std::string& bookName) {
@@ -279,9 +307,24 @@ namespace DiaryTheftHandler {
 
             // Confirm the diary actually belongs to the NPC receiving it.
             // Giving someone else's diary to an NPC must not clear that NPC's stolen marker.
-            if (bookData->actorName != destActor->GetName()) {
-                SKSE::log::info("[Physical Diaries] '{}' belongs to '{}', not '{}' - ignoring for faction purposes",
-                               bookName, bookData->actorName, destActor->GetName());
+            // Use live UUID from the actor's FormID (same as what IsDiaryStolen and the
+            // theft-recording path use) rather than bookData->actorUuid which may have
+            // been stored before SkyrimNet assigned a stable UUID.
+            std::string destUuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(destActor->GetFormID());
+            if (destUuid.empty() || destUuid == "0") {
+                SKSE::log::warn("[Physical Diaries] Could not resolve live UUID for {} — using stored UUID for return check",
+                               destActor->GetName());
+                destUuid = bookData->actorUuid;
+            }
+            // The book's owner UUID may also be the stale version; resolve it live too.
+            std::string bookOwnerUuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(
+                SkyrimNetDiaries::Database::GetFormIDForUUID(bookData->actorUuid));
+            if (bookOwnerUuid.empty() || bookOwnerUuid == "0") {
+                bookOwnerUuid = bookData->actorUuid;
+            }
+            if (bookOwnerUuid != destUuid) {
+                SKSE::log::info("[Physical Diaries] '{}' belongs to UUID '{}', not '{}' ({}) - ignoring for theft purposes",
+                               bookName, bookOwnerUuid, destActor->GetName(), destUuid);
                 return;
             }
 
@@ -296,72 +339,59 @@ namespace DiaryTheftHandler {
             }
 
             if (returnedVolume < maxVolume) {
-                SKSE::log::info("[Physical Diaries] '{}' returned (v{}) but NPC has written up to v{} - keeping faction marker",
+                SKSE::log::info("[Physical Diaries] '{}' returned (v{}) but NPC has written up to v{} - removing from stolen list but may still show stolen if other volumes missing",
                                bookName, returnedVolume, maxVolume);
+                RemoveStolenDiaryEffect(destActor, bookName, destUuid, returnedVolume);
             } else {
-                SKSE::log::info("[Physical Diaries] '{}' returned (v{}, NPC's latest) - removing faction marker",
+                SKSE::log::info("[Physical Diaries] '{}' returned (v{}, NPC's latest) - removing from stolen list",
                                bookName, returnedVolume);
-                RemoveStolenDiaryEffect(destActor, bookName);
+                RemoveStolenDiaryEffect(destActor, bookName, destUuid, returnedVolume);
             }
         }
 
-        void ApplyStolenDiaryEffect(RE::Actor* actor, const std::string& bookName) {
-            // Look up the faction that marks a stolen diary
-            auto* faction = RE::TESForm::LookupByEditorID<RE::TESFaction>("SNPD_DiaryStolenFaction");
-            if (!faction) {
-                SKSE::log::error("[Physical Diaries] CRITICAL: Failed to find SNPD_DiaryStolenFaction in ESP");
-                SKSE::log::error("[Physical Diaries] Make sure the ESP contains a faction with Editor ID: SNPD_DiaryStolenFaction");
+        void ApplyStolenDiaryEffect(RE::Actor* actor, const std::string& bookName, const std::string& actorUuid, int volumeNumber) {
+            if (!actor) {
+                SKSE::log::warn("[Physical Diaries] ApplyStolenDiaryEffect called with null actor");
                 return;
             }
-
-            SKSE::log::info("[Physical Diaries] Found SNPD_DiaryStolenFaction (FormID: 0x{:X})", faction->GetFormID());
-
-            // Check if actor is already in this faction
-            if (actor->IsInFaction(faction)) {
-                SKSE::log::info("[Physical Diaries] {} already in SNPD_DiaryStolenFaction (diary already marked stolen)", 
-                               actor->GetName());
-                return;
-            }
-
-            // Add actor to the faction with rank 1
-            actor->AddToFaction(faction, 1);
             
-            // VERIFY the faction was actually added
-            if (actor->IsInFaction(faction)) {
-                SKSE::log::info("[Physical Diaries] ✓ SUCCESS: Added {} to SNPD_DiaryStolenFaction (stolen: {})", 
-                               actor->GetName(), bookName);
+            // Record this specific volume as stolen in DB
+            auto calendar = RE::Calendar::GetSingleton();
+            if (calendar) {
+                double gameTime = calendar->GetCurrentGameTime() * 86400.0;
+                auto* diaryDB = SkyrimNetDiaries::DiaryDB::GetSingleton();
+                
+                diaryDB->AddStolenVolume(actorUuid, volumeNumber, gameTime);
+                // Update last_known_game_time so backwards time travel detection works
+                // even if the player doesn't save after stealing
+                diaryDB->UpdateLastKnownGameTime(actorUuid, gameTime);
+                
+                SKSE::log::debug("[Physical Diaries] Recorded volume {} theft for {} at game time {:.2f} (UUID: {}, book: {})", 
+                               volumeNumber, actor->GetName(), gameTime, actorUuid, bookName);
             } else {
-                SKSE::log::error("[Physical Diaries] ✗ FAILED: AddToFaction() called but actor not in faction!", 
-                                actor->GetName());
+                SKSE::log::error("[Physical Diaries] Failed to get Calendar singleton for theft tracking");
             }
         }
 
-        void RemoveStolenDiaryEffect(RE::Actor* actor, const std::string& bookName) {
-            // Look up the faction that marks a stolen diary
-            auto* faction = RE::TESForm::LookupByEditorID<RE::TESFaction>("SNPD_DiaryStolenFaction");
-            if (!faction) {
-                SKSE::log::error("[Physical Diaries] CRITICAL: Failed to find SNPD_DiaryStolenFaction in ESP");
+        void RemoveStolenDiaryEffect(RE::Actor* actor, const std::string& bookName, const std::string& actorUuid, int volumeNumber) {
+            if (!actor) {
+                SKSE::log::warn("[Physical Diaries] RemoveStolenDiaryEffect called with null actor");
                 return;
             }
-
-            // Check if actor is in this faction
-            if (!actor->IsInFaction(faction)) {
-                SKSE::log::info("[Physical Diaries] {} not in SNPD_DiaryStolenFaction (diary was never marked stolen or already removed)", 
-                               actor->GetName());
-                return;
-            }
-
-            // Remove actor from the faction
-            actor->RemoveFromFaction(faction);
             
-            // VERIFY the faction was actually removed
-            if (!actor->IsInFaction(faction)) {
-                SKSE::log::info("[Physical Diaries] ✓ SUCCESS: Removed {} from SNPD_DiaryStolenFaction (returned: {})", 
-                               actor->GetName(), bookName);
-            } else {
-                SKSE::log::error("[Physical Diaries] ✗ FAILED: RemoveFromFaction() called but actor still in faction!", 
-                                actor->GetName());
+            // Remove this specific volume from stolen list
+            auto* diaryDB = SkyrimNetDiaries::DiaryDB::GetSingleton();
+            diaryDB->RemoveStolenVolume(actorUuid, volumeNumber);
+            
+            // Update last_known_game_time for backwards time travel detection
+            auto calendar = RE::Calendar::GetSingleton();
+            if (calendar) {
+                double gameTime = calendar->GetCurrentGameTime() * 86400.0;
+                diaryDB->UpdateLastKnownGameTime(actorUuid, gameTime);
             }
+            
+            SKSE::log::debug("[Physical Diaries] Removed volume {} from stolen list for {} (returned: {})",
+                           volumeNumber, actor->GetName(), bookName);
         }
 
         void HandleLegitimateTransfer(RE::Actor* actor, const std::string& bookName) {
@@ -419,53 +449,8 @@ namespace DiaryTheftHandler {
     }
     
     void VerifyESPSetup() {
-        SKSE::log::info("=== Verifying ESP Setup for Physical Diaries ===");
-        
-        // Check for the faction
-        auto* faction = RE::TESForm::LookupByEditorID<RE::TESFaction>("SNPD_DiaryStolenFaction");
-        if (!faction) {
-            SKSE::log::error("✗ SNPD_DiaryStolenFaction NOT FOUND in loaded ESPs!");
-            SKSE::log::error("  Make sure 'SkyrimNet Physical Diaries.esp' is active in your load order");
-            SKSE::log::error("  and contains a faction with Editor ID: SNPD_DiaryStolenFaction");
-            return;
-        }
-        
-        SKSE::log::info("✓ Found SNPD_DiaryStolenFaction");
-        SKSE::log::info("  - FormID: 0x{:X}", faction->GetFormID());
-        SKSE::log::info("  - Name: {}", faction->GetFullName());
-        
-        SKSE::log::info("=== ESP Verification Complete ===");
-    }
-    
-    bool ClearStolenDiaryMarker(RE::Actor* actor) {
-        if (!actor) {
-            return false;
-        }
-        
-        // Look up the faction that marks a stolen diary
-        auto* faction = RE::TESForm::LookupByEditorID<RE::TESFaction>("SNPD_DiaryStolenFaction");
-        if (!faction) {
-            SKSE::log::error("[Physical Diaries] Failed to find SNPD_DiaryStolenFaction for cleanup");
-            return false;
-        }
-        
-        // Check if actor is in this faction
-        if (!actor->IsInFaction(faction)) {
-            return false; // Not marked as stolen, nothing to clear
-        }
-        
-        // Remove actor from the faction
-        actor->RemoveFromFaction(faction);
-        
-        // VERIFY the faction was actually removed
-        if (!actor->IsInFaction(faction)) {
-            SKSE::log::info("[Physical Diaries] ✓ Cleared stolen diary marker from {} (new entry generated)", 
-                           actor->GetName());
-            return true;
-        } else {
-            SKSE::log::error("[Physical Diaries] ✗ Failed to clear stolen diary marker from {}", 
-                            actor->GetName());
-            return false;
-        }
+        // Verify that required forms exist in the ESP
+        // This is just a diagnostic check - the decorator system doesn't need these
+        SKSE::log::info("[Physical Diaries] ESP verification: Using database-backed theft tracking");
     }
 }

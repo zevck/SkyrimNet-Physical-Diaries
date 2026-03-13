@@ -73,7 +73,7 @@ event OnConfigClose()
 endevent
 
 event OnConfigInit()
-    ModName = "Physical Diaries"
+    ModName = "SkyrimNet Physical Diaries"
     Pages   = new string[2]
     Pages[0] = "Settings"
     Pages[1] = "Maintenance"
@@ -142,7 +142,7 @@ event OnOptionSelect(int oid)
         SetToggleOptionValue(oid, newVal)
     elseif oid == oidResetAll
         bool confirmed = ShowMessage( \
-            "Remove all physical diary books from NPCs and delete their text files?\n\n" + \
+            "Remove all physical diary books from NPCs and clear tracking?\n\n" + \
             "Your SkyrimNet diary entries are NOT affected - books can be regenerated ", \
             true, "Confirm", "Cancel")
         if confirmed
@@ -228,7 +228,7 @@ endevent
 event OnOptionHighlight(int oid)
 
     if oid == oidEntriesPerVolume
-        SetInfoText("How many diary entries fit in one book volume. Range 1-50, default 10.")
+        SetInfoText("How many diary entries fit in one book volume. Higher number means longer book load time. Range 1-50, default 10.")
     elseif oid == oidDebugLog
         SetInfoText("Write verbose debug information to SkyrimNetPhysicalDiaries.log. Disable for normal use.")
     elseif oid == oidFontSizeTitle
@@ -240,7 +240,7 @@ event OnOptionHighlight(int oid)
     elseif oid == oidFontSizeSmall
         SetInfoText("Font size for secondary text such as the date range on the title page. Range 8-24, default 12.")
     elseif oid == oidResetAll
-        SetInfoText("Removes all physical diary books from NPC inventories and deletes their text files. Your SkyrimNet diary entries are preserved. Save and restart afterwards.")
+        SetInfoText("Removes all physical diary books from NPC inventories and clear tracking. Your SkyrimNet diary entries are preserved. Save and restart afterwards.")
     endif
 
 endevent

@@ -1,6 +1,7 @@
 #include "BookManager.h"
 #include "Database.h"
 #include "DPF_API.h"
+#include "DiaryDB.h"
 #include <fstream>
 #include <cstring>
 #include <algorithm>
@@ -10,7 +11,6 @@
 
 // External declarations from main.cpp
 extern std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>&, const std::string&, double, double, int maxEntries);
-extern bool WriteDynamicBookFile(const std::string& bookTitle, const std::string& text, const std::string& actorSubfolder);
 
 namespace SkyrimNetDiaries {
 
@@ -29,7 +29,7 @@ namespace SkyrimNetDiaries {
               prevVolumeLastCreationTime(prevVolLastCreationTime), prevVolumeCountAtBoundary(prevVolCountAtBoundary) {}
         
         virtual void operator()(RE::BSScript::Variable a_result) override {
-            SKSE::log::info("DPF.Create() callback invoked for {}", actorName);
+            SKSE::log::debug("DPF.Create() callback invoked for {}", actorName);
             
             if (a_result.IsNoneObject() || !a_result.IsObject()) {
                 SKSE::log::error("DPF.Create() returned None/non-object for {}", actorName);
@@ -105,7 +105,7 @@ namespace SkyrimNetDiaries {
                 }
                 newBook->SetFullName(bookName.c_str());
                 
-                SKSE::log::info("Configured book: '{}'", bookName);
+                SKSE::log::debug("Configured book: '{}'", bookName);
                 
                 // Format diary entries (use cached if available, otherwise fetch from database)
                 std::vector<SkyrimNetDiaries::DiaryEntry> allEntries;
@@ -121,7 +121,7 @@ namespace SkyrimNetDiaries {
                         if (actorFormId != 0) {
                             allEntries = SkyrimNetDiaries::Database::GetDiaryEntries(actorFormId, 5000, start, 0.0, prevVolLastCT, prevVolCountAtBoundary);
                         }
-                        SKSE::log::info("Retrieved {} diary entries from API for {} (UUID: {}, startTime: {})", 
+                        SKSE::log::debug("Retrieved {} diary entries from API for {} (UUID: {}, startTime: {})", 
                                       allEntries.size(), name, uuid, start);
                     } catch (const std::exception& e) {
                         SKSE::log::error("API error fetching entries for {}: {}", name, e.what());
@@ -140,10 +140,8 @@ namespace SkyrimNetDiaries {
                             
                             std::string bookText = FormatDiaryEntries(entriesToFormat, name, start, end, MAX_ENTRIES_PER_BOOK);
                             
-                            // Write .txt file (used by SNPD_QUERY_BOOK inter-plugin API)
-                            WriteDynamicBookFile(bookName, bookText, bioTemplate);
                             
-                            SKSE::log::info("Set dynamic text for '{}': {} diary entries (of {} total)", 
+                            SKSE::log::debug("Set dynamic text for '{}': {} diary entries (of {} total)", 
                                           bookName, entriesToTake, allEntries.size());
                             
                             // Calculate the actual endTime based on the last entry included in this volume
@@ -151,16 +149,18 @@ namespace SkyrimNetDiaries {
                             if (!entriesToFormat.empty()) {
                                 // Use the timestamp of the last entry included as the endTime for this volume
                                 volumeEndTime = entriesToFormat.back().entry_date;
-                                SKSE::log::info("Volume {} endTime set to last entry timestamp: {}", volume, volumeEndTime);
+                                SKSE::log::debug("Volume {} endTime set to last entry timestamp: {}", volume, volumeEndTime);
                             }
                             
                             // Register book with the calculated endTime using FormID
-                            bookManager->RegisterBook(uuid, name, newBook->GetFormID(), start, volumeEndTime, volume, journalTemplate, bioTemplate, prevVolLastCT, prevVolCountAtBoundary);
+                            bookManager->RegisterBook(uuid, name, newBook->GetFormID(), start, volumeEndTime, volume, journalTemplate, bioTemplate, prevVolLastCT, prevVolCountAtBoundary, targetFormID);
 
-                            // Cache text immediately so the OpenBookMenu hook can inject it at first open
+                            // Persist text to DB and warm in-memory cache.
+                            DiaryDB::GetSingleton()->UpdateBookText(uuid, volume, bookText, entriesToTake);
                             auto* registeredVol = bookManager->GetBookForFormID(newBook->GetFormID());
                             if (registeredVol) {
                                 registeredVol->cachedBookText = bookText;
+                                registeredVol->lastKnownEntryCount = entriesToTake;
                             }
                             
                             // If there are more than max entries, log that additional volumes should be created
@@ -172,7 +172,7 @@ namespace SkyrimNetDiaries {
                             // Add to NPC inventory immediately
                             // NOTE: DPF callbacks are async and may not be on the main thread
                             // We need to defer the inventory add to the main game thread
-                            SKSE::log::info("Attempting to add book to actor 0x{:X} ({})...", targetFormID, name);
+                            SKSE::log::debug("Attempting to add book to actor 0x{:X} ({})...", targetFormID, name);
                             
                             SKSE::GetTaskInterface()->AddTask([targetFormID, newBook, bookName, name = std::string(name), bioTemplate]() {
                                 RE::Actor* targetActor = nullptr;
@@ -180,7 +180,7 @@ namespace SkyrimNetDiaries {
                                 // Handle player diaries (UUID = "player_special")
                                 if (bioTemplate == "player_special" || targetFormID == 0x14) {
                                     targetActor = RE::PlayerCharacter::GetSingleton();
-                                    SKSE::log::info("Player diary detected - assigning to player (FormID 0x14)");
+                                    SKSE::log::debug("Player diary detected - assigning to player (FormID 0x14)");
                                 } else {
                                 
                                 // Check cache first to avoid repeated expensive searches
@@ -205,7 +205,7 @@ namespace SkyrimNetDiaries {
                                 // bio_template_name format: "actorname_XYZ" where XYZ are last 3 hex digits of REFERENCE FormID
                                 if (!bioTemplate.empty() && bioTemplate.find('_') != std::string::npos) {
                                     SKSE::log::debug("Using bio_template_name matching for: '{}'", bioTemplate);
-                                    
+
                                     // Extract last 3 digits from bio_template_name (e.g., "fetri_el_874" -> "874")
                                     size_t lastUnderscore = bioTemplate.find_last_of('_');
                                     std::string expectedLast3;
@@ -237,24 +237,33 @@ namespace SkyrimNetDiaries {
                                                     if (actorRef) {
                                                         auto actorBase = actorRef->GetActorBase();
                                                         if (actorBase) {
-                                                            std::string actorName = actorBase->GetFullName();
+                                                            std::string engineName = actorBase->GetFullName();
                                                             uint32_t refFormID = actorRef->GetFormID();
                                                             
                                                             actorsChecked++;
                                                             
-                                                            // Only check if name matches first (optimization)
-                                                            if (actorName == name) {
+                                                            // Name check: exact match OR engine name is a suffix of
+                                                            // the SkyrimNet display name.  The suffix check handles
+                                                            // rank-prefixed names where SkyrimNet prepends a title
+                                                            // (e.g. SkyrimNet "Jarl Elisif the Fair" vs engine
+                                                            // "Elisif the Fair").
+                                                            bool nameMatch = (engineName == name) ||
+                                                                (!engineName.empty() &&
+                                                                 name.size() > engineName.size() &&
+                                                                 name.compare(name.size() - engineName.size(),
+                                                                              engineName.size(), engineName) == 0);
+                                                            if (nameMatch) {
                                                                 nameMatches++;
                                                                 // Get last 3 hex digits of REFERENCE FormID
                                                                 char refLast3[4];
                                                                 snprintf(refLast3, sizeof(refLast3), "%03x", refFormID & 0xFFF);
                                                                 
-                                                                SKSE::log::debug("  Found '{}' at 0x{:X} (last3: {})", actorName, refFormID, refLast3);
+                                                                SKSE::log::debug("  Found '{}' at 0x{:X} (last3: {})", engineName, refFormID, refLast3);
                                                                 
                                                                 // Match last 3 digits of reference FormID
                                                                 if (expectedLast3 == refLast3) {
                                                                     targetActor = actorRef;
-                                                                    SKSE::log::debug("✓ Matched! Found actor via bio_template_name: '{}' (0x{:X})", actorName, refFormID);
+                                                                    SKSE::log::debug("✓ Matched! Found actor via bio_template_name: '{}' (0x{:X})", engineName, refFormID);
                                                                     return true; // Found!
                                                                 }
                                                             }
@@ -300,6 +309,7 @@ namespace SkyrimNetDiaries {
                                 } // End of !foundInCache block
                                 } // End of player check
                                 
+                                actor_resolved:
                                 if (targetActor) {
                                     // Actor found - add book to inventory
                                     // If found in ProcessLists, they're loaded enough to manipulate inventory
@@ -314,7 +324,7 @@ namespace SkyrimNetDiaries {
                                         SKSE::GetTaskInterface()->AddTask([newBook, bookName]() {
                                             if (newBook && newBook->GetFormType() == RE::FormType::Book) {
                                                 newBook->data.flags.reset(RE::OBJ_BOOK::Flag::kCantTake);
-                                                SKSE::log::info("Removed kCantTake flag from '{}' - book is now safe to take", bookName);
+                                                SKSE::log::debug("Removed kCantTake flag from '{}' - book is now safe to take", bookName);
                                             }
                                         });
                                     }).detach();
@@ -430,6 +440,7 @@ namespace SkyrimNetDiaries {
         
         SKSE::log::debug("Selected journal template for {}: {}", actorName, selectedTemplate);
         actorTemplates_[actorUuid] = selectedTemplate;
+        DiaryDB::GetSingleton()->UpsertActorTemplate(actorUuid, selectedTemplate);
         return selectedTemplate;
     }
 
@@ -482,7 +493,7 @@ namespace SkyrimNetDiaries {
             return nullptr;
         }
 
-        SKSE::log::info("Dispatching async DPF.Create() for {} (volume {}) with {} cached entries...", actorName, volumeNumber, entries.size());
+        SKSE::log::debug("Dispatching async DPF.Create() for {} (volume {}) with {} cached entries...", actorName, volumeNumber, entries.size());
         
         // Create callback that will handle the created book asynchronously
         auto callback = RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor>(
@@ -499,7 +510,7 @@ namespace SkyrimNetDiaries {
             return nullptr;
         }
         
-        SKSE::log::info("DPF.Create() dispatched - book will be created asynchronously");
+        SKSE::log::debug("DPF.Create() dispatched - book will be created asynchronously");
         
         // Return nullptr since creation is async - the callback will handle everything
         return nullptr;
@@ -521,7 +532,7 @@ namespace SkyrimNetDiaries {
         // We'll store the text in the description for now as a placeholder
         // TODO: Investigate hooking into the BookMenu directly to inject text
         SKSE::log::warn("UpdateBookText called - book text rendering not fully implemented yet");
-        SKSE::log::info("Would set text: {}", bookText);
+        SKSE::log::debug("Would set text: {}", bookText);
         
         return true;
     }
@@ -543,7 +554,7 @@ namespace SkyrimNetDiaries {
         // We need to use the itemCardDescription instead
         book->itemCardDescription.descriptionText.id = 0;
         
-        SKSE::log::info("Set book text ({} characters) for book 0x{:X}", text.length(), book->GetFormID());
+        SKSE::log::debug("Set book text ({} characters) for book 0x{:X}", text.length(), book->GetFormID());
         SKSE::log::warn("Note: Book text injection via memory is limited - text may not display");
     }
 
@@ -604,7 +615,8 @@ namespace SkyrimNetDiaries {
                                    const std::string& journalTemplate,
                                    const std::string& bioTemplateName,
                                    double prevVolumeLastCreationTime,
-                                   int prevVolumeCountAtBoundary) {
+                                   int prevVolumeCountAtBoundary,
+                                   RE::FormID actorFormId) {
         DiaryBookData data;
         data.actorUuid = actorUuid;
         data.actorName = actorName;
@@ -616,10 +628,32 @@ namespace SkyrimNetDiaries {
         data.bioTemplateName = bioTemplateName;
         data.prevVolumeLastCreationTime = prevVolumeLastCreationTime;
         data.prevVolumeCountAtBoundary = prevVolumeCountAtBoundary;
+        data.actorFormId = actorFormId;
+        // Pre-warm the runtime cache so RefreshVolumeOnOpen never needs the UUID roundtrip.
+        if (actorFormId != 0) {
+            data.cachedActorFormId = actorFormId;
+        }
 
         books_[actorUuid].push_back(data);
         SKSE::log::info("Registered book for actor {}: FormID 0x{:X}, Volume {} (template: {}, subfolder: {})",
                        actorUuid, bookFormId, volumeNumber, journalTemplate, bioTemplateName);
+
+        // Persist row so it survives a save revert (bookText written by caller via UpdateBookText).
+        DiaryDB::VolumeRow dbRow;
+        dbRow.actorUuid                  = data.actorUuid;
+        dbRow.actorName                  = data.actorName;
+        dbRow.actorFormId                = static_cast<uint32_t>(actorFormId);
+        dbRow.bookFormId                 = static_cast<uint32_t>(data.bookFormId);
+        dbRow.volumeNumber               = data.volumeNumber;
+        dbRow.startTime                  = data.startTime;
+        dbRow.endTime                    = data.endTime;
+        dbRow.journalTemplate            = data.journalTemplate;
+        dbRow.bioTemplateName            = data.bioTemplateName;
+        dbRow.lastKnownEntryCount        = data.lastKnownEntryCount;
+        dbRow.prevVolumeLastCreationTime = data.prevVolumeLastCreationTime;
+        dbRow.prevVolumeCountAtBoundary  = data.prevVolumeCountAtBoundary;
+        // bookText left empty – caller sets it via UpdateBookText immediately after.
+        DiaryDB::GetSingleton()->UpsertVolume(dbRow);
     }
 
     void BookManager::UpdateBookEndTime(const std::string& actorUuid, int volumeNumber, double endTime) {
@@ -628,8 +662,9 @@ namespace SkyrimNetDiaries {
             for (auto& book : it->second) {
                 if (book.volumeNumber == volumeNumber) {
                     book.endTime = endTime;
-                    SKSE::log::info("Updated book endTime for {} volume {} (FormID 0x{:X}) to {}", 
+                    SKSE::log::debug("Updated book endTime for {} volume {} (FormID 0x{:X}) to {}", 
                                    actorUuid, volumeNumber, book.bookFormId, endTime);
+                    DiaryDB::GetSingleton()->UpdateEndTime(actorUuid, volumeNumber, endTime);
                     return;
                 }
             }
@@ -655,6 +690,7 @@ namespace SkyrimNetDiaries {
             SKSE::log::info("Unregistered {} volumes for {}", it->second.size(), actorUuid);
             books_.erase(it);
         }
+        DiaryDB::GetSingleton()->DeleteActor(actorUuid);
     }
 
     int BookManager::RemoveBookByFormID(RE::FormID formId) {
@@ -675,21 +711,22 @@ namespace SkyrimNetDiaries {
                     bool isLatestVolume = (volumeNum == maxVolume);
                     
                     volumes.erase(it);
-                    SKSE::log::info("Removed volume {} for {} (FormID 0x{:X}) - player returned book",
+                    SKSE::log::debug("Removed volume {} for {} (FormID 0x{:X}) - player returned book",
                                   volumeNum, actorName, formId);
-                    
+                    DiaryDB::GetSingleton()->DeleteVolume(uuid, volumeNum);
+
                     // If this was the only volume, remove the UUID entry entirely
                     if (volumes.empty()) {
                         books_.erase(uuid);
-                        SKSE::log::info("Removed last volume for {} - cleared all tracking", actorName);
+                        SKSE::log::debug("Removed last volume for {} - cleared all tracking", actorName);
                         return 2; // Was the latest (and only) volume
                     }
                     
                     if (isLatestVolume) {
-                        SKSE::log::info("Volume {} was the latest - NPC can get updates", volumeNum);
+                        SKSE::log::debug("Volume {} was the latest - NPC can get updates", volumeNum);
                         return 2; // Was the latest volume, allow updates
                     } else {
-                        SKSE::log::info("Volume {} is old - newer volumes exist, this volume stays frozen", volumeNum);
+                        SKSE::log::debug("Volume {} is old - newer volumes exist, this volume stays frozen", volumeNum);
                         return 1; // Older volume, don't allow updates
                     }
                 }
@@ -721,7 +758,7 @@ namespace SkyrimNetDiaries {
                         bookTitle += ", v" + std::to_string(bookData.volumeNumber);
                     }
 
-                    SKSE::log::info("[Regen] '{}' vol={} stored startTime={:.2f} endTime={:.2f} -> queryStart={:.2f} queryEnd={:.2f} limit={}",
+                    SKSE::log::debug("[Regen] '{}' vol={} stored startTime={:.2f} endTime={:.2f} -> queryStart={:.2f} queryEnd={:.2f} limit={}",
                                     bookTitle, bookData.volumeNumber,
                                     bookData.startTime, bookData.endTime,
                                     queryStart, queryEnd, MAX_ENTRIES_PER_VOLUME + 1);
@@ -731,7 +768,7 @@ namespace SkyrimNetDiaries {
                         queryStart, queryEnd, bookData.prevVolumeLastCreationTime,
                         bookData.prevVolumeCountAtBoundary);
 
-                    SKSE::log::info("[Regen] '{}' API returned {} entries; first={:.2f} last={:.2f}",
+                    SKSE::log::debug("[Regen] '{}' API returned {} entries; first={:.2f} last={:.2f}",
                                     bookTitle, volumeEntries.size(),
                                     volumeEntries.empty() ? 0.0 : volumeEntries.front().entry_date,
                                     volumeEntries.empty() ? 0.0 : volumeEntries.back().entry_date);
@@ -747,11 +784,12 @@ namespace SkyrimNetDiaries {
                                                               bookData.startTime, bookData.endTime,
                                                               MAX_ENTRIES_PER_VOLUME);
 
-                    // Write .txt file (used by SNPD_QUERY_BOOK inter-plugin API)
-                    ::WriteDynamicBookFile(bookTitle, bookText, bookData.bioTemplateName);
-
-                    // Update in-memory cache so the OpenBookMenu hook injects the latest text.
-                    bookData.cachedBookText = bookText;
+                    // Persist to DB and warm in-memory cache.
+                    int liveCount = static_cast<int>(volumeEntries.size());
+                    DiaryDB::GetSingleton()->UpdateBookText(
+                        uuid, bookData.volumeNumber, bookText, liveCount);
+                    bookData.cachedBookText      = bookText;
+                    bookData.lastKnownEntryCount = liveCount;
 
                     totalRegenerated++;
                 }
@@ -765,420 +803,337 @@ namespace SkyrimNetDiaries {
     }
 
     void BookManager::Save(SKSE::SerializationInterface* a_intfc) {
-        // DPF handles book form persistence, but we need to save our tracking data (UUID→volume mappings)
-        // First pass: count total volumes across all UUIDs
-        std::uint32_t totalVolumes = 0;
-        for (const auto& [uuid, volumes] : books_) {
-            totalVolumes += static_cast<std::uint32_t>(volumes.size());
-        }
-        
-        SKSE::log::info("Saving tracking data for {} volumes across {} actors", totalVolumes, books_.size());
-        if (!a_intfc->WriteRecordData(&totalVolumes, sizeof(totalVolumes))) {
-            SKSE::log::error("Failed to write total volume count");
-            return;
-        }
-
-        // Second pass: write each volume
-        for (const auto& [uuid, volumes] : books_) {
-            for (const auto& data : volumes) {
-                // Write UUID length and string
-                std::uint32_t uuidLen = static_cast<std::uint32_t>(uuid.length());
-                if (!a_intfc->WriteRecordData(&uuidLen, sizeof(uuidLen))) {
-                    SKSE::log::error("Failed to write UUID length");
-                    continue;
-                }
-                if (!a_intfc->WriteRecordData(uuid.c_str(), uuidLen)) {
-                    SKSE::log::error("Failed to write UUID");
-                    continue;
-                }
-                
-                // Write actor name
-                std::uint32_t nameLen = static_cast<std::uint32_t>(data.actorName.length());
-                if (!a_intfc->WriteRecordData(&nameLen, sizeof(nameLen))) {
-                    SKSE::log::error("Failed to write actor name length");
-                    continue;
-                }
-                if (!a_intfc->WriteRecordData(data.actorName.c_str(), nameLen)) {
-                    SKSE::log::error("Failed to write actor name");
-                    continue;
-                }
-                
-                // Write FormID
-                if (!a_intfc->WriteRecordData(&data.bookFormId, sizeof(data.bookFormId))) {
-                    SKSE::log::error("Failed to write book FormID");
-                    continue;
-                }
-
-                // Write timestamps
-                if (!a_intfc->WriteRecordData(&data.startTime, sizeof(data.startTime))) {
-                    SKSE::log::error("Failed to write startTime");
-                    continue;
-                }
-                if (!a_intfc->WriteRecordData(&data.endTime, sizeof(data.endTime))) {
-                    SKSE::log::error("Failed to write endTime");
-                    continue;
-                }
-                
-                // Write volume number
-                if (!a_intfc->WriteRecordData(&data.volumeNumber, sizeof(data.volumeNumber))) {
-                    SKSE::log::error("Failed to write volume number");
-                    continue;
-                }
-                
-                // Write journal template (new in this version)
-                std::uint32_t templateLen = static_cast<std::uint32_t>(data.journalTemplate.length());
-                if (!a_intfc->WriteRecordData(&templateLen, sizeof(templateLen))) {
-                    SKSE::log::error("Failed to write journal template length");
-                    continue;
-                }
-                if (templateLen > 0) {
-                    if (!a_intfc->WriteRecordData(data.journalTemplate.c_str(), templateLen)) {
-                        SKSE::log::error("Failed to write journal template");
-                        continue;
-                    }
-                }
-                
-                // Write entry count for deletion tracking
-                if (!a_intfc->WriteRecordData(&data.lastKnownEntryCount, sizeof(data.lastKnownEntryCount))) {
-                    SKSE::log::error("Failed to write entry count");
-                    continue;
-                }
-
-                // Write bio template name (actor-specific file subfolder)
-                std::uint32_t bioNameLen = static_cast<std::uint32_t>(data.bioTemplateName.length());
-                if (!a_intfc->WriteRecordData(&bioNameLen, sizeof(bioNameLen))) {
-                    SKSE::log::error("Failed to write bio template name length");
-                    continue;
-                }
-                if (bioNameLen > 0) {
-                    if (!a_intfc->WriteRecordData(data.bioTemplateName.c_str(), bioNameLen)) {
-                        SKSE::log::error("Failed to write bio template name");
-                        continue;
-                    }
-                }
-
-                // Write prevVolumeLastCreationTime (v2: used to exclude boundary entries from previous volume)
-                if (!a_intfc->WriteRecordData(&data.prevVolumeLastCreationTime, sizeof(data.prevVolumeLastCreationTime))) {
-                    SKSE::log::error("Failed to write prevVolumeLastCreationTime");
-                    continue;
-                }
-                // Write prevVolumeCountAtBoundary (v3: exact count of prev-vol entries at boundary)
-                if (!a_intfc->WriteRecordData(&data.prevVolumeCountAtBoundary, sizeof(data.prevVolumeCountAtBoundary))) {
-                    SKSE::log::error("Failed to write prevVolumeCountAtBoundary");
-                    continue;
-                }
-            }
-        }
-        
-        // Save actor template mappings (UUID -> template choice)
-        std::uint32_t actorTemplateCount = static_cast<std::uint32_t>(actorTemplates_.size());
-        if (!a_intfc->WriteRecordData(&actorTemplateCount, sizeof(actorTemplateCount))) {
-            SKSE::log::error("Failed to write actor template count");
-            return;
-        }
-        
-        for (const auto& [uuid, templateName] : actorTemplates_) {
-            // Write UUID
-            std::uint32_t uuidLen = static_cast<std::uint32_t>(uuid.length());
-            if (!a_intfc->WriteRecordData(&uuidLen, sizeof(uuidLen))) {
-                SKSE::log::error("Failed to write UUID length for actor template");
-                continue;
-            }
-            if (!a_intfc->WriteRecordData(uuid.c_str(), uuidLen)) {
-                SKSE::log::error("Failed to write UUID for actor template");
-                continue;
-            }
-            
-            // Write template name
-            std::uint32_t templateLen = static_cast<std::uint32_t>(templateName.length());
-            if (!a_intfc->WriteRecordData(&templateLen, sizeof(templateLen))) {
-                SKSE::log::error("Failed to write template name length");
-                continue;
-            }
-            if (!a_intfc->WriteRecordData(templateName.c_str(), templateLen)) {
-                SKSE::log::error("Failed to write template name");
-                continue;
-            }
-        }
-
-        SKSE::log::info("Saved {} diary volumes and {} actor template mappings", totalVolumes, actorTemplates_.size());
+        // Volume data is now stored in DiaryDB (SQLite) — persists across reverts.
+        // Write a sentinel so the co-save record stays well-formed.
+        std::uint32_t sentinel = 0;
+        a_intfc->WriteRecordData(&sentinel, sizeof(sentinel)); // totalVolumes = 0
+        a_intfc->WriteRecordData(&sentinel, sizeof(sentinel)); // actorTemplateCount = 0
+        SKSE::log::debug("[BookManager] Save: sentinel written (real data lives in DiaryDB)");
     }
 
-    void BookManager::Load(SKSE::SerializationInterface* a_intfc, std::uint32_t version) {
-        // DPF persists the book forms, we just need to restore our tracking data
-        std::uint32_t totalVolumes;
-        if (!a_intfc->ReadRecordData(&totalVolumes, sizeof(totalVolumes))) {
-            SKSE::log::error("Failed to read total volume count");
-            return;
-        }
-
-        SKSE::log::info("Loading tracking data for {} diary volumes", totalVolumes);
-
-        for (std::uint32_t i = 0; i < totalVolumes; ++i) {
-            // Read UUID
-            std::uint32_t uuidLen;
-            if (!a_intfc->ReadRecordData(&uuidLen, sizeof(uuidLen))) {
-                SKSE::log::error("Failed to read UUID length");
-                break;
-            }
-
-            std::string uuid;
-            uuid.resize(uuidLen);
-            if (!a_intfc->ReadRecordData(uuid.data(), uuidLen)) {
-                SKSE::log::error("Failed to read UUID");
-                break;
-            }
-
-            // Read actor name
-            std::uint32_t nameLen;
-            if (!a_intfc->ReadRecordData(&nameLen, sizeof(nameLen))) {
-                SKSE::log::error("Failed to read actor name length");
-                break;
-            }
-
-            std::string actorName;
-            actorName.resize(nameLen);
-            if (!a_intfc->ReadRecordData(actorName.data(), nameLen)) {
-                SKSE::log::error("Failed to read actor name");
-                break;
-            }
-
-            // Read FormID and resolve it (may have changed due to load order)
-            RE::FormID oldFormId;
-            if (!a_intfc->ReadRecordData(&oldFormId, sizeof(oldFormId))) {
-                SKSE::log::error("Failed to read book FormID");
-                break;
-            }
-
-            RE::FormID newFormId;
-            if (!a_intfc->ResolveFormID(oldFormId, newFormId)) {
-                SKSE::log::error("Failed to resolve FormID 0x{:X} for {} - DPF form may not exist", oldFormId, actorName);
-                // Skip this entry entirely if we can't resolve the FormID
-                // This prevents crashes from referencing invalid forms
-                
-                // Read remaining data to keep stream aligned
-                double dummyStart, dummyEnd;
-                int dummyVol;
-                a_intfc->ReadRecordData(&dummyStart, sizeof(dummyStart));
-                a_intfc->ReadRecordData(&dummyEnd, sizeof(dummyEnd));
-                a_intfc->ReadRecordData(&dummyVol, sizeof(dummyVol));
-                // Read template string (may not exist in older saves)
-                std::uint32_t dummyTemplateLen = 0;
-                if (a_intfc->ReadRecordData(&dummyTemplateLen, sizeof(dummyTemplateLen)) && dummyTemplateLen > 0) {
-                    std::string dummyTemplate;
-                    dummyTemplate.resize(dummyTemplateLen);
-                    a_intfc->ReadRecordData(dummyTemplate.data(), dummyTemplateLen);
-                }
-                // Read entry count (may not exist in older saves)
-                int dummyCount = 0;
-                a_intfc->ReadRecordData(&dummyCount, sizeof(dummyCount));
-                // Read bio template name (may not exist in older saves)
-                std::uint32_t dummyBioLen = 0;
-                if (a_intfc->ReadRecordData(&dummyBioLen, sizeof(dummyBioLen)) && dummyBioLen > 0) {
-                    std::string dummyBio;
-                    dummyBio.resize(dummyBioLen);
-                    a_intfc->ReadRecordData(dummyBio.data(), dummyBioLen);
-                }
-                // Read prevVolumeLastCreationTime (version 2+)
-                if (version >= 2) {
-                    double dummyPrevLastCT = 0.0;
-                    a_intfc->ReadRecordData(&dummyPrevLastCT, sizeof(dummyPrevLastCT));
-                }
-                // Read prevVolumeCountAtBoundary (version 3+)
-                if (version >= 3) {
-                    int dummyCountAtBoundary = 0;
-                    a_intfc->ReadRecordData(&dummyCountAtBoundary, sizeof(dummyCountAtBoundary));
-                }
-                continue;
-            }
-            
-            // Verify the form actually exists and is a book
-            auto* form = RE::TESForm::LookupByID(newFormId);
-            if (!form || form->GetFormType() != RE::FormType::Book) {
-                SKSE::log::error("FormID 0x{:X} resolved but form is invalid/not a book for {}", newFormId, actorName);
-                // Read remaining data to keep stream aligned
-                double dummyStart, dummyEnd;
-                int dummyVol;
-                a_intfc->ReadRecordData(&dummyStart, sizeof(dummyStart));
-                a_intfc->ReadRecordData(&dummyEnd, sizeof(dummyEnd));
-                a_intfc->ReadRecordData(&dummyVol, sizeof(dummyVol));
-                // Read template string (may not exist in older saves)
-                std::uint32_t dummyTemplateLen = 0;
-                if (a_intfc->ReadRecordData(&dummyTemplateLen, sizeof(dummyTemplateLen)) && dummyTemplateLen > 0) {
-                    std::string dummyTemplate;
-                    dummyTemplate.resize(dummyTemplateLen);
-                    a_intfc->ReadRecordData(dummyTemplate.data(), dummyTemplateLen);
-                }
-                // Read entry count (may not exist in older saves)
-                int dummyCount = 0;
-                a_intfc->ReadRecordData(&dummyCount, sizeof(dummyCount));
-                // Read bio template name (may not exist in older saves)
-                std::uint32_t dummyBioLen = 0;
-                if (a_intfc->ReadRecordData(&dummyBioLen, sizeof(dummyBioLen)) && dummyBioLen > 0) {
-                    std::string dummyBio;
-                    dummyBio.resize(dummyBioLen);
-                    a_intfc->ReadRecordData(dummyBio.data(), dummyBioLen);
-                }
-                // Read prevVolumeLastCreationTime (version 2+)
-                if (version >= 2) {
-                    double dummyPrevLastCT2 = 0.0;
-                    a_intfc->ReadRecordData(&dummyPrevLastCT2, sizeof(dummyPrevLastCT2));
-                }
-                // Read prevVolumeCountAtBoundary (version 3+)
-                if (version >= 3) {
-                    int dummyCountAtBoundary2 = 0;
-                    a_intfc->ReadRecordData(&dummyCountAtBoundary2, sizeof(dummyCountAtBoundary2));
-                }
-                continue;
-            }
-
-            // Read timestamps
-            double startTime, endTime;
-            if (!a_intfc->ReadRecordData(&startTime, sizeof(startTime))) {
-                SKSE::log::error("Failed to read startTime");
-                break;
-            }
-            if (!a_intfc->ReadRecordData(&endTime, sizeof(endTime))) {
-                SKSE::log::error("Failed to read endTime");
-                break;
-            }
-            
-            // Read volume number
-            int volumeNumber = 1;
-            if (!a_intfc->ReadRecordData(&volumeNumber, sizeof(volumeNumber))) {
-                SKSE::log::warn("Failed to read volume number, defaulting to 1");
-                volumeNumber = 1;
-            }
-            
-            // Read journal template (optional - may not exist in older saves)
-            std::string journalTemplate;
-            std::uint32_t templateLen = 0;
-            if (a_intfc->ReadRecordData(&templateLen, sizeof(templateLen))) {
-                if (templateLen > 0) {
-                    journalTemplate.resize(templateLen);
-                    if (!a_intfc->ReadRecordData(journalTemplate.data(), templateLen)) {
-                        SKSE::log::warn("Failed to read journal template - using default");
-                        journalTemplate.clear();
-                    }
-                }
-            }
-            
-            // Read entry count (optional - may not exist in older saves)
-            int entryCount = 0;
-            if (!a_intfc->ReadRecordData(&entryCount, sizeof(entryCount))) {
-                SKSE::log::debug("Entry count not found in save (older version), will be calculated on first check");
-                entryCount = 0;
-            }
-
-            // Read bio template name (optional - may not exist in older saves)
-            std::string bioTemplateName;
-            std::uint32_t bioNameLen = 0;
-            if (a_intfc->ReadRecordData(&bioNameLen, sizeof(bioNameLen)) && bioNameLen > 0) {
-                bioTemplateName.resize(bioNameLen);
-                if (!a_intfc->ReadRecordData(bioTemplateName.data(), bioNameLen)) {
-                    SKSE::log::warn("Failed to read bio template name - will re-derive on next book open");
-                    bioTemplateName.clear();
-                }
-            }
-
-            // Read prevVolumeLastCreationTime (version 2+: boundary de-dup for same-date entries).
-            double prevVolLastCT = 0.0;
-            if (version >= 2) {
-                if (!a_intfc->ReadRecordData(&prevVolLastCT, sizeof(prevVolLastCT))) {
-                    SKSE::log::debug("prevVolumeLastCreationTime not found in save - defaulting to 0.0");
-                }
-            }
-            // Read prevVolumeCountAtBoundary (version 3+: exact removal count at boundary).
-            int prevVolCountAtBoundary = 0;
-            if (version >= 3) {
-                if (!a_intfc->ReadRecordData(&prevVolCountAtBoundary, sizeof(prevVolCountAtBoundary))) {
-                    SKSE::log::debug("prevVolumeCountAtBoundary not found in save - defaulting to 0");
-                }
-            }
-
-            // Migrate old cosaves: volume 1 should always use startTime=0.0 so the
-            // oldest diary entry is never excluded by an exclusive API lower bound.
-            if (volumeNumber == 1 && startTime > 0.0) {
-                SKSE::log::info("Migrating volume 1 startTime from {} to 0.0 for {}", startTime, actorName);
-                startTime = 0.0;
-            }
-
-            // Restore the tracking data (book already exists via DPF persistence)
-            DiaryBookData data;
-            data.actorUuid = uuid;
-            data.actorName = actorName;
-            data.bookFormId = newFormId;  // Use resolved FormID
-            data.startTime = startTime;
-            data.endTime = endTime;
-            data.volumeNumber = volumeNumber;
-            data.journalTemplate = journalTemplate;
-            data.bioTemplateName = bioTemplateName;
-            data.lastKnownEntryCount = entryCount;
-            data.prevVolumeLastCreationTime = prevVolLastCT;
-            data.prevVolumeCountAtBoundary = prevVolCountAtBoundary;
-            
-            // Add to vector for this UUID
-            books_[uuid].push_back(data);
-            
-            SKSE::log::info("Restored tracking: {} Volume {} (FormID: 0x{:X} -> 0x{:X}) [{}-{}] (template: {})", 
-                           actorName, volumeNumber, oldFormId, newFormId, startTime, endTime, 
-                           journalTemplate.empty() ? "default" : journalTemplate);
-        }
-
-        SKSE::log::info("Restored tracking data for {} diary volumes across {} actors", totalVolumes, books_.size());
-        
-        // Load actor template mappings (optional - may not exist in older saves)
-        std::uint32_t actorTemplateCount = 0;
-        if (a_intfc->ReadRecordData(&actorTemplateCount, sizeof(actorTemplateCount))) {
-            SKSE::log::info("Loading {} actor template mappings", actorTemplateCount);
-            
-            for (std::uint32_t i = 0; i < actorTemplateCount; ++i) {
-                // Read UUID
-                std::uint32_t uuidLen;
-                if (!a_intfc->ReadRecordData(&uuidLen, sizeof(uuidLen))) {
-                    SKSE::log::error("Failed to read UUID length for actor template");
-                    break;
-                }
-                
-                std::string uuid;
-                uuid.resize(uuidLen);
-                if (!a_intfc->ReadRecordData(uuid.data(), uuidLen)) {
-                    SKSE::log::error("Failed to read UUID for actor template");
-                    break;
-                }
-                
-                // Read template name
-                std::uint32_t templateLen;
-                if (!a_intfc->ReadRecordData(&templateLen, sizeof(templateLen))) {
-                    SKSE::log::error("Failed to read template name length");
-                    break;
-                }
-                
-                std::string templateName;
-                templateName.resize(templateLen);
-                if (!a_intfc->ReadRecordData(templateName.data(), templateLen)) {
-                    SKSE::log::error("Failed to read template name");
-                    break;
-                }
-                
-                actorTemplates_[uuid] = templateName;
-            }
-            
-            if (actorTemplateCount > 0) {
-                SKSE::log::info("Restored {} actor template mappings", actorTemplates_.size());
-            }
-        }
+    void BookManager::Load(SKSE::SerializationInterface* /*a_intfc*/, std::uint32_t /*version*/) {
+        // Volume data is loaded from DiaryDB in LoadFromDB() (called from kPostLoadGame).
+        // The sentinel written by Save() is intentionally ignored.
+        SKSE::log::debug("[BookManager] Load: skipping co-save (real data loaded from DiaryDB)");
     }
 
     void BookManager::Revert() {
-        // DO NOT dispose DPF forms here - they are global across all saves
-        // Disposing them would break forms that other saves still reference
-        // DPF forms are managed per-save via co-save serialization
-        // Only the current save's BookManager data needs to be cleared
-        
+        // Clear in-memory maps only; DiaryDB on disk is intentionally preserved
+        // so that volume metadata survives the revert and loads correctly.
         books_.clear();
         actorTemplates_.clear();
-        SKSE::log::info("Cleared book tracking data for new game (DPF forms preserved for other saves)");
+        SKSE::log::debug("[BookManager] Revert: in-memory data cleared (DiaryDB preserved on disk)");
+    }
+
+    void BookManager::FlushToDB() {
+        auto* db = DiaryDB::GetSingleton();
+        if (!db->IsOpen()) return;
+
+        int volumesFlushed = 0;
+        for (const auto& [uuid, volumes] : books_) {
+            for (const auto& data : volumes) {
+                DiaryDB::VolumeRow row;
+                row.actorUuid                  = data.actorUuid;
+                row.actorName                  = data.actorName;
+                row.bookFormId                 = static_cast<uint32_t>(data.bookFormId);
+                row.volumeNumber               = data.volumeNumber;
+                row.startTime                  = data.startTime;
+                row.endTime                    = data.endTime;
+                row.journalTemplate            = data.journalTemplate;
+                row.bioTemplateName            = data.bioTemplateName;
+                row.lastKnownEntryCount        = data.lastKnownEntryCount;
+                row.prevVolumeLastCreationTime = data.prevVolumeLastCreationTime;
+                row.prevVolumeCountAtBoundary  = data.prevVolumeCountAtBoundary;
+                row.bookText                   = data.cachedBookText;
+                db->UpsertVolume(row);
+                ++volumesFlushed;
+            }
+        }
+        for (const auto& [uuid, tmpl] : actorTemplates_) {
+            db->UpsertActorTemplate(uuid, tmpl);
+        }
+        SKSE::log::debug("[BookManager] FlushToDB: wrote {} volumes, {} actor templates",
+                        volumesFlushed, actorTemplates_.size());
+    }
+
+    void BookManager::ClearActorCache() {
+        std::lock_guard<std::mutex> lock(g_actorCacheMutex);
+        g_actorCache.clear();
+        SKSE::log::debug("[BookManager] Actor cache cleared");
+    }
+
+    // ---------------------------------------------------------------------------
+    // FindActorForBook: resolve the owning NPC for a diary volume.
+    // Uses bio_template_name matching (for ESL/mod-added NPCs) or direct FormID
+    // lookup (for vanilla NPCs), with g_actorCache to avoid repeated searches.
+    // ---------------------------------------------------------------------------
+    static RE::Actor* FindActorForBook(RE::FormID targetFormID,
+                                       const std::string& actorName,
+                                       const std::string& bioTemplate) {
+        if (bioTemplate == "player_special" || targetFormID == 0x14)
+            return RE::PlayerCharacter::GetSingleton();
+
+        {
+            std::lock_guard<std::mutex> lock(g_actorCacheMutex);
+            auto it = g_actorCache.find(targetFormID);
+            if (it != g_actorCache.end()) return it->second;
+        }
+
+        RE::Actor* result = nullptr;
+
+        if (!bioTemplate.empty() && bioTemplate.find('_') != std::string::npos) {
+            size_t lastUnderscore = bioTemplate.find_last_of('_');
+            std::string expectedLast3;
+            if (lastUnderscore != std::string::npos && lastUnderscore + 1 < bioTemplate.size()) {
+                expectedLast3 = bioTemplate.substr(lastUnderscore + 1);
+                std::transform(expectedLast3.begin(), expectedLast3.end(), expectedLast3.begin(), ::tolower);
+            }
+            if (!expectedLast3.empty()) {
+                auto* pl = RE::ProcessLists::GetSingleton();
+                if (pl) {
+                    auto searchList = [&](RE::BSTArray<RE::ActorHandle>& handles) {
+                        for (auto& handle : handles) {
+                            RE::NiPointer<RE::Actor> ptr;
+                            if (!RE::Actor::LookupByHandle(handle.native_handle(), ptr)) continue;
+                            auto* ref = ptr.get();
+                            if (!ref) continue;
+                            auto* base = ref->GetActorBase();
+                            if (!base) continue;
+                            std::string engineName = base->GetFullName();
+                            // Exact match OR engine name is a suffix of the SkyrimNet display name.
+                            // Handles rank-prefixed names: "Jarl Elisif the Fair" (SkyrimNet) vs
+                            // "Elisif the Fair" (engine GetFullName).
+                            bool nameMatch = (engineName == actorName) ||
+                                (!engineName.empty() &&
+                                 actorName.size() > engineName.size() &&
+                                 actorName.compare(actorName.size() - engineName.size(),
+                                                   engineName.size(), engineName) == 0);
+                            if (!nameMatch) continue;
+                            char last3[4];
+                            snprintf(last3, sizeof(last3), "%03x", ref->GetFormID() & 0xFFF);
+                            if (expectedLast3 == last3) { result = ref; return true; }
+                        }
+                        return false;
+                    };
+                    if (!searchList(pl->highActorHandles))
+                        if (!searchList(pl->middleHighActorHandles))
+                            if (!searchList(pl->middleLowActorHandles))
+                                searchList(pl->lowActorHandles);
+                }
+            }
+        } else {
+            result = RE::TESForm::LookupByID<RE::Actor>(targetFormID);
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(g_actorCacheMutex);
+            g_actorCache[targetFormID] = result;
+        }
+        return result;
+    }
+
+    // ---------------------------------------------------------------------------
+    // EnsureBookInInventory: if the NPC doesn't have the book, add it.
+    // Called after LoadFromDB for volumes whose DPF form exists but may not be
+    // in the NPC's inventory (e.g. after reload-without-save).
+    // ---------------------------------------------------------------------------
+    static void EnsureBookInInventory(RE::FormID bookFormId, RE::FormID targetFormID,
+                                      const std::string& actorName, const std::string& bioTemplate,
+                                      const std::string& bookName) {
+        auto* book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(bookFormId);
+        if (!book) {
+            SKSE::log::warn("[EnsureInventory] Book 0x{:X} no longer valid — skipping '{}'", bookFormId, bookName);
+            return;
+        }
+
+        RE::Actor* actor = FindActorForBook(targetFormID, actorName, bioTemplate);
+        if (!actor) {
+            SKSE::log::warn("[EnsureInventory] Could not find actor '{}' for '{}'", actorName, bookName);
+            return;
+        }
+
+        // Check inventory — avoid adding a duplicate.
+        auto inv = actor->GetInventory();
+        for (const auto& [item, invData] : inv) {
+            if (item && item->GetFormID() == bookFormId && invData.first > 0) {
+                SKSE::log::debug("[EnsureInventory] '{}' already in {}'s inventory", bookName, actorName);
+                return;
+            }
+        }
+
+        actor->AddObjectToContainer(book, nullptr, 1, nullptr);
+        SKSE::log::info("[EnsureInventory] Re-added '{}' to {}'s inventory after reload", bookName, actorName);
+    }
+
+    void BookManager::QueueInventoryCheck() {
+        int queued = 0;
+        int skipped = 0;
+        for (const auto& [uuid, volumes] : books_) {
+            uint32_t actorFormId = SkyrimNetDiaries::Database::GetFormIDForUUID(uuid);
+            for (const auto& vol : volumes) {
+                if (vol.persistedInSave) {
+                    // This volume was committed to a .ess save — the loaded inventory
+                    // state is authoritative.  Do not re-add (would duplicate taken books).
+                    ++skipped;
+                    continue;
+                }
+                RE::FormID bookFid   = vol.bookFormId;
+                RE::FormID actorFid  = static_cast<RE::FormID>(actorFormId);
+                std::string aName    = vol.actorName;
+                std::string bio      = vol.bioTemplateName;
+                std::string bName    = vol.actorName + "'s Diary";
+                if (vol.volumeNumber > 1) bName += ", v" + std::to_string(vol.volumeNumber);
+                SKSE::GetTaskInterface()->AddTask([bookFid, actorFid, aName, bio, bName]() {
+                    EnsureBookInInventory(bookFid, actorFid, aName, bio, bName);
+                });
+                ++queued;
+            }
+        }
+        if (queued > 0 || skipped > 0)
+            SKSE::log::debug("[BookManager] Inventory check: {} volume(s) queued, {} skipped (already persisted)", queued, skipped);
+    }
+
+    std::vector<std::string> BookManager::LoadFromDB() {
+        auto* db = DiaryDB::GetSingleton();
+
+        // Always clear in-memory state on each game load, regardless of whether the
+        // DB is open.  If we skip the clear when the DB is closed (e.g. save-folder
+        // detection failed on a previous load), stale books_ entries from the prior
+        // session survive and cause the catch-up scan to think every actor already
+        // has books — so nothing gets recreated after a reload-without-save.
+        books_.clear();
+        actorTemplates_.clear();
+
+        if (!db->IsOpen()) {
+            SKSE::log::warn("[BookManager] LoadFromDB: DiaryDB not open — skipping");
+            return {};
+        }
+
+        auto rows = db->LoadAllVolumes();
+        std::vector<std::string> invalidActors;
+
+        for (auto& row : rows) {
+            // Validate the DPF book form still exists (it is lost on save revert).
+            auto* form = RE::TESForm::LookupByID(static_cast<RE::FormID>(row.bookFormId));
+            if (!form || form->GetFormType() != RE::FormType::Book) {
+                SKSE::log::warn("[LoadFromDB] FormID 0x{:X} for {} vol {} is invalid — removing and queuing recovery",
+                               row.bookFormId, row.actorName, row.volumeNumber);
+                db->DeleteVolume(row.actorUuid, row.volumeNumber);
+                invalidActors.push_back(row.actorUuid);
+                continue;
+            }
+
+            DiaryBookData data;
+            data.actorUuid                   = row.actorUuid;
+            data.actorName                   = row.actorName;
+            data.bookFormId                  = static_cast<RE::FormID>(row.bookFormId);
+            data.volumeNumber                = row.volumeNumber;
+            data.startTime                   = row.startTime;
+            data.endTime                     = row.endTime;
+            data.journalTemplate             = row.journalTemplate;
+            data.bioTemplateName             = row.bioTemplateName;
+            data.lastKnownEntryCount         = row.lastKnownEntryCount;
+            data.prevVolumeLastCreationTime  = row.prevVolumeLastCreationTime;
+            data.prevVolumeCountAtBoundary   = row.prevVolumeCountAtBoundary;
+            data.cachedBookText              = row.bookText;  // pre-warmed from DB
+            data.persistedInSave             = row.persistedInSave;
+            data.actorFormId                 = static_cast<RE::FormID>(row.actorFormId);
+            // Pre-warm cachedActorFormId so RefreshVolumeOnOpen never needs UUID roundtrip.
+            if (row.actorFormId != 0) {
+                data.cachedActorFormId = static_cast<RE::FormID>(row.actorFormId);
+            }
+
+            books_[data.actorUuid].push_back(std::move(data));
+        }
+
+        // Ensure each actor's volumes are in order.
+        for (auto& [uuid, volumes] : books_) {
+            std::sort(volumes.begin(), volumes.end(),
+                [](const DiaryBookData& a, const DiaryBookData& b) {
+                    return a.volumeNumber < b.volumeNumber;
+                });
+        }
+
+        actorTemplates_ = db->LoadActorTemplates();
+
+        SKSE::log::info("[LoadFromDB] Loaded {} actors ({} invalid FormIDs queued for recovery)",
+                        books_.size(), invalidActors.size());
+        return invalidActors;
+    }
+
+    void BookManager::RefreshVolumeOnOpen(DiaryBookData* vol) {
+        if (!vol) return;
+
+        // Backfill bioTemplateName (may be missing on old co-save sessions).
+        if (vol->bioTemplateName.empty()) {
+            vol->bioTemplateName = Database::GetTemplateNameByUUID(vol->actorUuid);
+        }
+
+        // Lazy FormID lookup — prefer the authoritative stored actorFormId; fall back
+        // to UUID roundtrip only for volumes that pre-date this field (actorFormId == 0).
+        if (vol->cachedActorFormId == 0) {
+            if (vol->actorFormId != 0) {
+                vol->cachedActorFormId = vol->actorFormId;
+            } else {
+                vol->cachedActorFormId = Database::GetFormIDForUUID(vol->actorUuid);
+            }
+        }
+        if (vol->cachedActorFormId == 0) return;
+
+        const int MAX_ENTRIES = Config::GetSingleton()->GetEntriesPerVolume();
+        double queryStart = (vol->volumeNumber == 1) ? 0.0 : vol->startTime;
+
+        // For the active (latest) volume use 0.0 so entries written after the
+        // last update are visible even if UpdateDiaryForActorInternal hasn't run yet.
+        // For sealed older volumes, respect vol->endTime as the upper-time cutoff.
+        double queryEnd = 0.0;
+        {
+            auto* allVols = GetAllVolumesForActor(vol->actorUuid);
+            if (allVols && !allVols->empty() &&
+                allVols->back().volumeNumber != vol->volumeNumber) {
+                // A newer volume exists → this one is sealed.
+                queryEnd = vol->endTime;
+            }
+        }
+
+        auto liveEntries = Database::GetDiaryEntries(
+            vol->cachedActorFormId, MAX_ENTRIES + 1, queryStart, queryEnd,
+            vol->prevVolumeLastCreationTime, vol->prevVolumeCountAtBoundary);
+        int liveCount = static_cast<int>(liveEntries.size());
+
+        // For sealed volumes, cap to MAX_ENTRIES so boundary tie-breaking is deterministic.
+        if (vol->endTime > 0.0 && liveCount > MAX_ENTRIES) {
+            liveEntries.resize(MAX_ENTRIES);
+            liveCount = MAX_ENTRIES;
+        }
+
+        // Fast path: nothing changed and cache is warm — nothing to do.
+        if (liveCount == vol->lastKnownEntryCount && !vol->cachedBookText.empty()) {
+            return;
+        }
+
+        // Entries were deleted — update sealed endTime so QueueSealedVolumeRecovery
+        // doesn't probe beyond the now-missing entry's timestamp and spawn a duplicate volume.
+        if (liveCount < vol->lastKnownEntryCount) {
+            SKSE::log::info("[SNPD] {} vol {} shrank {} → {} entries on open",
+                vol->actorName, vol->volumeNumber, vol->lastKnownEntryCount, liveCount);
+            if (vol->endTime > 0.0 && !liveEntries.empty()) {
+                double newEnd = liveEntries.back().entry_date;
+                if (newEnd != vol->endTime) {
+                    SKSE::log::debug("[SNPD]   sealed endTime updated {:.2f} → {:.2f}", vol->endTime, newEnd);
+                    DiaryDB::GetSingleton()->UpdateEndTime(vol->actorUuid, vol->volumeNumber, newEnd);
+                    vol->endTime = newEnd;
+                }
+            }
+        }
+
+        // Reformat and persist to DB + in-memory cache.
+        std::string bookText = FormatDiaryEntries(
+            liveEntries, vol->actorName, vol->startTime, vol->endTime, MAX_ENTRIES);
+        DiaryDB::GetSingleton()->UpdateBookText(vol->actorUuid, vol->volumeNumber, bookText, liveCount);
+        UpdateVolumeEntryCount(vol->actorUuid, vol->volumeNumber, liveCount);
+        vol->lastKnownEntryCount = liveCount;
+        vol->cachedBookText      = std::move(bookText);
     }
 
 } // namespace SkyrimNetDiaries
