@@ -6,7 +6,14 @@
 // SkyrimNet Physical Diaries - Inter-Plugin API
 // =============================================================================
 //
-// Allows other SKSE plugins to resolve diary book file paths.
+// Allows other SKSE plugins to query diary book content and metadata.
+//
+// Three query types are available:
+//   SNPD_QUERY_BOOK        — full rendered volume text + metadata
+//   SNPD_QUERY_ENTRY       — single entry by index (plain text, good for TTS)
+//   SNPD_QUERY_ALL_ENTRIES — all entries for a volume in one call
+//
+// All queries are synchronous — the response is filled before Dispatch returns.
 //
 // USAGE — detecting and reading one of our diary books:
 //
@@ -17,26 +24,28 @@
 //
 //   Step 2: API check (definitive)
 //     Fill in an SNPDBookQuery with the book's FormID and dispatch it to us.
-//     If isDiaryBook == true in the response, filePath holds the absolute path.
+//     Check resultCode and isDiaryBook in the response.
 //
 //   Example:
+//
+//     using namespace SkyrimNetPhysicalDiaries_API;
 //
 //     SNPDBookQuery query{};
 //     query.apiVersion = SNPD_API_VERSION;
 //     query.bookFormId = book->GetFormID();
 //
-//     auto* messaging = SKSE::GetMessagingInterface();
-//     messaging->Dispatch(SNPD_QUERY_BOOK, &query, sizeof(query),
-//                         "SkyrimNetPhysicalDiaries");
+//     SKSE::GetMessagingInterface()->Dispatch(
+//         SNPD_QUERY_BOOK, &query, sizeof(query), PluginName);
 //
 //     if (query.isDiaryBook) {
-//         // query.filePath contains the absolute path to the .txt file
-//         std::ifstream f(query.filePath);
-//         // ... read diary text ...
+//         // query.text holds the full rendered volume text (font-tagged)
+//         // query.entryCount, volumeNumber, totalVolumes hold metadata
+//         // query.resultCode == SNPDResultCode::Success
+//         //                  or SNPDResultCode::NoEntries (entries removed)
 //     }
 //
-// NOTE: Dispatch is synchronous — the response is filled in before it returns.
-// NOTE: filePath is only valid when isDiaryBook == true.
+// NOTE: The consumer is responsible for caching — each Dispatch queries the
+//       live SkyrimNet database directly.
 // =============================================================================
 
 namespace SkyrimNetPhysicalDiaries_API
