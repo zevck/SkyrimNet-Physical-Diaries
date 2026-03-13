@@ -816,21 +816,13 @@ build/x64/Release/ZERO_CHECK/ZERO_CHECK.tlog/ZERO_CHECK.lastbuildstate
 build/x64/Release/ZERO_CHECK/ZERO_CHECK.vcxproj.FileListAbsolute.txt
 build/ZERO_CHECK.vcxproj
 build/ZERO_CHECK.vcxproj.filters
-cmake/Plugin.h.in
 DIARY_RETURN_FEATURE.md
-CMakeLists.txt
-CMakePresets.json
-external/CommonLibSSE-NG/
-external/rapidcsv/
 IMPROVEMENTS_EXPLAINED.md
 JOURNAL_VARIETY_SETUP.md
 RESEARCH_FINDINGS.md
 SKSE/Plugins/SkyrimNet-1767787322757-480715.db
 SkyrimNet Physical Diaries.code-workspace
 SkyrimSE.code-workspace
-skyrimse.ppj
-vcpkg.json
-vcpkg-configuration.json
 src/SkyrimNetAPITest.cpp
 build/vcpkg_installed/x64-windows-static/share/pkgconfig/nlohmann_json.pc
 build/vcpkg_installed/x64-windows-static/share/nlohmann_json/nlohmann_jsonTargets.cmake
@@ -902,3 +894,4 @@ build/x64/Release/INSTALL/INSTALL.tlog/unsuccessfulbuild
 /vcpkg_installed
 CODE_REVIEW.md
 SkyrimNetPhysicalDiaries-v1.0.0.zip
+skyrimse.ppj
