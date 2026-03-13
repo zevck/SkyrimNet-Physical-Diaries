@@ -1,6 +1,6 @@
 # SkyrimNet Physical Diaries
 
-A companion mod for [SkyrimNet](https://www.nexusmods.com/skyrimspecialedition/mods/117192) that turns the AI-generated diary entries written by NPCs into actual books you can find and read in the world.
+A companion mod for [SkyrimNet](https://github.com/MinLL/SkyrimNet-GamePlugin) that turns the AI-generated diary entries written by NPCs into actual books you can find and read in the world.
 
 <p align="center">
   <img src="images/diaryexample.jpg">
