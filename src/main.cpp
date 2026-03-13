@@ -3,7 +3,6 @@
 #include "BookTextHook.h"
 #include "DiaryTheftHandler.h"
 #include "SkyrimNetPhysicalDiariesAPI.h"
-#include "SkyrimNetAPITest.h"
 #include "Config.h"
 #include "DiaryDB.h"
 #include "PapyrusAPI.h"
@@ -15,9 +14,7 @@
 #include <unordered_set>
 #include <unordered_map>
 
-// Function pointer set at RegisterListener time so SkyrimNetAPITest can invoke
-// the message handler directly (SKSE Dispatch cannot target the same plugin).
-void (*g_snpdMessageHandler)(SKSE::MessagingInterface::Message*) = nullptr;
+
 
 // Helper function to sanitize text for Skyrim's book renderer
 std::string SanitizeBookText(const std::string& text) {
@@ -1861,10 +1858,6 @@ namespace {
                 QueueSealedVolumeRecovery(skipUuids);
                 QueueBatchCatchUpScan(std::move(skipUuids));
 
-                // Inter-plugin API smoke test — only runs when DebugLog is enabled.
-                if (SkyrimNetDiaries::Config::GetSingleton()->GetDebugLog()) {
-                    SkyrimNetAPITest::TestInterPluginAPI();
-                }
             }; // end of runSetup lambda body
 
             SKSE::GetTaskInterface()->AddTask([runSetup]() { (*runSetup)(); });
@@ -1921,7 +1914,6 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
     SKSE::log::debug("Registering for SKSE messaging interface...");
     auto messaging = SKSE::GetMessagingInterface();
     if (messaging) {
-        g_snpdMessageHandler = OnMessage; // expose for internal test use
         messaging->RegisterListener(OnMessage);
     }
 
