@@ -79,6 +79,12 @@ namespace SkyrimNetDiaries {
                     newBook->itemCardDescription = templateBook->itemCardDescription;
                     newBook->weight = 0.5f;
                     newBook->value = 0;
+
+                    // Log the book type so we can verify it's a tome (0) not a scroll (0xFF).
+                    // kNoteScroll books ignore [pagebreak] and render all text on one page,
+                    // which would cause text to overflow and appear as overlapping content.
+                    SKSE::log::info("[DPF] Template '{}' data.type=0x{:02X} (0x00=BookTome, 0xFF=NoteScroll)",
+                        journalTemplate, static_cast<unsigned>(newBook->data.type.underlying()));
                     
                     // CRITICAL: Clear flags by setting to 0, then selectively set safe ones
                     // Do NOT copy flags from template
@@ -1107,9 +1113,27 @@ namespace SkyrimNetDiaries {
             liveCount = MAX_ENTRIES;
         }
 
-        // Fast path: nothing changed and cache is warm — nothing to do.
-        if (liveCount == vol->lastKnownEntryCount && !vol->cachedBookText.empty()) {
+        // Fast path: nothing changed and cache is warm with current-format text — nothing to do.
+        // If the cached text is in the old format (no <font> tags, generated before font-tag
+        // support was added), fall through to force a one-time regeneration even when the
+        // entry count hasn't changed.  This upgrades stale DB rows automatically on first open.
+        // EXCEPTION: if liveCount == 0 we have nothing to regenerate FROM — in that case
+        // the cached text (e.g. externally loaded DB text) must be preserved as-is regardless
+        // of format.  Regenerating with an empty entry list would replace real content with
+        // "All entries removed", which is wrong for test/imported books.
+        bool textIsCurrentFormat = vol->cachedBookText.find("<font face='") != std::string::npos;
+        if (liveCount == vol->lastKnownEntryCount && !vol->cachedBookText.empty() && textIsCurrentFormat) {
             return;
+        }
+        if (!textIsCurrentFormat && liveCount == 0 && !vol->cachedBookText.empty()) {
+            SKSE::log::info("[SNPD] {} vol {} has old-format text but no live entries — preserving external/imported text",
+                vol->actorName, vol->volumeNumber);
+            return;
+        }
+
+        if (!textIsCurrentFormat && !vol->cachedBookText.empty()) {
+            SKSE::log::info("[SNPD] {} vol {} has old-format text (no font tags) — regenerating from {} live entries",
+                vol->actorName, vol->volumeNumber, liveCount);
         }
 
         // Entries were deleted — update sealed endTime so QueueSealedVolumeRecovery

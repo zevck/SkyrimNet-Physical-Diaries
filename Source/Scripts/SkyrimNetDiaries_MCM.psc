@@ -24,6 +24,8 @@ bool Function ResetAllDiaries() global native
 ; Config getters / setters  (each setter persists the change to the INI file)
 bool Function GetDebugLog()                      global native
      Function SetDebugLog(bool value)            global native
+bool Function GetShowDateHeaders()               global native
+     Function SetShowDateHeaders(bool value)     global native
 int  Function GetEntriesPerVolume()              global native
      Function SetEntriesPerVolume(int value)     global native
 int  Function GetFontSizeTitle()                 global native
@@ -38,8 +40,9 @@ int  Function GetFontSizeSmall()                 global native
 ; ============================================================================
 ; Option handles  (populated in OnPageReset, used in event callbacks)
 ; ============================================================================
-int oidEntriesPerVolume = -1
-int oidDebugLog         = -1
+int oidEntriesPerVolume  = -1
+int oidShowDateHeaders   = -1
+int oidDebugLog          = -1
 int oidFontSizeTitle    = -1
 int oidFontSizeDate     = -1
 int oidFontSizeContent  = -1
@@ -84,8 +87,9 @@ event OnPageReset(string page)
     SetCursorPosition(0)
 
     ; Reset all option handles so stale IDs cannot be matched
-    oidEntriesPerVolume = -1
-    oidDebugLog         = -1
+    oidEntriesPerVolume  = -1
+    oidShowDateHeaders   = -1
+    oidDebugLog          = -1
     oidFontSizeTitle    = -1
     oidFontSizeDate     = -1
     oidFontSizeContent  = -1
@@ -107,6 +111,7 @@ function RenderSettingsPage()
 
     AddHeaderOption("Diary Volumes")
     oidEntriesPerVolume = AddSliderOption("Entries Per Volume", GetEntriesPerVolume(), "{0}")
+    oidShowDateHeaders  = AddToggleOption("Show Date Headers", GetShowDateHeaders())
 
     AddHeaderOption("Book Font Sizes")
     oidFontSizeTitle   = AddSliderOption("Title Font Size",   GetFontSizeTitle(),   "{0}")
@@ -136,7 +141,12 @@ endfunction
 
 event OnOptionSelect(int oid)
 
-    if oid == oidDebugLog
+    if oid == oidShowDateHeaders
+        bool newVal = !GetShowDateHeaders()
+        SetShowDateHeaders(newVal)
+        SetToggleOptionValue(oid, newVal)
+        RegenerateTextsOnly()
+    elseif oid == oidDebugLog
         bool newVal = !GetDebugLog()
         SetDebugLog(newVal)
         SetToggleOptionValue(oid, newVal)
@@ -154,7 +164,6 @@ event OnOptionSelect(int oid)
             endif
             ForcePageReset()
         endif
-
     endif
 
 endevent
@@ -229,6 +238,8 @@ event OnOptionHighlight(int oid)
 
     if oid == oidEntriesPerVolume
         SetInfoText("How many diary entries fit in one book volume. Higher number means longer book load time. Range 1-50, default 10.")
+    elseif oid == oidShowDateHeaders
+        SetInfoText("Show date headers above each diary entry. Disable if your LLM already includes dates in the entry text.")
     elseif oid == oidDebugLog
         SetInfoText("Write verbose debug information to SkyrimNetPhysicalDiaries.log. Disable for normal use.")
     elseif oid == oidFontSizeTitle
@@ -254,6 +265,9 @@ event OnOptionDefault(int oid)
     if oid == oidEntriesPerVolume
         SetEntriesPerVolume(10)
         SetSliderOptionValue(oid, 10.0, "{0}")
+    elseif oid == oidShowDateHeaders
+        SetShowDateHeaders(true)
+        SetToggleOptionValue(oid, true)
     elseif oid == oidDebugLog
         SetDebugLog(false)
         SetToggleOptionValue(oid, false)

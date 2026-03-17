@@ -13,6 +13,11 @@
 #include <sstream>
 #include <unordered_set>
 #include <unordered_map>
+#include <cstring>
+#include "RE/F/FxDelegate.h"
+#include "RE/F/FxResponseArgs.h"
+#include "RE/G/GFxValue.h"
+#include "RE/U/UI.h"
 
 
 
@@ -21,11 +26,58 @@ std::string SanitizeBookText(const std::string& text) {
     std::string result = text;
         
         // Strip leading date headers/prefixes that LLM sometimes includes.
-        // e.g. "# Sundas, 17th Last Seed - Late Morning"   (whole-line header)
-        //      "Sundas, 17th of Last Seed, 4E 201"         (whole-line, no year prefix needed)
+        // e.g. "# Sundas, 17th Last Seed - Late Morning"   (whole-line header, any language)
+        //      "Sundas, 17th of Last Seed, 4E 201"         (whole-line English Tamrielic)
         //      "Sundas, 17th Last Seed. Today I saw..."    (inline date prefix in prose)
         // We supply our own date headers, so always remove any at the start of the content.
         {
+            // Step 1: Strip any leading markdown heading line unconditionally.
+            // A line starting with '#' is always AI formatting noise regardless of language.
+            if (!result.empty() && result[0] == '#') {
+                size_t firstNewline = result.find('\n');
+                if (firstNewline != std::string::npos) {
+                    result = result.substr(firstNewline + 1);
+                    while (!result.empty() && (result[0] == '\n' || result[0] == '\r'))
+                        result = result.substr(1);
+                } else {
+                    result.clear();
+                }
+            }
+
+            // Step 2: Strip plain-text date headers/prefixes the LLM sometimes writes.
+            // Covers English Tamrielic day/month names and real-world time patterns.
+            // Other languages: the date header shows through but that's acceptable since
+            // we can't reliably detect all localizations without false-positive risk.
+
+            // Pattern: first line is a short time string ("9:28 AM" or "9:28 AM, ...").
+            // Language-independent — digits and AM/PM are ASCII in all locales.
+            if (!result.empty()) {
+                size_t nl = result.find('\n');
+                size_t lineEnd = (nl != std::string::npos && nl < 80) ? nl : std::string::npos;
+                if (lineEnd != std::string::npos) {
+                    std::string_view firstLine(result.c_str(), lineEnd);
+                    // Match: optional whitespace, 1-2 digits, colon, 2 digits, space, AM/PM
+                    size_t i = 0;
+                    while (i < firstLine.size() && firstLine[i] == ' ') ++i;
+                    size_t numStart = i;
+                    while (i < firstLine.size() && std::isdigit((unsigned char)firstLine[i])) ++i;
+                    bool isTime = (i > numStart && i < firstLine.size() && firstLine[i] == ':');
+                    if (isTime) {
+                        ++i; // skip ':'
+                        size_t minStart = i;
+                        while (i < firstLine.size() && std::isdigit((unsigned char)firstLine[i])) ++i;
+                        if (i == minStart + 2 && i < firstLine.size() && firstLine[i] == ' ') {
+                            ++i;
+                            if (firstLine.substr(i, 2) == "AM" || firstLine.substr(i, 2) == "PM") {
+                                result = result.substr(lineEnd + 1);
+                                while (!result.empty() && (result[0] == '\n' || result[0] == '\r'))
+                                    result = result.substr(1);
+                            }
+                        }
+                    }
+                }
+            }
+
             static const std::vector<std::string> skyrimDateWords = {
                 // Days of the week
                 "Sundas", "Morndas", "Tirdas", "Middas", "Turdas", "Fredas", "Loredas",
@@ -37,13 +89,7 @@ std::string SanitizeBookText(const std::string& text) {
                 "4E "
             };
 
-            // Strip optional leading markdown heading chars ("# ", "## ", etc.)
-            size_t contentStart = 0;
-            while (contentStart < result.size() && result[contentStart] == '#') ++contentStart;
-            while (contentStart < result.size() && result[contentStart] == ' ') ++contentStart;
-
-            // Check whether the content (after any heading prefix) starts with a date word
-            std::string_view view(result.c_str() + contentStart, result.size() - contentStart);
+            std::string_view view(result.c_str(), result.size());
             const std::string* matchedWord = nullptr;
             for (const auto& word : skyrimDateWords) {
                 if (view.substr(0, word.size()) == word) {
@@ -53,8 +99,8 @@ std::string SanitizeBookText(const std::string& text) {
             }
 
             if (matchedWord) {
-                size_t firstNewline = result.find('\n', contentStart);
-                bool isWholeLine = (firstNewline != std::string::npos && firstNewline < contentStart + 120);
+                size_t firstNewline = result.find('\n');
+                bool isWholeLine = (firstNewline != std::string::npos && firstNewline < 120);
 
                 if (isWholeLine) {
                     // The whole first line is a date header — strip the line and
@@ -67,7 +113,7 @@ std::string SanitizeBookText(const std::string& text) {
                     // The date is a prefix embedded in prose ("Sundas, 17th Last Seed. Today...").
                     // Strip up to and including the first sentence-ending punctuation followed
                     // by whitespace so the prose content is preserved.
-                    size_t searchFrom = contentStart + matchedWord->size();
+                    size_t searchFrom = matchedWord->size();
                     size_t breakPos = std::string::npos;
                     for (size_t i = searchFrom; i + 1 < result.size(); ++i) {
                         char c = result[i];
@@ -77,7 +123,7 @@ std::string SanitizeBookText(const std::string& text) {
                             break;
                         }
                     }
-                    if (breakPos != std::string::npos && breakPos < contentStart + 200) {
+                    if (breakPos != std::string::npos && breakPos < 200) {
                         result = result.substr(breakPos);
                         // Capitalise the first character of the remaining prose if needed
                         if (!result.empty() && std::islower((unsigned char)result[0])) {
@@ -90,12 +136,12 @@ std::string SanitizeBookText(const std::string& text) {
             }
         }
         
-        // Replace em dashes (U+2014) with double hyphens
+        // Replace em dashes (U+2014) with single hyphen
         size_t pos = 0;
         while ((pos = result.find("\xE2\x80\x94", pos)) != std::string::npos) {
-        result.replace(pos, 3, "--");
-        pos += 2;
-    }
+            result.replace(pos, 3, "-");
+            pos += 1;
+        }
     
     // Replace en dashes (U+2013) with single hyphen
     pos = 0;
@@ -136,7 +182,37 @@ std::string SanitizeBookText(const std::string& text) {
         result.replace(pos, 3, "...");
         pos += 3;
     }
-    
+
+    // Strip Markdown formatting characters that pass through raw as asterisks/underscores.
+    // **bold** and *italic* → just the inner text (Skyrim book HTML uses <b>/<i> if needed,
+    // but the handwriting font rarely has bold/italic variants so stripping is cleanest).
+    // Process ** before * to avoid partially matching bold markers as italic.
+    {
+        std::string out;
+        out.reserve(result.size());
+        const char* s = result.c_str();
+        while (*s) {
+            if (s[0] == '*' && s[1] == '*') {
+                // Skip the opening **; scan forward for closing **
+                s += 2;
+            } else if (s[0] == '*') {
+                // Skip a lone *
+                s += 1;
+            } else if (s[0] == '_' && s[1] == '_') {
+                s += 2;
+            } else if (s[0] == '_'
+                       && (s > result.c_str() && (*(s-1) == ' ' || *(s-1) == '\n'))
+                       && s[1] != ' ') {
+                // Only strip leading _ used as italic marker (surrounded by spaces/newlines),
+                // not underscores mid-word (e.g. snake_case variable names in narration).
+                s += 1;
+            } else {
+                out += *s++;
+            }
+        }
+        result = std::move(out);
+    }
+
     return result;
 }
 
@@ -385,7 +461,7 @@ std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& 
     bookText = "[pagebreak]\n\n";
 
     // Title page — handwriting font, centred; leading newlines push it down visually
-    bookText += "\n\n\n\n\n";
+    bookText += "\n\n\n";
     bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontTitle) + "'><p align='center'>";
     bookText += actorName + "'s Diary";
     bookText += "</p></font>\n\n";
@@ -423,58 +499,17 @@ std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& 
             // Format the date string
             std::string dateStr = FormatGameDate(entry.entry_date);
             
-            // Reset font size explicitly before date header (title page font might bleed through pagebreak)
-            bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontDate) + "'></font>";
-            // Date header
-            bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontDate) + "'>" + dateStr + "</font>";
-            bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontContent) + "'></font>\n\n";  // Reset to content font size
+            // Date header (optional — controlled by ShowDateHeaders config)
+            if (SkyrimNetDiaries::Config::GetSingleton()->GetShowDateHeaders()) {
+                // Reset font size explicitly (title page font might bleed through pagebreak)
+                bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontDate) + "'></font>";
+                bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontDate) + "'>" + dateStr + "</font>";
+                bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontContent) + "'></font>\n\n";  // Reset to content font size
+            }
             
             // Entry content - wrap EACH paragraph in font tag since Skyrim resets after \n\n
             std::string content = SanitizeBookText(entry.content);
-            
-            // Strip LLM-generated date headers at the start
-            // Examples: "9:28 AM, Sundas, 17th of Last Seed" OR "Sundas, 17th of Last Seed"
-            // Only strip short lines that look like date headers, not narrative paragraphs
-            size_t firstNewline = content.find('\n');
-            if (firstNewline != std::string::npos && firstNewline < 80) {
-                std::string firstLine = content.substr(0, firstNewline);
-                
-                // Check if line looks like a date header:
-                // - Starts with time pattern (9:28 AM) OR
-                // - Contains ordinal number with "of" (17th of Last Seed) OR
-                // - Is short and starts with a day name
-                bool isDateHeader = false;
-                
-                // Pattern 1: Starts with time
-                std::regex timePattern("^\\s*\\d{1,2}:\\d{2}\\s*(?:AM|PM)");
-                if (std::regex_search(firstLine, timePattern)) {
-                    isDateHeader = true;
-                }
-                
-                // Pattern 2: Contains ordinal + "of" (17th of, 1st of, etc.)
-                std::regex ordinalPattern("\\d{1,2}(?:st|nd|rd|th)\\s+of\\s+");
-                if (std::regex_search(firstLine, ordinalPattern)) {
-                    isDateHeader = true;
-                }
-                
-                // Pattern 3: Short line starting with day name (Sundas, Morndas, etc.)
-                if (firstLine.length() < 60) {
-                    std::regex dayStart("^\\s*(?:Sundas|Morndas|Tirdas|Middas|Turdas|Fredas|Loredas)[,\\s]");
-                    if (std::regex_search(firstLine, dayStart)) {
-                        isDateHeader = true;
-                    }
-                }
-                
-                if (isDateHeader) {
-                    // Strip the date header line
-                    content = content.substr(firstNewline + 1);
-                    // Strip leading whitespace/newlines after removal
-                    while (!content.empty() && (content[0] == '\n' || content[0] == '\r' || content[0] == ' ')) {
-                        content = content.substr(1);
-                    }
-                }
-            }
-            
+
             // Split by double newlines (paragraph breaks) and wrap each
             size_t pos = 0;
             size_t found;
@@ -506,30 +541,13 @@ std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& 
 
 namespace {
 
-    // BookMenu event sink for tracking when books open
-    class BookMenuEventSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
-    public:
-        static BookMenuEventSink* GetSingleton() {
-            static BookMenuEventSink singleton;
-            return &singleton;
-        }
+    // NOTE: GFxFunctionHandler override of CreateDisplayPage was attempted and
+    // confirmed non-functional: compiled AS2 prototype methods are NOT shadowed
+    // by instance properties set via SetVariable, even though SetVariable returns
+    // ok=true.  The fix for UTF-8 Cyrillic pagination is applied at the C++ level
+    // by converting to Win-1251 when the game language is Russian (see BookTextHook.cpp).
 
-        std::chrono::steady_clock::time_point bookOpenTime;  // reserved for future use
-        RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event, 
-                                               RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
-            // Refresh + text injection is handled by BookTextHook before the book renders.
-            // Nothing to do here.
-            (void)a_event;
-            return RE::BSEventNotifyControl::kContinue;
-        }
-
-    private:
-        BookMenuEventSink() = default;
-        BookMenuEventSink(const BookMenuEventSink&) = delete;
-        BookMenuEventSink& operator=(const BookMenuEventSink&) = delete;
-    };
-
-} // end anonymous namespace (event sinks)
+} // end anonymous namespace
 
 // =============================================================================
 // Create all diary volumes for an actor from a flat list of entries.
@@ -1515,6 +1533,25 @@ namespace {
             try {
                 // Verify ESP setup now that forms are loaded
                 DiaryTheftHandler::VerifyESPSetup();
+
+                // Check for required dependency: Dynamic Persistent Forms
+                {
+                    auto* dataHandler = RE::TESDataHandler::GetSingleton();
+                    bool dpfInstalled = dataHandler && dataHandler->LookupModByName("Dynamic Persistent Forms.esp");
+                    if (!dpfInstalled) {
+                        SKSE::log::error("kDataLoaded: 'Dynamic Persistent Forms.esp' is not installed — diary books cannot be created");
+                        SKSE::GetTaskInterface()->AddTask([]() {
+                            auto* msgBoxData = RE::UIMessageDataFactory::Create<RE::MessageBoxData>();
+                            if (msgBoxData) {
+                                msgBoxData->bodyText = "SkyrimNet Physical Diaries requires 'Dynamic Persistent Forms' to be installed.\n\nDiary books cannot be created without it. Please install Dynamic Persistent Forms and restart the game.";
+                                msgBoxData->buttonText.push_back("OK");
+                                msgBoxData->cancelOptionIndex = 0;
+                                RE::MessageBoxMenu::QueueMessage(msgBoxData);
+                                SKSE::log::info("kDataLoaded: DPF missing warning queued");
+                            }
+                        });
+                    }
+                }
                 
                 // Register event sinks on game startup (don't load database yet)
                 auto scriptEventSource = RE::ScriptEventSourceHolder::GetSingleton();
@@ -1523,11 +1560,9 @@ namespace {
                     SKSE::log::debug("Registered TESContainerChangedEvent sink");
                 }
 
-                auto ui = RE::UI::GetSingleton();
-                if (ui) {
-                    ui->AddEventSink<RE::MenuOpenCloseEvent>(BookMenuEventSink::GetSingleton());
-                    SKSE::log::debug("Registered BookMenu event sink");
-                }
+                // BookMenu event sink removed — GFx CreateDisplayPage override is
+                // not viable (AS2 prototype methods are not shadowed by instance
+                // properties).  Cyrillic fix is applied in BookTextHook via Win-1251.
 
             } catch (const std::exception& e) {
                 SKSE::log::error("Exception in kDataLoaded: {}", e.what());

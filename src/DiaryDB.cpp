@@ -294,6 +294,64 @@ namespace SkyrimNetDiaries {
         return rows;
     }
 
+    // Open an arbitrary DiaryDB file read-only and return all its volume rows.
+    // Does NOT affect the currently-open database instance.
+    std::vector<DiaryDB::VolumeRow> DiaryDB::LoadAllVolumesFromPath(const std::string& dbPath) {
+        std::vector<VolumeRow> rows;
+
+        SKSE::log::info("[DiaryDB::LoadAllVolumesFromPath] Opening: {}", dbPath);
+
+        sqlite3* db = nullptr;
+        if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+            SKSE::log::error("[DiaryDB::LoadAllVolumesFromPath] Failed to open: {}",
+                             db ? sqlite3_errmsg(db) : "(null handle)");
+            if (db) sqlite3_close(db);
+            return rows;
+        }
+
+        const char* sql =
+            "SELECT actor_uuid, actor_name, actor_form_id, book_form_id, volume_number, "
+            "       start_time, end_time, journal_template, bio_template_name, "
+            "       last_known_entry_count, prev_volume_last_creation_time, "
+            "       prev_volume_count_at_boundary, book_text, persisted_in_save "
+            "FROM volumes ORDER BY actor_name, volume_number;";
+
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            SKSE::log::error("[DiaryDB::LoadAllVolumesFromPath] prepare failed: {}", sqlite3_errmsg(db));
+            sqlite3_close(db);
+            return rows;
+        }
+
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            VolumeRow r;
+            auto col = [&](int i) -> std::string {
+                const char* t = reinterpret_cast<const char*>(sqlite3_column_text(stmt, i));
+                return t ? t : "";
+            };
+            r.actorUuid                  = col(0);
+            r.actorName                  = col(1);
+            r.actorFormId                = static_cast<std::uint32_t>(sqlite3_column_int(stmt, 2));
+            r.bookFormId                 = static_cast<std::uint32_t>(sqlite3_column_int(stmt, 3));
+            r.volumeNumber               = sqlite3_column_int(stmt, 4);
+            r.startTime                  = sqlite3_column_double(stmt, 5);
+            r.endTime                    = sqlite3_column_double(stmt, 6);
+            r.journalTemplate            = col(7);
+            r.bioTemplateName            = col(8);
+            r.lastKnownEntryCount        = sqlite3_column_int(stmt, 9);
+            r.prevVolumeLastCreationTime = sqlite3_column_double(stmt, 10);
+            r.prevVolumeCountAtBoundary  = sqlite3_column_int(stmt, 11);
+            r.bookText                   = col(12);
+            r.persistedInSave            = sqlite3_column_int(stmt, 13) != 0;
+            rows.push_back(std::move(r));
+        }
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+
+        SKSE::log::info("[DiaryDB::LoadAllVolumesFromPath] Loaded {} volume(s)", rows.size());
+        return rows;
+    }
+
     bool DiaryDB::MarkAllVolumesPersisted() {
         if (!db_) return false;
         SKSE::log::debug("[DiaryDB] Marking all volumes as persisted_in_save=1");

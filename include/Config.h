@@ -107,6 +107,7 @@ namespace SkyrimNetDiaries {
 
         // Convenience getters for diary-specific settings
         bool GetDebugLog() const { return GetInt("General", "DebugLog", 0) != 0; }
+        bool GetShowDateHeaders() const { return GetInt("Diary", "ShowDateHeaders", 1) != 0; }
         int GetEntriesPerVolume() const { return GetInt("Diary", "EntriesPerVolume", 10); }
         int GetFontSizeTitle() const { return GetInt("Fonts", "TitleSize", 18); }
         int GetFontSizeDate() const { return GetInt("Fonts", "DateSize", 16); }
@@ -120,6 +121,7 @@ namespace SkyrimNetDiaries {
 
         // Convenience setters
         void SetDebugLog(bool v) { SetInt("General", "DebugLog", v ? 1 : 0); }
+        void SetShowDateHeaders(bool v) { SetInt("Diary", "ShowDateHeaders", v ? 1 : 0); }
         void SetEntriesPerVolume(int v) { SetInt("Diary", "EntriesPerVolume", std::clamp(v, 1, 50)); }
         void SetFontSizeTitle(int v)    { SetInt("Fonts", "TitleSize",        std::clamp(v, 8, 24)); }
         void SetFontSizeDate(int v)     { SetInt("Fonts", "DateSize",         std::clamp(v, 8, 24)); }
@@ -148,6 +150,7 @@ namespace SkyrimNetDiaries {
                 struct SectionKey { const char* section; const char* key; int defaultVal; };
                 const SectionKey order[] = {
                     { "General", "DebugLog",         0  },
+                    { "Diary",   "ShowDateHeaders",  1  },
                     { "Diary",   "EntriesPerVolume", 10 },
                     { "Fonts", "TitleSize",        18 },
                     { "Fonts", "DateSize",         16 },
@@ -186,6 +189,7 @@ namespace SkyrimNetDiaries {
         void LogSettings() const {
             SKSE::log::info("Config Settings:");
             SKSE::log::info("  DebugLog: {}", GetDebugLog());
+            SKSE::log::info("  ShowDateHeaders: {}", GetShowDateHeaders());
             SKSE::log::info("  EntriesPerVolume: {}", GetEntriesPerVolume());
             SKSE::log::info("  FontSizeTitle: {}", GetFontSizeTitle());
             SKSE::log::info("  FontSizeDate: {}", GetFontSizeDate());

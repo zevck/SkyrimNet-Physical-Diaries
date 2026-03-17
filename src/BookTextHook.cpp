@@ -1,8 +1,9 @@
-#include "BookTextHook.h"
+﻿#include "BookTextHook.h"
 #include "BookManager.h"
 
 #include "RE/B/BookMenu.h"
 #include "RE/B/BSString.h"
+#include <cstring>
 #include "RE/E/ExtraDataList.h"
 #include "RE/N/NiPoint3.h"
 #include "RE/N/NiMatrix3.h"
@@ -10,6 +11,11 @@
 #include "RE/T/TESObjectREFR.h"
 #include "REL/Relocation.h"
 #include "SKSE/SKSE.h"
+#include <string>
+#include <cstdint>
+#include <algorithm>
+#include <fstream>
+#include <shlobj.h>
 
 // ---------------------------------------------------------------------------
 // OpenBookMenu hook
@@ -28,6 +34,187 @@
 
 namespace
 {
+    // ── Language detection ────────────────────────────────────────────
+    // Read sLanguage from the user's Skyrim.ini.  Returns an uppercase
+    // string like "ENGLISH" or "RUSSIAN".  Called once during Install().
+    static std::string DetectSkyrimLanguage() {
+        char docsPath[MAX_PATH] = {};
+        if (FAILED(SHGetFolderPathA(nullptr, CSIDL_PERSONAL, nullptr,
+                                    SHGFP_TYPE_CURRENT, docsPath))) {
+            SKSE::log::warn("[BookTextHook] SHGetFolderPath failed; assuming ENGLISH");
+            return "ENGLISH";
+        }
+        std::string iniPath = std::string(docsPath)
+                            + "\\My Games\\Skyrim Special Edition\\Skyrim.ini";
+        std::ifstream f(iniPath);
+        if (!f.is_open()) {
+            SKSE::log::warn("[BookTextHook] Could not open '{}'; assuming ENGLISH", iniPath);
+            return "ENGLISH";
+        }
+        std::string line;
+        while (std::getline(f, line)) {
+            // Trim leading whitespace
+            auto ns = line.find_first_not_of(" \t");
+            if (ns == std::string::npos) continue;
+            line = line.substr(ns);
+            if (line.empty() || line[0] == ';' || line[0] == '[') continue;
+            if (line.size() >= 9 && line.substr(0, 9) == "sLanguage") {
+                auto eq = line.find('=');
+                if (eq != std::string::npos) {
+                    std::string val = line.substr(eq + 1);
+                    while (!val.empty() && (val.back() == ' ' || val.back() == '\r'
+                                        || val.back() == '\n' || val.back() == '\t'))
+                        val.pop_back();
+                    auto vs = val.find_first_not_of(" \t");
+                    if (vs != std::string::npos) val = val.substr(vs);
+                    std::transform(val.begin(), val.end(), val.begin(), ::toupper);
+                    return val;
+                }
+            }
+        }
+        return "ENGLISH";
+    }
+
+    // Cached game language (set during Install(), UPPERCASE).
+    static std::string s_gameLanguage;
+
+    // ── UTF-8 → Windows-1251 conversion ──────────────────────────────
+    // Scaleform GFx 4 (Skyrim's Flash engine) treats string bytes as character
+    // indices in replaceText/getLineOffset/length. For UTF-8 multibyte text
+    // (like Cyrillic, 2 bytes per char), this causes a byte/char index mismatch
+    // in the BookMenu pagination code, resulting in progressive text overlap.
+    //
+    // Vanilla Russian Skyrim uses Windows-1251 (single-byte Cyrillic encoding)
+    // where byte == char, so pagination works correctly. This function converts
+    // UTF-8 Cyrillic to Win-1251 so Scaleform can paginate properly.
+    //
+    // Characters outside Win-1251 Cyrillic are left as UTF-8 (best effort).
+    static std::string Utf8ToWin1251(const std::string& utf8) {
+        std::string out;
+        out.reserve(utf8.size());  // Will be smaller (2-byte → 1-byte)
+
+        const unsigned char* p = reinterpret_cast<const unsigned char*>(utf8.c_str());
+        const unsigned char* end = p + utf8.size();
+
+        while (p < end) {
+            if (*p < 0x80) {
+                // ASCII pass-through (includes HTML tags, [pagebreak], \n)
+                out += static_cast<char>(*p++);
+            } else if ((*p & 0xE0) == 0xC0 && p + 1 < end && (*(p+1) & 0xC0) == 0x80) {
+                // 2-byte UTF-8 sequence → decode codepoint
+                uint32_t cp = (static_cast<uint32_t>(*p & 0x1F) << 6)
+                            | static_cast<uint32_t>(*(p+1) & 0x3F);
+                p += 2;
+
+                // Cyrillic block: А-п U+0410-U+043F → 0xC0-0xEF
+                //                 р-я U+0440-U+044F → 0xF0-0xFF
+                if (cp >= 0x0410 && cp <= 0x044F) {
+                    out += static_cast<char>(cp - 0x0410 + 0xC0);
+                } else if (cp == 0x0401) {  // Ё → 0xA8
+                    out += static_cast<char>(0xA8);
+                } else if (cp == 0x0451) {  // ё → 0xB8
+                    out += static_cast<char>(0xB8);
+                // Ukrainian / Belarusian Cyrillic in Win-1251
+                } else if (cp == 0x0404) {  // Є → 0xAA
+                    out += static_cast<char>(0xAA);
+                } else if (cp == 0x0406) {  // І → 0xB2
+                    out += static_cast<char>(0xB2);
+                } else if (cp == 0x0407) {  // Ї → 0xAF
+                    out += static_cast<char>(0xAF);
+                } else if (cp == 0x0454) {  // є → 0xBA
+                    out += static_cast<char>(0xBA);
+                } else if (cp == 0x0456) {  // і → 0xB3
+                    out += static_cast<char>(0xB3);
+                } else if (cp == 0x0457) {  // ї → 0xBF
+                    out += static_cast<char>(0xBF);
+                } else if (cp == 0x0490) {  // Ґ → 0xA5
+                    out += static_cast<char>(0xA5);
+                } else if (cp == 0x0491) {  // ґ → 0xB4
+                    out += static_cast<char>(0xB4);
+                } else if (cp == 0x040E) {  // Ў → 0xA1 (Belarusian)
+                    out += static_cast<char>(0xA1);
+                } else if (cp == 0x045E) {  // ў → 0xA2 (Belarusian)
+                    out += static_cast<char>(0xA2);
+                // Serbian / Macedonian / Bosnian Cyrillic in Win-1251
+                } else if (cp == 0x0402) {  // Ђ → 0x80 (Serbian)
+                    out += static_cast<char>(0x80);
+                } else if (cp == 0x0452) {  // ђ → 0x90 (Serbian)
+                    out += static_cast<char>(0x90);
+                } else if (cp == 0x0409) {  // Љ → 0x8A (Serbian, Macedonian)
+                    out += static_cast<char>(0x8A);
+                } else if (cp == 0x0459) {  // љ → 0x9A (Serbian, Macedonian)
+                    out += static_cast<char>(0x9A);
+                } else if (cp == 0x040A) {  // Њ → 0x8C (Serbian, Macedonian)
+                    out += static_cast<char>(0x8C);
+                } else if (cp == 0x045A) {  // њ → 0x9C (Serbian, Macedonian)
+                    out += static_cast<char>(0x9C);
+                } else if (cp == 0x040B) {  // Ћ → 0x8D (Serbian)
+                    out += static_cast<char>(0x8D);
+                } else if (cp == 0x045B) {  // ћ → 0x9D (Serbian)
+                    out += static_cast<char>(0x9D);
+                } else if (cp == 0x040F) {  // Џ → 0x8F (Serbian, Macedonian)
+                    out += static_cast<char>(0x8F);
+                } else if (cp == 0x045F) {  // џ → 0x9F (Serbian, Macedonian)
+                    out += static_cast<char>(0x9F);
+                } else if (cp == 0x0403) {  // Ѓ → 0x81 (Macedonian)
+                    out += static_cast<char>(0x81);
+                } else if (cp == 0x0453) {  // ѓ → 0x83 (Macedonian)
+                    out += static_cast<char>(0x83);
+                } else if (cp == 0x040C) {  // Ќ → 0x8E (Macedonian)
+                    out += static_cast<char>(0x8E);
+                } else if (cp == 0x045C) {  // ќ → 0x9E (Macedonian)
+                    out += static_cast<char>(0x9E);
+                } else if (cp == 0x0405) {  // Ѕ → 0xBD (Macedonian)
+                    out += static_cast<char>(0xBD);
+                } else if (cp == 0x0455) {  // ѕ → 0xBE (Macedonian)
+                    out += static_cast<char>(0xBE);
+                } else if (cp == 0x0408) {  // Ј → 0xA3 (Serbian, Macedonian)
+                    out += static_cast<char>(0xA3);
+                } else if (cp == 0x0458) {  // ј → 0xBC (Serbian, Macedonian)
+                    out += static_cast<char>(0xBC);
+                } else if (cp == 0x2013) {  // en-dash → 0x96
+                    out += static_cast<char>(0x96);
+                } else if (cp == 0x2014) {  // em-dash → 0x97
+                    out += static_cast<char>(0x97);
+                } else if (cp == 0x201C) {  // left double quote → 0x93
+                    out += static_cast<char>(0x93);
+                } else if (cp == 0x201D) {  // right double quote → 0x94
+                    out += static_cast<char>(0x94);
+                } else if (cp == 0x201E) {  // bottom double quote → 0x84
+                    out += static_cast<char>(0x84);
+                } else if (cp == 0x2026) {  // ellipsis → 0x85
+                    out += static_cast<char>(0x85);
+                } else if (cp == 0x2116) {  // № → 0xB9
+                    out += static_cast<char>(0xB9);
+                } else if (cp == 0x00AB) {  // « → 0xAB
+                    out += static_cast<char>(0xAB);
+                } else if (cp == 0x00BB) {  // » → 0xBB
+                    out += static_cast<char>(0xBB);
+                } else {
+                    // Unmapped 2-byte char: pass through as UTF-8 bytes
+                    out += static_cast<char>(*(p-2));
+                    out += static_cast<char>(*(p-1));
+                }
+            } else if ((*p & 0xF0) == 0xE0 && p + 2 < end) {
+                // 3-byte UTF-8: pass through unchanged
+                out += static_cast<char>(*p++);
+                out += static_cast<char>(*p++);
+                out += static_cast<char>(*p++);
+            } else if ((*p & 0xF8) == 0xF0 && p + 3 < end) {
+                // 4-byte UTF-8: pass through unchanged
+                out += static_cast<char>(*p++);
+                out += static_cast<char>(*p++);
+                out += static_cast<char>(*p++);
+                out += static_cast<char>(*p++);
+            } else {
+                // Invalid sequence: skip byte
+                out += '?';
+                p++;
+            }
+        }
+        return out;
+    }
+
     struct OpenBookMenuHook
     {
         // Matches the static member signature of BookMenu::OpenBookMenu
@@ -57,20 +244,26 @@ namespace
                     // reformats if the live count differs from the cached count.
                     bookManager->RefreshVolumeOnOpen(vol);
                     if (!vol->cachedBookText.empty()) {
-                        // Use a static BSString so the underlying storage persists beyond
-                        // this stack frame. VR defers book rendering to the next frame, so a
-                        // stack-allocated BSString would be a dangling reference by then.
-                        // We also write to BookMenu::GetDescription() — the engine-side global
-                        // that VR's renderer reads directly rather than using the parameter.
+
+                        SKSE::log::info("[BookTextHook] Opening diary: formId=0x{:X} actor='{}' vol={} textLen={}",
+                            a_book->GetFormID(), vol->actorName, vol->volumeNumber, vol->cachedBookText.size());
+
+                        // Always apply Win-1251 conversion for any Cyrillic content.
+                        // Scaleform GFx's replaceText() uses BYTE offsets but
+                        // getLineOffset() returns CHARACTER indices. For 2-byte UTF-8
+                        // Cyrillic this causes progressive text overlay. Win-1251 is
+                        // single-byte Cyrillic so byte == char, fixing the mismatch.
+                        // The conversion is a no-op for ASCII, so it is safe for all
+                        // locales — covers Russian, Ukrainian, Belarusian, and any
+                        // user who has a Cyrillic-capable font mod installed.
+                        std::string textToInject = Utf8ToWin1251(vol->cachedBookText);
+
                         static RE::BSString s_injectedText;
-                        s_injectedText = vol->cachedBookText.c_str();
-                        // GetDescription() uses RELOCATION_ID(519297, 405837) — the VR side
-                        // (405837) is absent from the VR address library, so only call it on SSE.
-                        if (!REL::Module::IsVR()) {
-                            RE::BookMenu::GetDescription() = s_injectedText;
-                        }
-                        return func(s_injectedText, a_extra, a_ref, a_book,
-                                    a_pos, a_rot, a_scale, a_useDefaultPos);
+                        s_injectedText = textToInject.c_str();
+
+                        func(s_injectedText, a_extra, a_ref, a_book,
+                             a_pos, a_rot, a_scale, a_useDefaultPos);
+                        return;
                     }
                 }
             }
@@ -202,5 +395,11 @@ namespace
 
 void BookTextHook::Install()
 {
+    // Detect game language once and cache it.
+    // Must be done before the hook is installed so that s_gameLanguage
+    // is ready when the first diary book is opened.
+    s_gameLanguage = DetectSkyrimLanguage();
+    SKSE::log::info("[BookTextHook] Detected game language: '{}'", s_gameLanguage);
+
     OpenBookMenuHook::Install();
 }

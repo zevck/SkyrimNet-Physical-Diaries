@@ -77,6 +77,10 @@ namespace SkyrimNetDiaries {
         // Return all volume rows ordered by (actor_uuid, volume_number).
         std::vector<VolumeRow> LoadAllVolumes();
 
+        // Open an arbitrary DiaryDB file at the given path (read-only) and return
+        // all volume rows from it.  Does NOT affect the currently-open database.
+        static std::vector<VolumeRow> LoadAllVolumesFromPath(const std::string& dbPath);
+
         // Mark every volume as persisted (call from kPostSaveGame so that the
         // inventory-check on next load doesn't re-add legitimately taken books).
         bool MarkAllVolumesPersisted();

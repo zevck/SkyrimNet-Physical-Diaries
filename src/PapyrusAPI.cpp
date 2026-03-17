@@ -235,6 +235,14 @@ namespace PapyrusAPI {
         SkyrimNetDiaries::Config::GetSingleton()->Save();
     }
 
+    bool MCM_GetShowDateHeaders(RE::StaticFunctionTag*) {
+        return SkyrimNetDiaries::Config::GetSingleton()->GetShowDateHeaders();
+    }
+    void MCM_SetShowDateHeaders(RE::StaticFunctionTag*, bool v) {
+        SkyrimNetDiaries::Config::GetSingleton()->SetShowDateHeaders(v);
+        SkyrimNetDiaries::Config::GetSingleton()->Save();
+    }
+
     bool RegisterFunctions(RE::BSScript::IVirtualMachine* a_vm) {
         if (!a_vm) {
             SKSE::log::error("Failed to register Papyrus functions - VM is null");
@@ -268,6 +276,8 @@ namespace PapyrusAPI {
         a_vm->RegisterFunction("SetFontSizeContent",  "SkyrimNetDiaries_MCM", MCM_SetFontSizeContent);
         a_vm->RegisterFunction("GetFontSizeSmall",    "SkyrimNetDiaries_MCM", MCM_GetFontSizeSmall);
         a_vm->RegisterFunction("SetFontSizeSmall",    "SkyrimNetDiaries_MCM", MCM_SetFontSizeSmall);
+        a_vm->RegisterFunction("GetShowDateHeaders",  "SkyrimNetDiaries_MCM", MCM_GetShowDateHeaders);
+        a_vm->RegisterFunction("SetShowDateHeaders",  "SkyrimNetDiaries_MCM", MCM_SetShowDateHeaders);
 
         SKSE::log::info("Registered Physical Diary Papyrus API functions");
         return true;
