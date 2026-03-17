@@ -45,6 +45,7 @@ Found under **SkyrimNet Physical Diaries** in the Mod Configuration Menu.
 - [SkyUI](https://www.nexusmods.com/skyrimspecialedition/mods/12604) (for MCM)
 - [SKSE](https://skse.silverlock.org/)
 - [Address Library](https://www.nexusmods.com/skyrimspecialedition/mods/32444) or [VR Address Library](https://www.nexusmods.com/skyrimspecialedition/mods/58101)
+- [Native EditorID Fix](https://www.nexusmods.com/skyrimspecialedition/mods/85260)
 
 ---
 
