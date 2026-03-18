@@ -29,7 +29,10 @@ std::string SanitizeBookText(const std::string& text) {
         // e.g. "# Sundas, 17th Last Seed - Late Morning"   (whole-line header, any language)
         //      "Sundas, 17th of Last Seed, 4E 201"         (whole-line English Tamrielic)
         //      "Sundas, 17th Last Seed. Today I saw..."    (inline date prefix in prose)
-        // We supply our own date headers, so always remove any at the start of the content.
+        // Only strip when ShowDateHeaders is enabled: we're supplying our own formatted headers
+        // so LLM-generated ones would duplicate. When ShowDateHeaders is disabled the user
+        // wants the LLM's dates to show through — don't strip them.
+        if (SkyrimNetDiaries::Config::GetSingleton()->GetShowDateHeaders())
         {
             // Step 1: Strip any leading markdown heading line unconditionally.
             // A line starting with '#' is always AI formatting noise regardless of language.
@@ -41,6 +44,23 @@ std::string SanitizeBookText(const std::string& text) {
                         result = result.substr(1);
                 } else {
                     result.clear();
+                }
+            }
+
+            // Step 1.5: Strip a leading line that is entirely bold markdown (**...**).
+            // LLMs sometimes write "**17th of Last Seed, 4E 201 - Morning**" as a header.
+            if (result.size() >= 5 && result[0] == '*' && result[1] == '*') {
+                size_t nl = result.find('\n');
+                size_t lineEnd = (nl != std::string::npos) ? nl : result.size();
+                if (lineEnd >= 5 &&
+                    result[lineEnd - 1] == '*' && result[lineEnd - 2] == '*') {
+                    if (nl != std::string::npos) {
+                        result = result.substr(nl + 1);
+                        while (!result.empty() && (result[0] == '\n' || result[0] == '\r'))
+                            result = result.substr(1);
+                    } else {
+                        result.clear();
+                    }
                 }
             }
 
@@ -95,6 +115,27 @@ std::string SanitizeBookText(const std::string& text) {
                 if (view.substr(0, word.size()) == word) {
                     matchedWord = &word;
                     break;
+                }
+            }
+
+            // Ordinal-first fallback: "17th of Last Seed", "3rd Hearthfire", etc.
+            // Pattern: 1-2 digits + (st|nd|rd|th) + space + optional "of " + <month>
+            if (!matchedWord && !result.empty() && std::isdigit((unsigned char)result[0])) {
+                size_t i = 0;
+                while (i < result.size() && std::isdigit((unsigned char)result[i])) ++i;
+                if (i >= 1 && i <= 2 && i + 3 <= result.size()) {
+                    std::string_view suf = view.substr(i, 3);
+                    if (suf == "st " || suf == "nd " || suf == "rd " || suf == "th ") {
+                        i += 3;
+                        if (i + 3 <= result.size() && view.substr(i, 3) == "of ") i += 3;
+                        for (const auto& word : skyrimDateWords) {
+                            if (view.size() >= i + word.size() &&
+                                view.substr(i, word.size()) == word) {
+                                matchedWord = &word;
+                                break;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -245,6 +286,15 @@ std::string FormatGameDate(double gameTime) {
     int currentMonth = startMonth;
     int currentYear = startYear;
     
+    // Handle month/year underflow (negative totalDays — e.g. test entries before game start)
+    while (absoluteDay <= 0) {
+        absoluteDay += 30;
+        currentMonth--;
+        if (currentMonth < 0) {
+            currentMonth = 11;
+            currentYear--;
+        }
+    }
     // Handle month/year overflow
     while (absoluteDay > 30) {
         absoluteDay -= 30;
@@ -255,8 +305,8 @@ std::string FormatGameDate(double gameTime) {
         }
     }
     
-    // Calculate day of week from start day
-    int dayOfWeek = (startDayOfWeek + totalDays) % 7;
+    // Calculate day of week from start day — use +7 to keep result non-negative
+    int dayOfWeek = ((startDayOfWeek + totalDays) % 7 + 7) % 7;
     
     // Format: "Sundas, 17 Last Seed, 4E 201" or "17 Last Seed, 4E 201" (without day of week)
     char buffer[128];
@@ -286,6 +336,15 @@ std::string FormatGameDateShort(double gameTime) {
     int currentMonth = startMonth;
     int currentYear = startYear;
     
+    // Handle month/year underflow (negative totalDays)
+    while (absoluteDay <= 0) {
+        absoluteDay += 30;
+        currentMonth--;
+        if (currentMonth < 0) {
+            currentMonth = 11;
+            currentYear--;
+        }
+    }
     // Handle month/year overflow
     while (absoluteDay > 30) {
         absoluteDay -= 30;
@@ -461,7 +520,7 @@ std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& 
     bookText = "[pagebreak]\n\n";
 
     // Title page — handwriting font, centred; leading newlines push it down visually
-    bookText += "\n\n\n";
+    bookText += "\n\n\n\n";
     bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontTitle) + "'><p align='center'>";
     bookText += actorName + "'s Diary";
     bookText += "</p></font>\n\n";
@@ -695,6 +754,25 @@ void UpdateDiaryForActorInternal(RE::FormID formId) {
             newEntries.end());
 
         if (newEntries.empty()) {
+            // No entries after the recorded endTime.  If this volume was never persisted
+            // to a save and its endTime is ahead of current game-time (stale from a
+            // quit-without-save + reload scenario), do a full rebuild from all entries.
+            if (!latestVolume->persistedInSave) {
+                auto calendar = RE::Calendar::GetSingleton();
+                double currentTime = calendar ? calendar->GetCurrentGameTime() * 86400.0 : 0.0;
+                if (latestVolume->endTime > currentTime) {
+                    SKSE::log::info("Stale endTime {:.2f} > currentTime {:.2f} for {} — rebuilding from all entries",
+                                   latestVolume->endTime, currentTime, actorName);
+                    auto bookManager2 = SkyrimNetDiaries::BookManager::GetSingleton();
+                    bookManager2->UnregisterBook(uuid);
+                    auto allEntries = SkyrimNetDiaries::Database::GetDiaryEntries(formId, 10000, 0.0, 0.0);
+                    if (!allEntries.empty()) {
+                        std::string bioTemplateName = SkyrimNetDiaries::Database::GetTemplateNameByUUID(uuid);
+                        CreateAllVolumesForActor(uuid, actorName, formId, bioTemplateName, std::move(allEntries), 1);
+                    }
+                    return;
+                }
+            }
             SKSE::log::debug("No new entries for {} since {:.2f}", actorName, latestVolume->endTime);
             return;
         }
@@ -867,6 +945,27 @@ void QueueSealedVolumeRecovery(const std::unordered_set<std::string>& skipUuids 
 
         uint32_t actorFormId = SkyrimNetDiaries::Database::GetFormIDForUUID(uuid);
         if (actorFormId == 0) continue;
+
+        if (latest->persistedInSave == false) {
+            // Volume was never committed to a .ess save.  If the current game-time
+            // is earlier than the volume's endTime the player reverted to an older
+            // save and the volume's time range is now stale — force a rebuild so
+            // new entries at the reverted game-time aren't silently dropped.
+            auto calendar = RE::Calendar::GetSingleton();
+            if (calendar && latest->endTime > 0.0) {
+                double currentTime = calendar->GetCurrentGameTime() * 86400.0;
+                if (latest->endTime > currentTime) {
+                    SKSE::log::info("[Recovery] {} vol {} not persisted and endTime {:.2f} > current {:.2f} — queuing forced rebuild",
+                                   latest->actorName, latest->volumeNumber, latest->endTime, currentTime);
+                    RE::FormID fid = static_cast<RE::FormID>(actorFormId);
+                    SKSE::GetTaskInterface()->AddTask([fid]() {
+                        UpdateDiaryForActorInternal(fid);
+                    });
+                    ++recoveryCount;
+                    continue;
+                }
+            }
+        }
 
         if (latest->endTime > 0.0) {
             // Sealed volume: probe for any entry strictly after the seal timestamp.

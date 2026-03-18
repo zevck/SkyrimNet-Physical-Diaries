@@ -851,6 +851,7 @@ namespace SkyrimNetDiaries {
                 row.prevVolumeLastCreationTime = data.prevVolumeLastCreationTime;
                 row.prevVolumeCountAtBoundary  = data.prevVolumeCountAtBoundary;
                 row.bookText                   = data.cachedBookText;
+                row.persistedInSave            = data.persistedInSave;  // preserve — MarkAllVolumesPersisted sets on save
                 db->UpsertVolume(row);
                 ++volumesFlushed;
             }
@@ -1019,6 +1020,35 @@ namespace SkyrimNetDiaries {
         std::vector<std::string> invalidActors;
 
         for (auto& row : rows) {
+            // Volumes that were never committed to a .ess save are ephemeral.
+            // The player may have quit-without-saving after diary creation, then
+            // loaded an older save whose game-time is EARLIER than the volume's
+            // recorded endTime.  Any new diary entry generated at that reverted
+            // game-time would have entry_date <= endTime and be silently filtered
+            // out as "belongs to previous volume" — so the book is never rebuilt.
+            //
+            // Safety: only delete if the DPF form is also gone.  If the form still
+            // exists the row may be a legitimate migrated row (persisted_in_save
+            // added via ALTER TABLE DEFAULT 0 on an older install) that just hasn't
+            // been re-saved yet.  In that case let QueueInventoryCheck / the catch-up
+            // scan handle it gracefully rather than nuking it here.
+            if (!row.persistedInSave) {
+                auto* form = RE::TESForm::LookupByID(static_cast<RE::FormID>(row.bookFormId));
+                bool formValid = form && form->GetFormType() == RE::FormType::Book;
+                if (!formValid) {
+                    SKSE::log::info("[LoadFromDB] {} vol {} was never saved and DPF form is gone — removing stale row and queuing recreation",
+                                   row.actorName, row.volumeNumber);
+                    db->DeleteVolume(row.actorUuid, row.volumeNumber);
+                    invalidActors.push_back(row.actorUuid);
+                    continue;
+                }
+                // Form still alive but not persisted — fall through and load normally.
+                // QueueSealedVolumeRecovery / catch-up will detect the stale endTime
+                // and rebuild if entries exist beyond it.
+                SKSE::log::info("[LoadFromDB] {} vol {} not persisted but DPF form 0x{:X} still valid — loading and deferring to catch-up",
+                               row.actorName, row.volumeNumber, row.bookFormId);
+            }
+
             // Validate the DPF book form still exists (it is lost on save revert).
             auto* form = RE::TESForm::LookupByID(static_cast<RE::FormID>(row.bookFormId));
             if (!form || form->GetFormType() != RE::FormType::Book) {
@@ -1125,8 +1155,12 @@ namespace SkyrimNetDiaries {
         if (liveCount == vol->lastKnownEntryCount && !vol->cachedBookText.empty() && textIsCurrentFormat) {
             return;
         }
-        if (!textIsCurrentFormat && liveCount == 0 && !vol->cachedBookText.empty()) {
-            SKSE::log::info("[SNPD] {} vol {} has old-format text but no live entries — preserving external/imported text",
+        // EXCEPTION (see comment above): nothing to regenerate FROM when liveCount==0 —
+        // preserve whatever cached text exists, regardless of format.  This handles both
+        // old-format rows and current-format text for test/imported entries that were never
+        // written to the SkyrimNet API DB.
+        if (liveCount == 0 && !vol->cachedBookText.empty()) {
+            SKSE::log::info("[SNPD] {} vol {} has no live API entries — preserving cached text (test/imported data)",
                 vol->actorName, vol->volumeNumber);
             return;
         }
