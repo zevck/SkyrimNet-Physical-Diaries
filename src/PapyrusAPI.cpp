@@ -246,6 +246,14 @@ namespace PapyrusAPI {
         SkyrimNetDiaries::Config::GetSingleton()->Save();
     }
 
+    RE::BSFixedString MCM_GetFontFace(RE::StaticFunctionTag*) {
+        return SkyrimNetDiaries::Config::GetSingleton()->GetFontFace().c_str();
+    }
+    void MCM_SetFontFace(RE::StaticFunctionTag*, RE::BSFixedString v) {
+        SkyrimNetDiaries::Config::GetSingleton()->SetFontFace(v.c_str());
+        SkyrimNetDiaries::Config::GetSingleton()->Save();
+    }
+
     bool MCM_GenerateJapaneseTestDiaries(RE::StaticFunctionTag*) {
         SKSE::log::info("[PapyrusAPI] MCM_GenerateJapaneseTestDiaries called");
 
@@ -362,6 +370,8 @@ namespace PapyrusAPI {
         a_vm->RegisterFunction("SetFontSizeSmall",    "SkyrimNetDiaries_MCM", MCM_SetFontSizeSmall);
         a_vm->RegisterFunction("GetShowDateHeaders",  "SkyrimNetDiaries_MCM", MCM_GetShowDateHeaders);
         a_vm->RegisterFunction("SetShowDateHeaders",  "SkyrimNetDiaries_MCM", MCM_SetShowDateHeaders);
+        a_vm->RegisterFunction("GetFontFace",         "SkyrimNetDiaries_MCM", MCM_GetFontFace);
+        a_vm->RegisterFunction("SetFontFace",         "SkyrimNetDiaries_MCM", MCM_SetFontFace);
         a_vm->RegisterFunction("GenerateJapaneseTestDiaries", "SkyrimNetDiaries_MCM", MCM_GenerateJapaneseTestDiaries);
 
         SKSE::log::info("Registered Physical Diary Papyrus API functions");

@@ -6,6 +6,7 @@
 #include "Config.h"
 #include "DiaryDB.h"
 #include "PapyrusAPI.h"
+#include "Localization.h"
 #include "RE/F/FunctionArguments.h"
 #include "RE/V/VirtualMachine.h"
 #include <spdlog/sinks/basic_file_sink.h>
@@ -269,23 +270,13 @@ std::string FormatGameDate(double gameTime) {
     const int startYear = 201;
     const int startDayOfWeek = 0; // Sundas
     
-    // Skyrim months (30 days each)
-    const char* monthNames[] = {
-        "Morning Star", "Sun's Dawn", "First Seed", "Rain's Hand",
-        "Second Seed", "Midyear", "Sun's Height", "Last Seed",
-        "Hearthfire", "Frostfall", "Sun's Dusk", "Evening Star"
-    };
-    
-    // Skyrim day names (7-day week)
-    const char* dayNames[] = {
-        "Sundas", "Morndas", "Tirdas", "Middas", "Turdas", "Fredas", "Loredas"
-    };
-    
+    const auto& locale = SkyrimNetDiaries::Localization::GetSingleton()->Get();
+
     // Calculate absolute day number from game start (17 Last Seed)
     int absoluteDay = startDay + totalDays;
     int currentMonth = startMonth;
     int currentYear = startYear;
-    
+
     // Handle month/year underflow (negative totalDays — e.g. test entries before game start)
     while (absoluteDay <= 0) {
         absoluteDay += 30;
@@ -304,16 +295,12 @@ std::string FormatGameDate(double gameTime) {
             currentYear++;
         }
     }
-    
+
     // Calculate day of week from start day — use +7 to keep result non-negative
     int dayOfWeek = ((startDayOfWeek + totalDays) % 7 + 7) % 7;
-    
-    // Format: "Sundas, 17 Last Seed, 4E 201" or "17 Last Seed, 4E 201" (without day of week)
-    char buffer[128];
-    snprintf(buffer, sizeof(buffer), "%s, %d %s, 4E %d",
-            dayNames[dayOfWeek], absoluteDay, monthNames[currentMonth], currentYear);
-    
-    return std::string(buffer);
+
+    return locale.formatDateLong(locale.dayNames[dayOfWeek], absoluteDay,
+                                  locale.monthNames[currentMonth], currentYear);
 }
 
 std::string FormatGameDateShort(double gameTime) {
@@ -324,18 +311,13 @@ std::string FormatGameDateShort(double gameTime) {
     const int startMonth = 7; // Last Seed (0-indexed)
     const int startYear = 201;
     
-    // Skyrim months (30 days each)
-    const char* monthNames[] = {
-        "Morning Star", "Sun's Dawn", "First Seed", "Rain's Hand",
-        "Second Seed", "Midyear", "Sun's Height", "Last Seed",
-        "Hearthfire", "Frostfall", "Sun's Dusk", "Evening Star"
-    };
-    
+    const auto& locale = SkyrimNetDiaries::Localization::GetSingleton()->Get();
+
     // Calculate absolute day number from game start (17 Last Seed)
     int absoluteDay = startDay + totalDays;
     int currentMonth = startMonth;
     int currentYear = startYear;
-    
+
     // Handle month/year underflow (negative totalDays)
     while (absoluteDay <= 0) {
         absoluteDay += 30;
@@ -354,13 +336,8 @@ std::string FormatGameDateShort(double gameTime) {
             currentYear++;
         }
     }
-    
-    // Format without day of week: "17 Last Seed, 4E 201"
-    char buffer[128];
-    snprintf(buffer, sizeof(buffer), "%d %s, 4E %d",
-            absoluteDay, monthNames[currentMonth], currentYear);
-    
-    return std::string(buffer);
+
+    return locale.formatDateShort(absoluteDay, locale.monthNames[currentMonth], currentYear);
 }
 
 namespace
@@ -515,25 +492,29 @@ std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& 
     int fontDate = config->GetFontSizeDate();
     int fontContent = config->GetFontSizeContent();
     int fontSmall = config->GetFontSizeSmall();
-    
+    std::string fontFace = config->GetFontFace();
+
     // Blank first page
     bookText = "[pagebreak]\n\n";
 
     // Title page — handwriting font, centred; leading newlines push it down visually
     bookText += "\n\n\n\n";
-    bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontTitle) + "'><p align='center'>";
-    bookText += actorName + "'s Diary";
+    bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontTitle) + "'><p align='center'>";
+    auto* loc = SkyrimNetDiaries::Localization::GetSingleton();
+    bookText += loc->Get().formatDiaryTitle(actorName);
     bookText += "</p></font>\n\n";
 
     if (entries.empty()) {
         bookText += "[pagebreak]\n\n";
-        bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontContent) + "'><p align='center'>All entries from this time period have been removed.</p></font>";
+        bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'><p align='center'>"
+                  + std::string(SkyrimNetDiaries::Localization::kEmptySentinel)
+                  + loc->Get().emptyVolumeText + "</p></font>";
     } else {
         // Date range below title
         std::string firstDate = FormatGameDateShort(entries.front().entry_date);
         std::string lastDate = FormatGameDateShort(entries.back().entry_date);
 
-        bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontSmall) + "'><p align='center'>";
+        bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontSmall) + "'><p align='center'>";
         if (firstDate == lastDate) {
             bookText += firstDate;
         } else {
@@ -561,9 +542,9 @@ std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& 
             // Date header (optional — controlled by ShowDateHeaders config)
             if (SkyrimNetDiaries::Config::GetSingleton()->GetShowDateHeaders()) {
                 // Reset font size explicitly (title page font might bleed through pagebreak)
-                bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontDate) + "'></font>";
-                bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontDate) + "'>" + dateStr + "</font>";
-                bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontContent) + "'></font>\n\n";  // Reset to content font size
+                bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontDate) + "'></font>";
+                bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontDate) + "'>" + dateStr + "</font>";
+                bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'></font>\n\n";  // Reset to content font size
             }
             
             // Entry content - wrap EACH paragraph in font tag since Skyrim resets after \n\n
@@ -575,14 +556,14 @@ std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& 
             while ((found = content.find("\n\n", pos)) != std::string::npos) {
                 std::string paragraph = content.substr(pos, found - pos);
                 if (!paragraph.empty()) {
-                    bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontContent) + "'>" + paragraph + "</font>\n\n";
+                    bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'>" + paragraph + "</font>\n\n";
                 }
                 pos = found + 2;
             }
             // Last paragraph
             std::string lastParagraph = content.substr(pos);
             if (!lastParagraph.empty()) {
-                bookText += "<font face='$HandwrittenFont' size='" + std::to_string(fontContent) + "'>" + lastParagraph + "</font>\n\n";
+                bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'>" + lastParagraph + "</font>\n\n";
             }
             
             bookText += "\n\n";
@@ -828,10 +809,7 @@ void UpdateDiaryForActorInternal(RE::FormID formId) {
             double cutTime = finalizedEntries.back().entry_date;
 
             // Write the sealed volume with its complete, final content.
-            std::string bookName = actorName + "'s Diary";
-            if (latestVolume->volumeNumber > 1) {
-                bookName += ", v" + std::to_string(latestVolume->volumeNumber);
-            }
+            std::string bookName = SkyrimNetDiaries::Localization::GetSingleton()->FormatBookName(actorName, latestVolume->volumeNumber);
             std::string sealedText = FormatDiaryEntries(finalizedEntries, actorName,
                                                         latestVolume->startTime, cutTime, MAX_ENTRIES);
             SkyrimNetDiaries::DiaryDB::GetSingleton()->UpdateBookText(
@@ -858,10 +836,7 @@ void UpdateDiaryForActorInternal(RE::FormID formId) {
             }
         } else {
             // Update the current volume in place
-            std::string bookName = actorName + "'s Diary";
-            if (latestVolume->volumeNumber > 1) {
-                bookName += ", v" + std::to_string(latestVolume->volumeNumber);
-            }
+            std::string bookName = SkyrimNetDiaries::Localization::GetSingleton()->FormatBookName(actorName, latestVolume->volumeNumber);
             
             // Sort current volume entries oldest-first before formatting.
             std::sort(currentVolumeEntries.begin(), currentVolumeEntries.end(),
@@ -1176,10 +1151,7 @@ int ResetAllDiariesInternal() {
 
                 // Delete .txt file (safe to do here on the Papyrus thread).
                 if (!saveFolder.empty() && !vol.bioTemplateName.empty()) {
-                    std::string bookName = vol.actorName + "'s Diary";
-                    if (vol.volumeNumber > 1) {
-                        bookName += ", v" + std::to_string(vol.volumeNumber);
-                    }
+                    std::string bookName = SkyrimNetDiaries::Localization::GetSingleton()->FormatBookName(vol.actorName, vol.volumeNumber);
                     auto txtPath = booksBasePath / saveFolder / vol.bioTemplateName / (bookName + ".txt");
                     if (std::filesystem::exists(txtPath)) {
                         std::filesystem::remove(txtPath);
@@ -1694,7 +1666,7 @@ namespace {
                 const auto& t = bookData->cachedBookText;
                 // Don't expose the "entries removed" placeholder — it would be read aloud by TTS mods.
                 // Leave text empty so callers know there's nothing to read for this volume.
-                if (t.find("All entries from this time period have been removed") == std::string::npos) {
+                if (t.find("<!-- SNPD_EMPTY -->") == std::string::npos) {
                     query->resultCode = SkyrimNetPhysicalDiaries_API::SNPDResultCode::Success;
                     size_t copyLen = std::min(t.size(), sizeof(query->text) - 1);
                     std::memcpy(query->text, t.c_str(), copyLen);
@@ -1747,7 +1719,7 @@ namespace {
             // Entry pages start at index 2; check for the "removed" placeholder.
             int entryPageCount = static_cast<int>(pages.size()) - 2;
             if (entryPageCount <= 0 ||
-                pages[2].find("All entries from this time period have been removed") != std::string_view::npos) {
+                pages[2].find("<!-- SNPD_EMPTY -->") != std::string_view::npos) {
                 query->resultCode = SkyrimNetPhysicalDiaries_API::SNPDResultCode::NoEntries;
                 SKSE::log::debug("SNPD_QUERY_ENTRY: FormID 0x{:X} has no entries", query->bookFormId);
                 break;
@@ -1818,7 +1790,7 @@ namespace {
 
             int entryPageCount = static_cast<int>(pages.size()) - 2;
             if (entryPageCount <= 0 ||
-                pages[2].find("All entries from this time period have been removed") != std::string_view::npos) {
+                pages[2].find("<!-- SNPD_EMPTY -->") != std::string_view::npos) {
                 SKSE::log::debug("SNPD_QUERY_ALL_ENTRIES: FormID 0x{:X} has no entries", query->bookFormId);
                 break;
             }
@@ -2081,6 +2053,9 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
     // Register C++ event handler for diary theft/return detection
     SKSE::log::debug("Registering diary theft/return event handler...");
     DiaryTheftHandler::Register();
+
+    // Detect game language and initialize localization (must happen before BookTextHook).
+    SkyrimNetDiaries::Localization::GetSingleton()->Initialize();
 
     // Install book text injection hook (replaces Dynamic Book Framework text delivery,
     // works on both SSE and VR via RELOCATION_ID(50122, 51053)).

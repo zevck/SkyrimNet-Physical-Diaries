@@ -39,6 +39,7 @@ set(sources
     src/DiaryTheftHandler.cpp
     src/BookTextHook.cpp
     src/PapyrusAPI.cpp
+    src/Localization.cpp
 )
 
 # ---- Generate Plugin.h ----
@@ -67,6 +68,12 @@ target_precompile_headers(
     ${PROJECT_NAME}
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include/PCH.h
+)
+
+target_compile_options(
+    ${PROJECT_NAME}
+    PRIVATE
+        /utf-8
 )
 
 target_compile_definitions(

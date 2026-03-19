@@ -1,15 +1,5 @@
 ; =============================================================================
 ; SkyrimNetDiaries_MCM  -  extends SKI_ConfigBase
-;
-; Provides two MCM pages:
-;   "Settings"    - EntriesPerVolume slider + four font-size sliders
-;   "Maintenance" - Reset All Diaries button
-;
-; SETUP (Creation Kit):
-;   1. Create a new Quest in SkyrimNet Physical Diaries.esp
-;      Name: SkyrimNetDiariesMCMQuest, Type: Misc, Start Game Enabled: yes
-;   2. Attach this script to the quest.
-;   3. Set ModName (below) or leave it to be set in OnConfigInit.
 ; =============================================================================
 
 Scriptname SkyrimNetDiaries_MCM extends SKI_ConfigBase
@@ -18,10 +8,8 @@ Scriptname SkyrimNetDiaries_MCM extends SKI_ConfigBase
 ; Native functions (registered in PapyrusAPI.cpp on "SkyrimNetDiaries_MCM")
 ; ============================================================================
 
-; Maintenance
 bool Function RegenerateTextsOnly() global native
 bool Function ResetAllDiaries() global native
-; Config getters / setters  (each setter persists the change to the INI file)
 bool Function GetDebugLog()                      global native
      Function SetDebugLog(bool value)            global native
 bool Function GetShowDateHeaders()               global native
@@ -36,111 +24,150 @@ int  Function GetFontSizeContent()               global native
      Function SetFontSizeContent(int value)      global native
 int  Function GetFontSizeSmall()                 global native
      Function SetFontSizeSmall(int value)        global native
+string Function GetFontFace()                    global native
+       Function SetFontFace(string value)        global native
 
 ; ============================================================================
-; Option handles  (populated in OnPageReset, used in event callbacks)
+; Option handles
 ; ============================================================================
 int oidEntriesPerVolume  = -1
 int oidShowDateHeaders   = -1
 int oidDebugLog          = -1
-int oidFontSizeTitle    = -1
-int oidFontSizeDate     = -1
-int oidFontSizeContent  = -1
-int oidFontSizeSmall    = -1
-int oidResetAll         = -1
+int oidFontSizeTitle     = -1
+int oidFontSizeDate      = -1
+int oidFontSizeContent   = -1
+int oidFontSizeSmall     = -1
+int oidFontFace          = -1
+int oidResetAll          = -1
 
-; Font size values captured when the MCM opens, used to detect changes on close.
+; Font presets
+string[] _fontValues
+string[] _fontDisplayNames
+int _fontIndex = 0
+
+; Snapshot on open for change detection
 int _fontTitleOnOpen   = 0
 int _fontDateOnOpen    = 0
 int _fontContentOnOpen = 0
 int _fontSmallOnOpen   = 0
+string _fontFaceOnOpen = ""
 
 ; ============================================================================
-; SKI_ConfigBase lifecycle
+; Lifecycle
 ; ============================================================================
+
+event OnConfigInit()
+    ModName = "SkyrimNet Physical Diaries"
+    Pages   = new string[2]
+    Pages[0] = "$SNPD_PageSettings"
+    Pages[1] = "$SNPD_PageMaintenance"
+
+    _fontValues = new string[3]
+    _fontValues[0] = "$HandwrittenFont"
+    _fontValues[1] = "$EverywhereFont"
+    _fontValues[2] = "$SkyrimBooks"
+
+    _fontDisplayNames = new string[3]
+    _fontDisplayNames[0] = "Handwritten"
+    _fontDisplayNames[1] = "UI Font"
+    _fontDisplayNames[2] = "Book"
+endevent
 
 event OnConfigOpen()
+    ; Always rebuild font arrays (OnConfigInit only runs once per save,
+    ; so these may be uninitialized on existing saves with older scripts)
+    _fontValues = new string[3]
+    _fontValues[0] = "$HandwrittenFont"
+    _fontValues[1] = "$EverywhereFont"
+    _fontValues[2] = "$SkyrimBooks"
+
+    _fontDisplayNames = new string[3]
+    _fontDisplayNames[0] = "Handwritten"
+    _fontDisplayNames[1] = "UI Font"
+    _fontDisplayNames[2] = "Book"
+
     _fontTitleOnOpen   = GetFontSizeTitle()
     _fontDateOnOpen    = GetFontSizeDate()
     _fontContentOnOpen = GetFontSizeContent()
     _fontSmallOnOpen   = GetFontSizeSmall()
+    _fontFaceOnOpen    = GetFontFace()
 endevent
 
 event OnConfigClose()
     if _fontTitleOnOpen   != GetFontSizeTitle()   || \
        _fontDateOnOpen    != GetFontSizeDate()    || \
        _fontContentOnOpen != GetFontSizeContent() || \
-       _fontSmallOnOpen   != GetFontSizeSmall()
+       _fontSmallOnOpen   != GetFontSizeSmall()   || \
+       _fontFaceOnOpen    != GetFontFace()
         RegenerateTextsOnly()
     endif
 endevent
 
-event OnConfigInit()
-    ModName = "SkyrimNet Physical Diaries"
-    Pages   = new string[2]
-    Pages[0] = "Settings"
-    Pages[1] = "Maintenance"
-endevent
+function UpdateFontIndex()
+    string current = GetFontFace()
+    _fontIndex = 0
+    int i = 0
+    while i < _fontValues.Length
+        if _fontValues[i] == current
+            _fontIndex = i
+            return
+        endif
+        i += 1
+    endwhile
+endfunction
+
+; ============================================================================
+; Page rendering
+; ============================================================================
 
 event OnPageReset(string page)
     SetCursorFillMode(TOP_TO_BOTTOM)
     SetCursorPosition(0)
 
-    ; Reset all option handles so stale IDs cannot be matched
-    oidEntriesPerVolume  = -1
-    oidShowDateHeaders   = -1
-    oidDebugLog          = -1
+    oidEntriesPerVolume = -1
+    oidShowDateHeaders  = -1
+    oidDebugLog         = -1
     oidFontSizeTitle    = -1
     oidFontSizeDate     = -1
     oidFontSizeContent  = -1
     oidFontSizeSmall    = -1
+    oidFontFace         = -1
     oidResetAll         = -1
 
-    if page == "Settings"
+    if page == Pages[0]
         RenderSettingsPage()
-    elseif page == "Maintenance"
+    elseif page == Pages[1]
         RenderMaintenancePage()
     endif
 endevent
 
-; ============================================================================
-; Settings page
-; ============================================================================
-
 function RenderSettingsPage()
+    AddHeaderOption("$SNPD_HeaderDiaryVolumes")
+    oidEntriesPerVolume = AddSliderOption("$SNPD_EntriesPerVolume", GetEntriesPerVolume(), "{0}")
+    oidShowDateHeaders  = AddToggleOption("$SNPD_ShowDateHeaders", GetShowDateHeaders())
 
-    AddHeaderOption("Diary Volumes")
-    oidEntriesPerVolume = AddSliderOption("Entries Per Volume", GetEntriesPerVolume(), "{0}")
-    oidShowDateHeaders  = AddToggleOption("Show Date Headers", GetShowDateHeaders())
-
-    AddHeaderOption("Book Font Sizes")
-    oidFontSizeTitle   = AddSliderOption("Title Font Size",   GetFontSizeTitle(),   "{0}")
-    oidFontSizeDate    = AddSliderOption("Date Font Size",    GetFontSizeDate(),    "{0}")
-    oidFontSizeContent = AddSliderOption("Content Font Size", GetFontSizeContent(), "{0}")
-    oidFontSizeSmall   = AddSliderOption("Small Font Size",   GetFontSizeSmall(),   "{0}")
-
+    AddHeaderOption("$SNPD_HeaderFontSizes")
+    UpdateFontIndex()
+    oidFontFace        = AddMenuOption("$SNPD_FontFace", _fontDisplayNames[_fontIndex])
+    oidFontSizeTitle   = AddSliderOption("$SNPD_TitleFontSize",   GetFontSizeTitle(),   "{0}")
+    oidFontSizeDate    = AddSliderOption("$SNPD_DateFontSize",    GetFontSizeDate(),    "{0}")
+    oidFontSizeContent = AddSliderOption("$SNPD_ContentFontSize", GetFontSizeContent(), "{0}")
+    oidFontSizeSmall   = AddSliderOption("$SNPD_SmallFontSize",   GetFontSizeSmall(),   "{0}")
 endfunction
-
-; ============================================================================
-; Maintenance page
-; ============================================================================
 
 function RenderMaintenancePage()
+    AddHeaderOption("$SNPD_HeaderMaintenance")
+    oidResetAll = AddTextOption("$SNPD_ResetAllDiaries", "")
 
-    AddHeaderOption("Diary Maintenance")
-    oidResetAll = AddTextOption("Reset All Diaries", "")
-
-    AddHeaderOption("Logging")
-    oidDebugLog = AddToggleOption("Debug Logging", GetDebugLog())
-
+    AddHeaderOption("$SNPD_HeaderLogging")
+    oidDebugLog = AddToggleOption("$SNPD_DebugLogging", GetDebugLog())
 endfunction
 
 ; ============================================================================
-; Text option select  (Reset / Force Rebuild)
+; Option select (toggles, reset button)
 ; ============================================================================
 
 event OnOptionSelect(int oid)
-
     if oid == oidShowDateHeaders
         bool newVal = !GetShowDateHeaders()
         SetShowDateHeaders(newVal)
@@ -152,28 +179,49 @@ event OnOptionSelect(int oid)
         SetToggleOptionValue(oid, newVal)
     elseif oid == oidResetAll
         bool confirmed = ShowMessage( \
-            "Remove all physical diary books from NPCs and clear tracking?\n\n" + \
-            "Your SkyrimNet diary entries are NOT affected - books can be regenerated ", \
-            true, "Confirm", "Cancel")
+            "$SNPD_ResetConfirmMsg", \
+            true, "$SNPD_Confirm", "$SNPD_Cancel")
         if confirmed
             bool ok = ResetAllDiaries()
             if ok
-                ShowMessage("Reset complete.\n\nPlease save and restart the game to fully remove books from unloaded containers.", false, "OK")
+                ShowMessage("$SNPD_ResetSuccessMsg", false, "$SNPD_OK")
             else
-                ShowMessage("Reset encountered an error. Check SkyrimNetPhysicalDiaries.log for details.", false, "OK")
+                ShowMessage("$SNPD_ResetErrorMsg", false, "$SNPD_OK")
             endif
             ForcePageReset()
         endif
     endif
-
 endevent
 
 ; ============================================================================
-; Slider open  (populate the slider dialog values)
+; Menu open (font selector dropdown)
+; ============================================================================
+
+event OnOptionMenuOpen(int oid)
+    ; Only one menu exists — always populate it
+    SetMenuDialogOptions(_fontDisplayNames)
+    SetMenuDialogStartIndex(_fontIndex)
+    SetMenuDialogDefaultIndex(0)
+endevent
+
+; ============================================================================
+; Menu accept (font selected from dropdown)
+; ============================================================================
+
+event OnOptionMenuAccept(int oid, int idx)
+    ; Accept any valid menu selection — only one menu exists on this page
+    if idx >= 0 && idx < _fontValues.Length
+        _fontIndex = idx
+        SetFontFace(_fontValues[idx])
+        SetMenuOptionValue(oidFontFace, _fontDisplayNames[idx])
+    endif
+endevent
+
+; ============================================================================
+; Slider open
 ; ============================================================================
 
 event OnOptionSliderOpen(int oid)
-
     if oid == oidEntriesPerVolume
         SetSliderDialogStartValue(GetEntriesPerVolume())
         SetSliderDialogDefaultValue(10)
@@ -200,17 +248,14 @@ event OnOptionSliderOpen(int oid)
         SetSliderDialogRange(8, 24)
         SetSliderDialogInterval(1)
     endif
-
 endevent
 
 ; ============================================================================
-; Slider accept  (user confirmed a new value)
+; Slider accept
 ; ============================================================================
 
 event OnOptionSliderAccept(int oid, float value)
-
     int intVal = value as int
-
     if oid == oidEntriesPerVolume
         SetEntriesPerVolume(intVal)
         SetSliderOptionValue(oid, intVal, "{0}")
@@ -227,7 +272,6 @@ event OnOptionSliderAccept(int oid, float value)
         SetFontSizeSmall(intVal)
         SetSliderOptionValue(oid, intVal, "{0}")
     endif
-
 endevent
 
 ; ============================================================================
@@ -235,33 +279,32 @@ endevent
 ; ============================================================================
 
 event OnOptionHighlight(int oid)
-
     if oid == oidEntriesPerVolume
-        SetInfoText("How many diary entries fit in one book volume. Higher number means longer book load time. Range 1-50, default 10.")
+        SetInfoText("$SNPD_TipEntriesPerVolume")
     elseif oid == oidShowDateHeaders
-        SetInfoText("Show date headers above each diary entry. Disable if your LLM already includes dates in the entry text.")
+        SetInfoText("$SNPD_TipShowDateHeaders")
     elseif oid == oidDebugLog
-        SetInfoText("Write verbose debug information to SkyrimNetPhysicalDiaries.log. Disable for normal use.")
+        SetInfoText("$SNPD_TipDebugLog")
+    elseif oid == oidFontFace
+        SetInfoText("$SNPD_TipFontFace")
     elseif oid == oidFontSizeTitle
-        SetInfoText("Font size for the diary title heading. Range 8-24, default 18.")
+        SetInfoText("$SNPD_TipTitleFontSize")
     elseif oid == oidFontSizeDate
-        SetInfoText("Font size for the date header above each entry. Range 8-24, default 16.")
+        SetInfoText("$SNPD_TipDateFontSize")
     elseif oid == oidFontSizeContent
-        SetInfoText("Font size for the main diary entry body text. Range 8-24, default 14.")
+        SetInfoText("$SNPD_TipContentFontSize")
     elseif oid == oidFontSizeSmall
-        SetInfoText("Font size for secondary text such as the date range on the title page. Range 8-24, default 12.")
+        SetInfoText("$SNPD_TipSmallFontSize")
     elseif oid == oidResetAll
-        SetInfoText("Removes all physical diary books from NPC inventories and clear tracking. Your SkyrimNet diary entries are preserved. Save and restart afterwards.")
+        SetInfoText("$SNPD_TipResetAll")
     endif
-
 endevent
 
 ; ============================================================================
-; Default reset  (user presses the 'default' button on an option)
+; Default reset
 ; ============================================================================
 
 event OnOptionDefault(int oid)
-
     if oid == oidEntriesPerVolume
         SetEntriesPerVolume(10)
         SetSliderOptionValue(oid, 10.0, "{0}")
@@ -271,6 +314,10 @@ event OnOptionDefault(int oid)
     elseif oid == oidDebugLog
         SetDebugLog(false)
         SetToggleOptionValue(oid, false)
+    elseif oid == oidFontFace
+        _fontIndex = 0
+        SetFontFace("$HandwrittenFont")
+        SetMenuOptionValue(oid, _fontDisplayNames[0])
     elseif oid == oidFontSizeTitle
         SetFontSizeTitle(18)
         SetSliderOptionValue(oid, 18.0, "{0}")
@@ -284,5 +331,4 @@ event OnOptionDefault(int oid)
         SetFontSizeSmall(12)
         SetSliderOptionValue(oid, 12.0, "{0}")
     endif
-
 endevent

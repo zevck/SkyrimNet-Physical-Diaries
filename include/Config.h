@@ -113,6 +113,7 @@ namespace SkyrimNetDiaries {
         int GetFontSizeDate() const { return GetInt("Fonts", "DateSize", 16); }
         int GetFontSizeContent() const { return GetInt("Fonts", "ContentSize", 14); }
         int GetFontSizeSmall() const { return GetInt("Fonts", "SmallSize", 12); }
+        std::string GetFontFace() const { return GetString("Fonts", "FontFace", "$HandwrittenFont"); }
 
         // Set an integer value in memory (does not persist until Save() is called)
         void SetInt(const std::string& section, const std::string& key, int value) {
@@ -127,6 +128,7 @@ namespace SkyrimNetDiaries {
         void SetFontSizeDate(int v)     { SetInt("Fonts", "DateSize",         std::clamp(v, 8, 24)); }
         void SetFontSizeContent(int v)  { SetInt("Fonts", "ContentSize",      std::clamp(v, 8, 24)); }
         void SetFontSizeSmall(int v)    { SetInt("Fonts", "SmallSize",        std::clamp(v, 8, 24)); }
+        void SetFontFace(const std::string& v) { settings_["Fonts.FontFace"] = v; }
 
         // Persist current settings back to the INI file loaded via Load()
         bool Save() const {
@@ -170,6 +172,9 @@ namespace SkyrimNetDiaries {
                     int val = (it != settings_.end()) ? std::stoi(it->second) : sk.defaultVal;
                     file << sk.key << " = " << val << "\n";
                 }
+
+                // Write string settings (not in the int table above)
+                file << "FontFace = " << GetFontFace() << "\n";
 
                 SKSE::log::info("Config saved to: {}", path.string());
                 return true;

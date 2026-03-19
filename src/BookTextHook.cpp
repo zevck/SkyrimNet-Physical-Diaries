@@ -1,5 +1,6 @@
 ﻿#include "BookTextHook.h"
 #include "BookManager.h"
+#include "Localization.h"
 
 #include "RE/B/BookMenu.h"
 #include "RE/B/BSString.h"
@@ -15,7 +16,6 @@
 #include <cstdint>
 #include <algorithm>
 #include <fstream>
-#include <shlobj.h>
 
 // ---------------------------------------------------------------------------
 // OpenBookMenu hook
@@ -34,50 +34,6 @@
 
 namespace
 {
-    // ── Language detection ────────────────────────────────────────────
-    // Read sLanguage from the user's Skyrim.ini.  Returns an uppercase
-    // string like "ENGLISH" or "RUSSIAN".  Called once during Install().
-    static std::string DetectSkyrimLanguage() {
-        char docsPath[MAX_PATH] = {};
-        if (FAILED(SHGetFolderPathA(nullptr, CSIDL_PERSONAL, nullptr,
-                                    SHGFP_TYPE_CURRENT, docsPath))) {
-            SKSE::log::warn("[BookTextHook] SHGetFolderPath failed; assuming ENGLISH");
-            return "ENGLISH";
-        }
-        std::string iniPath = std::string(docsPath)
-                            + "\\My Games\\Skyrim Special Edition\\Skyrim.ini";
-        std::ifstream f(iniPath);
-        if (!f.is_open()) {
-            SKSE::log::warn("[BookTextHook] Could not open '{}'; assuming ENGLISH", iniPath);
-            return "ENGLISH";
-        }
-        std::string line;
-        while (std::getline(f, line)) {
-            // Trim leading whitespace
-            auto ns = line.find_first_not_of(" \t");
-            if (ns == std::string::npos) continue;
-            line = line.substr(ns);
-            if (line.empty() || line[0] == ';' || line[0] == '[') continue;
-            if (line.size() >= 9 && line.substr(0, 9) == "sLanguage") {
-                auto eq = line.find('=');
-                if (eq != std::string::npos) {
-                    std::string val = line.substr(eq + 1);
-                    while (!val.empty() && (val.back() == ' ' || val.back() == '\r'
-                                        || val.back() == '\n' || val.back() == '\t'))
-                        val.pop_back();
-                    auto vs = val.find_first_not_of(" \t");
-                    if (vs != std::string::npos) val = val.substr(vs);
-                    std::transform(val.begin(), val.end(), val.begin(), ::toupper);
-                    return val;
-                }
-            }
-        }
-        return "ENGLISH";
-    }
-
-    // Cached game language (set during Install(), UPPERCASE).
-    static std::string s_gameLanguage;
-
     // ── UTF-8 → Windows-1251 conversion ──────────────────────────────
     // Scaleform GFx 4 (Skyrim's Flash engine) treats string bytes as character
     // indices in replaceText/getLineOffset/length. For UTF-8 multibyte text
@@ -395,11 +351,8 @@ namespace
 
 void BookTextHook::Install()
 {
-    // Detect game language once and cache it.
-    // Must be done before the hook is installed so that s_gameLanguage
-    // is ready when the first diary book is opened.
-    s_gameLanguage = DetectSkyrimLanguage();
-    SKSE::log::info("[BookTextHook] Detected game language: '{}'", s_gameLanguage);
+    SKSE::log::info("[BookTextHook] Game language: '{}'",
+                    SkyrimNetDiaries::Localization::GetSingleton()->GetLanguageString());
 
     OpenBookMenuHook::Install();
 }

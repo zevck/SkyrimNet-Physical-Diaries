@@ -2,6 +2,7 @@
 #include "Database.h"
 #include "DPF_API.h"
 #include "DiaryDB.h"
+#include "Localization.h"
 #include <fstream>
 #include <cstring>
 #include <algorithm>
@@ -105,10 +106,7 @@ namespace SkyrimNetDiaries {
                 }
                 
                 // Set book name with volume number
-                std::string bookName = name + "'s Diary";
-                if (volume > 1) {
-                    bookName += ", v" + std::to_string(volume);
-                }
+                std::string bookName = Localization::GetSingleton()->FormatBookName(name, volume);
                 newBook->SetFullName(bookName.c_str());
                 
                 SKSE::log::debug("Configured book: '{}'", bookName);
@@ -759,10 +757,7 @@ namespace SkyrimNetDiaries {
                     double queryStart = (bookData.volumeNumber == 1) ? 0.0 : bookData.startTime;
                     double queryEnd = bookData.endTime; // 0.0 = no upper bound for latest volume
 
-                    std::string bookTitle = bookData.actorName + "'s Diary";
-                    if (bookData.volumeNumber > 1) {
-                        bookTitle += ", v" + std::to_string(bookData.volumeNumber);
-                    }
+                    std::string bookTitle = Localization::GetSingleton()->FormatBookName(bookData.actorName, bookData.volumeNumber);
 
                     SKSE::log::debug("[Regen] '{}' vol={} stored startTime={:.2f} endTime={:.2f} -> queryStart={:.2f} queryEnd={:.2f} limit={}",
                                     bookTitle, bookData.volumeNumber,
@@ -988,8 +983,7 @@ namespace SkyrimNetDiaries {
                 RE::FormID actorFid  = static_cast<RE::FormID>(actorFormId);
                 std::string aName    = vol.actorName;
                 std::string bio      = vol.bioTemplateName;
-                std::string bName    = vol.actorName + "'s Diary";
-                if (vol.volumeNumber > 1) bName += ", v" + std::to_string(vol.volumeNumber);
+                std::string bName    = Localization::GetSingleton()->FormatBookName(vol.actorName, vol.volumeNumber);
                 SKSE::GetTaskInterface()->AddTask([bookFid, actorFid, aName, bio, bName]() {
                     EnsureBookInInventory(bookFid, actorFid, aName, bio, bName);
                 });
