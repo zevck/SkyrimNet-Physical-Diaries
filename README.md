@@ -135,7 +135,7 @@ If these sections are omitted, the plugin falls back to reading month/day names 
 
 **2. MCM translation file** (optional) — `Interface/Translations/SkyrimNet Physical Diaries_{LANGUAGE}.txt`
 
-This translates the in-game settings menu. The file must be **UTF-16 LE with BOM** encoding, with tab-separated key/value pairs. See the existing English file for the full list of keys.
+This translates the in-game settings menu. Use the English file as a template.
 
 
 If you would like to correct or contribute any translations feel free to submit a PR.
