@@ -77,7 +77,7 @@ Language = GERMAN
 DebugLog = 0
 ```
 
-This will load `Locales/GERMAN.ini` for diary formatting. The value must match the name of a locale file in the `Locales` folder.
+This will load `Locales/GERMAN.ini` for diary formatting. The value must match the name of a locale file in the `Locales` folder. Ensure you have the proper fonts installed to support that language.
 
 ### Adding a New Language
 
@@ -97,17 +97,28 @@ DiaryTitle = Diário de {Name}
 VolumeSuffix = , vol. {n}
 EmptyVolumeText = Todas as entradas deste período foram removidas.
 
-; Optional — omit these sections to use month/day names from the game's GMSTs.
-; Only needed if your language doesn't have GMST overrides (unofficial languages).
 [Months]
-January = Estrela da Manhã
-February = Aurora do Sol
-; ... (all 12 months, keyed January through December)
+Morning Star = Estrela da Manhã
+Sun's Dawn = Aurora do Sol
+First Seed = Primeira Semente
+Rain's Hand = Mão da Chuva
+Second Seed = Segunda Semente
+Midyear = Meio do Ano
+Sun's Height = Altura do Sol
+Last Seed = Última Semente
+Hearthfire = Fogo da Lareira
+Frostfall = Queda da Geada
+Sun's Dusk = Crepúsculo do Sol
+Evening Star = Estrela Vespertina
 
 [Days]
-Sunday = Sundas
-Monday = Morndas
-; ... (all 7 days, keyed Sunday through Saturday)
+Sundas = Sundas
+Morndas = Morndas
+Tirdas = Tirdas
+Middas = Middas
+Turdas = Turdas
+Fredas = Fredas
+Loredas = Loredas
 ```
 
 Available placeholders:
@@ -119,7 +130,7 @@ Available placeholders:
 - `{n}` — volume number (in VolumeSuffix)
 - `{cn}` — volume number as Chinese numeral (二, 三, etc.)
 
-If a `[Months]` or `[Days]` section is omitted, the plugin reads month/day names from the game's GMST records automatically. This means officially supported languages and languages with GMST-overriding translation mods need only provide the `[Format]` section.
+If these sections are omitted, the plugin falls back to reading month/day names from the game's GMST records, then to English. Note that some mods (e.g. Seasons of Skyrim) override GMST month names, so including `[Months]` and `[Days]` in your locale file is recommended.
 
 **2. MCM translation file** (optional) — `Interface/Translations/SkyrimNet Physical Diaries_{LANGUAGE}.txt`
 

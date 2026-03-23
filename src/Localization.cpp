@@ -160,16 +160,16 @@ namespace SkyrimNetDiaries {
         std::string currentSection;
         std::string line;
 
-        // Map month keys to indices
+        // Map month keys to indices (Tamrielic names)
         static const std::pair<const char*, int> monthKeys[] = {
-            {"January", 0}, {"February", 1}, {"March", 2}, {"April", 3},
-            {"May", 4}, {"June", 5}, {"July", 6}, {"August", 7},
-            {"September", 8}, {"October", 9}, {"November", 10}, {"December", 11}
+            {"Morning Star", 0}, {"Sun's Dawn", 1}, {"First Seed", 2}, {"Rain's Hand", 3},
+            {"Second Seed", 4}, {"Midyear", 5}, {"Sun's Height", 6}, {"Last Seed", 7},
+            {"Hearthfire", 8}, {"Frostfall", 9}, {"Sun's Dusk", 10}, {"Evening Star", 11}
         };
-        // Map day keys to indices
+        // Map day keys to indices (Tamrielic names)
         static const std::pair<const char*, int> dayKeys[] = {
-            {"Sunday", 0}, {"Monday", 1}, {"Tuesday", 2}, {"Wednesday", 3},
-            {"Thursday", 4}, {"Friday", 5}, {"Saturday", 6}
+            {"Sundas", 0}, {"Morndas", 1}, {"Tirdas", 2}, {"Middas", 3},
+            {"Turdas", 4}, {"Fredas", 5}, {"Loredas", 6}
         };
 
         while (std::getline(file, line)) {
@@ -256,6 +256,9 @@ namespace SkyrimNetDiaries {
             }
             if (loaded > 0) {
                 SKSE::log::info("[Localization] Loaded {}/12 month names from GMSTs", loaded);
+                for (int i = 0; i < 12; ++i) {
+                    SKSE::log::info("[Localization]   Month {}: '{}'", i, monthNames_[i]);
+                }
             }
         } else {
             SKSE::log::info("[Localization] Month names from locale file — skipping GMSTs");
