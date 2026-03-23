@@ -63,6 +63,70 @@ Currently in order to enable diary theft awareness you must add the following to
 
 ---
 
+## Localization
+
+The mod supports all 9 official Skyrim languages out of the box: English, French, German, Italian, Spanish, Polish, Russian, Traditional Chinese, and Japanese. Diary titles, dates, volume numbering, and MCM menus are all localized automatically based on your game language.
+
+### Language Override
+
+If your game language is set to English but you want diary books in another language, add a `Language` line to `SkyrimNetPhysicalDiaries.ini` under `[General]`:
+
+```ini
+[General]
+Language = GERMAN
+DebugLog = 0
+```
+
+This will load `Locales/GERMAN.ini` for diary formatting. The value must match the name of a locale file in the `Locales` folder.
+
+### Adding a New Language
+
+Community translators can add support for any language without recompiling the plugin. Two files are needed:
+
+**1. Locale file** — `SKSE/Plugins/SkyrimNetPhysicalDiaries/Locales/{LANGUAGE}.ini`
+
+This controls how diary book titles, dates, and volume numbers are formatted. Example:
+
+```ini
+; SKSE/Plugins/SkyrimNetPhysicalDiaries/Locales/PORTUGUESE.ini
+
+[Format]
+DateLong = {Day}, {d} {Month}, 4E {y}
+DateShort = {d} {Month}, 4E {y}
+DiaryTitle = Diário de {Name}
+VolumeSuffix = , vol. {n}
+EmptyVolumeText = Todas as entradas deste período foram removidas.
+
+; Optional — omit these sections to use month/day names from the game's GMSTs.
+; Only needed if your language doesn't have GMST overrides (unofficial languages).
+[Months]
+January = Estrela da Manhã
+February = Aurora do Sol
+; ... (all 12 months, keyed January through December)
+
+[Days]
+Sunday = Sundas
+Monday = Morndas
+; ... (all 7 days, keyed Sunday through Saturday)
+```
+
+Available placeholders:
+- `{Day}` — day of the week (e.g. Sundas)
+- `{d}` — day number (e.g. 17)
+- `{Month}` — month name (e.g. Last Seed)
+- `{y}` — year (e.g. 201)
+- `{Name}` — NPC name (in DiaryTitle)
+- `{n}` — volume number (in VolumeSuffix)
+- `{cn}` — volume number as Chinese numeral (二, 三, etc.)
+
+If a `[Months]` or `[Days]` section is omitted, the plugin reads month/day names from the game's GMST records automatically. This means officially supported languages and languages with GMST-overriding translation mods need only provide the `[Format]` section.
+
+**2. MCM translation file** (optional) — `Interface/Translations/SkyrimNet Physical Diaries_{LANGUAGE}.txt`
+
+This translates the in-game settings menu. The file must be **UTF-16 LE with BOM** encoding, with tab-separated key/value pairs. See the existing English file for the full list of keys.
+
+---
+
 ## Notes
 
 - Diary books appear in NPC inventories after SkyrimNet generates the NPC's first diary entry. NPCs without any diary entries will have no books. You must generate SkyrimNet's diary entries yourself.

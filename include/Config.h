@@ -106,6 +106,7 @@ namespace SkyrimNetDiaries {
         }
 
         // Convenience getters for diary-specific settings
+        std::string GetLanguageOverride() const { return GetString("General", "Language", ""); }
         bool GetDebugLog() const { return GetInt("General", "DebugLog", 0) != 0; }
         bool GetShowDateHeaders() const { return GetInt("Diary", "ShowDateHeaders", 1) != 0; }
         int GetEntriesPerVolume() const { return GetInt("Diary", "EntriesPerVolume", 10); }
@@ -150,6 +151,16 @@ namespace SkyrimNetDiaries {
 
                 // Write in canonical section order so the file is human-readable
                 struct SectionKey { const char* section; const char* key; int defaultVal; };
+                // Write Language override (string setting, before the int table)
+                std::string currentSection = "General";
+                file << "[General]\n";
+                {
+                    std::string lang = GetLanguageOverride();
+                    if (!lang.empty()) {
+                        file << "Language = " << lang << "\n";
+                    }
+                }
+
                 const SectionKey order[] = {
                     { "General", "DebugLog",         0  },
                     { "Diary",   "ShowDateHeaders",  1  },
@@ -160,7 +171,6 @@ namespace SkyrimNetDiaries {
                     { "Fonts", "SmallSize",        12 },
                 };
 
-                std::string currentSection;
                 for (auto& sk : order) {
                     if (sk.section != currentSection) {
                         if (!currentSection.empty()) file << "\n";

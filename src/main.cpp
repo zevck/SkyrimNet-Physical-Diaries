@@ -66,9 +66,9 @@ std::string SanitizeBookText(const std::string& text) {
             }
 
             // Step 2: Strip plain-text date headers/prefixes the LLM sometimes writes.
-            // Covers English Tamrielic day/month names and real-world time patterns.
-            // Other languages: the date header shows through but that's acceptable since
-            // we can't reliably detect all localizations without false-positive risk.
+            // Covers Tamrielic day/month names in all 9 supported languages, era markers,
+            // and real-world time patterns. CJK day names (single kanji/short) are skipped
+            // to avoid false positives — those are caught by markdown stripping in steps 1/1.5.
 
             // Pattern: first line is a short time string ("9:28 AM" or "9:28 AM, ...").
             // Language-independent — digits and AM/PM are ASCII in all locales.
@@ -99,16 +99,34 @@ std::string SanitizeBookText(const std::string& text) {
                 }
             }
 
-            static const std::vector<std::string> skyrimDateWords = {
-                // Days of the week
-                "Sundas", "Morndas", "Tirdas", "Middas", "Turdas", "Fredas", "Loredas",
-                // Months
-                "Morning Star", "Sun's Dawn", "First Seed", "Rain's Hand",
-                "Second Seed", "Midyear", "Sun's Height", "Last Seed",
-                "Hearthfire", "Frostfall", "Sun's Dusk", "Evening Star",
-                // Explicit era marker
-                "4E "
-            };
+            // Build date word list dynamically from loaded locale data.
+            // Includes all month/day names from the active locale + English fallbacks.
+            auto* locInst = SkyrimNetDiaries::Localization::GetSingleton();
+            std::vector<std::string> skyrimDateWords;
+            skyrimDateWords.reserve(40);
+
+            // Always include English day/month names (LLMs often default to English)
+            for (auto& d : {"Sundas", "Morndas", "Tirdas", "Middas", "Turdas", "Fredas", "Loredas"})
+                skyrimDateWords.emplace_back(d);
+            for (auto& m : {"Morning Star", "Sun's Dawn", "First Seed", "Rain's Hand",
+                            "Second Seed", "Midyear", "Sun's Height", "Last Seed",
+                            "Hearthfire", "Frostfall", "Sun's Dusk", "Evening Star"})
+                skyrimDateWords.emplace_back(m);
+
+            // Add loaded locale's day/month names (may be same as English, GMST, or custom)
+            for (int i = 0; i < 7; ++i) {
+                const auto& dn = locInst->GetDayName(i);
+                // Skip single-character day names (CJK) — too common for safe matching
+                if (dn.size() > 3) skyrimDateWords.push_back(dn);
+            }
+            for (int i = 0; i < 12; ++i) {
+                skyrimDateWords.push_back(locInst->GetMonthName(i));
+            }
+
+            // Era markers
+            skyrimDateWords.emplace_back("4E ");
+            skyrimDateWords.emplace_back("4\xd0\xad ");  // 4Э (Russian)
+            skyrimDateWords.emplace_back("\xe7\xac\xac\xe5\x9b\x9b\xe7\xb4\x80");  // 第四紀 (Japanese/Chinese)
 
             std::string_view view(result.c_str(), result.size());
             const std::string* matchedWord = nullptr;
@@ -270,7 +288,7 @@ std::string FormatGameDate(double gameTime) {
     const int startYear = 201;
     const int startDayOfWeek = 0; // Sundas
     
-    const auto& locale = SkyrimNetDiaries::Localization::GetSingleton()->Get();
+    auto* loc = SkyrimNetDiaries::Localization::GetSingleton();
 
     // Calculate absolute day number from game start (17 Last Seed)
     int absoluteDay = startDay + totalDays;
@@ -299,19 +317,19 @@ std::string FormatGameDate(double gameTime) {
     // Calculate day of week from start day — use +7 to keep result non-negative
     int dayOfWeek = ((startDayOfWeek + totalDays) % 7 + 7) % 7;
 
-    return locale.formatDateLong(locale.dayNames[dayOfWeek], absoluteDay,
-                                  locale.monthNames[currentMonth], currentYear);
+    return loc->FormatDateLong(loc->GetDayName(dayOfWeek).c_str(), absoluteDay,
+                               loc->GetMonthName(currentMonth).c_str(), currentYear);
 }
 
 std::string FormatGameDateShort(double gameTime) {
     // Same as FormatGameDate but without day of week - for title page
     int totalDays = static_cast<int>(gameTime / 86400.0);
-    
+
     const int startDay = 17;
     const int startMonth = 7; // Last Seed (0-indexed)
     const int startYear = 201;
-    
-    const auto& locale = SkyrimNetDiaries::Localization::GetSingleton()->Get();
+
+    auto* loc = SkyrimNetDiaries::Localization::GetSingleton();
 
     // Calculate absolute day number from game start (17 Last Seed)
     int absoluteDay = startDay + totalDays;
@@ -337,7 +355,7 @@ std::string FormatGameDateShort(double gameTime) {
         }
     }
 
-    return locale.formatDateShort(absoluteDay, locale.monthNames[currentMonth], currentYear);
+    return loc->FormatDateShort(absoluteDay, loc->GetMonthName(currentMonth).c_str(), currentYear);
 }
 
 namespace
@@ -501,14 +519,14 @@ std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& 
     bookText += "\n\n\n\n";
     bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontTitle) + "'><p align='center'>";
     auto* loc = SkyrimNetDiaries::Localization::GetSingleton();
-    bookText += loc->Get().formatDiaryTitle(actorName);
+    bookText += loc->FormatDiaryTitle(actorName);
     bookText += "</p></font>\n\n";
 
     if (entries.empty()) {
         bookText += "[pagebreak]\n\n";
         bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'><p align='center'>"
                   + std::string(SkyrimNetDiaries::Localization::kEmptySentinel)
-                  + loc->Get().emptyVolumeText + "</p></font>";
+                  + loc->GetEmptyVolumeText() + "</p></font>";
     } else {
         // Date range below title
         std::string firstDate = FormatGameDateShort(entries.front().entry_date);
@@ -1624,6 +1642,9 @@ namespace {
                     }
                 }
                 
+                // Now that GMSTs are loaded, read localized month/day names
+                SkyrimNetDiaries::Localization::GetSingleton()->ReadGMSTs();
+
                 // Register event sinks on game startup (don't load database yet)
                 auto scriptEventSource = RE::ScriptEventSourceHolder::GetSingleton();
                 if (scriptEventSource) {

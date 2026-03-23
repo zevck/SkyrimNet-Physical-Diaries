@@ -1,16 +1,17 @@
 #include "Localization.h"
+#include "Config.h"
 #include "SKSE/SKSE.h"
 
 #include <algorithm>
 #include <fstream>
 #include <shlobj.h>
 #include <cstdio>
+#include <filesystem>
+#include <sstream>
 
 namespace SkyrimNetDiaries {
 
     // ── Language detection ─────────────────────────────────────────────
-    // Reads sLanguage from the user's Skyrim.ini.  Returns an uppercase
-    // string like "ENGLISH" or "RUSSIAN".
     static std::string DetectSkyrimLanguage() {
         char docsPath[MAX_PATH] = {};
         if (FAILED(SHGetFolderPathA(nullptr, CSIDL_PERSONAL, nullptr,
@@ -48,16 +49,12 @@ namespace SkyrimNetDiaries {
         return "ENGLISH";
     }
 
-    static Language ParseLanguage(const std::string& lang) {
-        if (lang == "FRENCH")    return Language::French;
-        if (lang == "GERMAN")    return Language::German;
-        if (lang == "ITALIAN")   return Language::Italian;
-        if (lang == "SPANISH")   return Language::Spanish;
-        if (lang == "POLISH")    return Language::Polish;
-        if (lang == "RUSSIAN")   return Language::Russian;
-        if (lang == "CHINESE")   return Language::ChineseTraditional;
-        if (lang == "JAPANESE")  return Language::Japanese;
-        return Language::English;
+    // ── INI parsing helpers ────────────────────────────────────────────
+    static std::string TrimString(const std::string& s) {
+        auto start = s.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos) return "";
+        auto end = s.find_last_not_of(" \t\r\n");
+        return s.substr(start, end - start + 1);
     }
 
     // ── Chinese numeral helper ─────────────────────────────────────────
@@ -77,345 +74,290 @@ namespace SkyrimNetDiaries {
             if (n % 10 != 0) result += digits[n % 10];
             return result;
         }
-        return std::to_string(n);  // Fallback for 100+
+        return std::to_string(n);
     }
 
-    // ── English ordinal suffix ─────────────────────────────────────────
-    static std::string OrdinalSuffix(int n) {
-        if (n % 100 >= 11 && n % 100 <= 13) return "th";
-        switch (n % 10) {
-            case 1: return "st";
-            case 2: return "nd";
-            case 3: return "rd";
-            default: return "th";
+    // ── English defaults ───────────────────────────────────────────────
+    static const std::array<std::string, 12> kEnglishMonths = {
+        "Morning Star", "Sun's Dawn", "First Seed", "Rain's Hand",
+        "Second Seed", "Midyear", "Sun's Height", "Last Seed",
+        "Hearthfire", "Frostfall", "Sun's Dusk", "Evening Star"
+    };
+    static const std::array<std::string, 7> kEnglishDays = {
+        "Sundas", "Morndas", "Tirdas", "Middas", "Turdas", "Fredas", "Loredas"
+    };
+
+    // ── Template substitution ──────────────────────────────────────────
+    // Replaces: {Day}, {d}, {Month}, {y}, {Name}, {n}, {cn}
+    std::string Localization::ApplyTemplate(const std::string& tmpl,
+                                            const char* dayName, int day,
+                                            const char* monthName, int year) const {
+        std::string result;
+        result.reserve(tmpl.size() + 64);
+        for (size_t i = 0; i < tmpl.size(); ++i) {
+            if (tmpl[i] == '{') {
+                auto close = tmpl.find('}', i + 1);
+                if (close != std::string::npos) {
+                    std::string key = tmpl.substr(i + 1, close - i - 1);
+                    if (key == "Day" && dayName) {
+                        result += dayName;
+                    } else if (key == "d") {
+                        result += std::to_string(day);
+                    } else if (key == "Month" && monthName) {
+                        result += monthName;
+                    } else if (key == "y") {
+                        result += std::to_string(year);
+                    } else if (key == "Name") {
+                        // Name is not passed via this function — handled separately
+                        result += "{Name}";
+                    } else if (key == "n") {
+                        result += std::to_string(day);  // reused for volume number
+                    } else if (key == "cn") {
+                        result += ChineseNumeral(day);  // Chinese numeral for volume
+                    } else {
+                        result += tmpl.substr(i, close - i + 1); // unknown placeholder
+                    }
+                    i = close;
+                    continue;
+                }
+            }
+            result += tmpl[i];
+        }
+        return result;
+    }
+
+    // ── Locale file loading ────────────────────────────────────────────
+    bool Localization::LoadLocaleFile(const std::string& language) {
+        // Build path relative to our DLL: same folder as SkyrimNetPhysicalDiaries.dll
+        // DLL is at .../SKSE/Plugins/SkyrimNetPhysicalDiaries.dll
+        // Locales at .../SKSE/Plugins/SkyrimNetPhysicalDiaries/Locales/
+        std::filesystem::path localeDir;
+
+        HMODULE hModule = nullptr;
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               reinterpret_cast<LPCSTR>(&DetectSkyrimLanguage),
+                               &hModule)) {
+            char dllPath[MAX_PATH] = {};
+            GetModuleFileNameA(hModule, dllPath, MAX_PATH);
+            localeDir = std::filesystem::path(dllPath).parent_path()
+                        / "SkyrimNetPhysicalDiaries" / "Locales";
+        } else {
+            localeDir = std::filesystem::path("Data") / "SKSE" / "Plugins"
+                        / "SkyrimNetPhysicalDiaries" / "Locales";
+        }
+
+        std::filesystem::path localePath = localeDir / (language + ".ini");
+        std::ifstream file(localePath);
+        if (!file.is_open()) {
+            SKSE::log::info("[Localization] No locale file found at '{}' — using defaults",
+                           localePath.string());
+            return false;
+        }
+
+        SKSE::log::info("[Localization] Loading locale file: '{}'", localePath.string());
+
+        std::string currentSection;
+        std::string line;
+
+        // Map month keys to indices
+        static const std::pair<const char*, int> monthKeys[] = {
+            {"January", 0}, {"February", 1}, {"March", 2}, {"April", 3},
+            {"May", 4}, {"June", 5}, {"July", 6}, {"August", 7},
+            {"September", 8}, {"October", 9}, {"November", 10}, {"December", 11}
+        };
+        // Map day keys to indices
+        static const std::pair<const char*, int> dayKeys[] = {
+            {"Sunday", 0}, {"Monday", 1}, {"Tuesday", 2}, {"Wednesday", 3},
+            {"Thursday", 4}, {"Friday", 5}, {"Saturday", 6}
+        };
+
+        while (std::getline(file, line)) {
+            line = TrimString(line);
+            if (line.empty() || line[0] == ';' || line[0] == '#') continue;
+
+            if (line[0] == '[' && line.back() == ']') {
+                currentSection = line.substr(1, line.size() - 2);
+                // Normalize section name to lowercase for comparison
+                std::transform(currentSection.begin(), currentSection.end(),
+                             currentSection.begin(), ::tolower);
+                continue;
+            }
+
+            auto eq = line.find('=');
+            if (eq == std::string::npos) continue;
+
+            std::string key = TrimString(line.substr(0, eq));
+            std::string value = TrimString(line.substr(eq + 1));
+
+            if (currentSection == "format") {
+                if (key == "DateLong") dateLongFmt_ = value;
+                else if (key == "DateShort") dateShortFmt_ = value;
+                else if (key == "DiaryTitle") diaryTitleFmt_ = value;
+                else if (key == "VolumeSuffix") volumeSuffixFmt_ = value;
+                else if (key == "EmptyVolumeText") emptyVolumeText_ = value;
+            } else if (currentSection == "months") {
+                for (auto& [mk, idx] : monthKeys) {
+                    if (key == mk) {
+                        monthNames_[idx] = value;
+                        monthsFromLocaleFile_ = true;
+                        break;
+                    }
+                }
+            } else if (currentSection == "days") {
+                for (auto& [dk, idx] : dayKeys) {
+                    if (key == dk) {
+                        dayNames_[idx] = value;
+                        daysFromLocaleFile_ = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
+    // ── GMST reading ───────────────────────────────────────────────────
+    void Localization::ReadGMSTs() {
+        auto* dh = RE::TESDataHandler::GetSingleton();
+        if (!dh) {
+            SKSE::log::warn("[Localization] TESDataHandler not available — skipping GMST read");
+            return;
+        }
+
+        // GMST names for months (map to Tamrielic calendar order)
+        static const std::pair<const char*, int> gmstMonths[] = {
+            {"sMonthJanuary", 0}, {"sMonthFebruary", 1}, {"sMonthMarch", 2},
+            {"sMonthApril", 3}, {"sMonthMay", 4}, {"sMonthJune", 5},
+            {"sMonthJuly", 6}, {"sMonthAugust", 7}, {"sMonthSeptember", 8},
+            {"sMonthOctober", 9}, {"sMonthNovember", 10}, {"sMonthDecember", 11}
+        };
+        static const std::pair<const char*, int> gmstDays[] = {
+            {"sDaySunday", 0}, {"sDayMonday", 1}, {"sDayTuesday", 2},
+            {"sDayWednesday", 3}, {"sDayThursday", 4}, {"sDayFriday", 5},
+            {"sDaySaturday", 6}
+        };
+
+        if (!monthsFromLocaleFile_) {
+            int loaded = 0;
+            for (auto& [gmstName, idx] : gmstMonths) {
+                auto* setting = RE::GameSettingCollection::GetSingleton();
+                if (setting) {
+                    auto* gmst = setting->GetSetting(gmstName);
+                    if (gmst && gmst->GetType() == RE::Setting::Type::kString) {
+                        const char* val = gmst->GetString();
+                        if (val && val[0] != '\0') {
+                            monthNames_[idx] = val;
+                            loaded++;
+                        }
+                    }
+                }
+            }
+            if (loaded > 0) {
+                SKSE::log::info("[Localization] Loaded {}/12 month names from GMSTs", loaded);
+            }
+        } else {
+            SKSE::log::info("[Localization] Month names from locale file — skipping GMSTs");
+        }
+
+        if (!daysFromLocaleFile_) {
+            int loaded = 0;
+            for (auto& [gmstName, idx] : gmstDays) {
+                auto* setting = RE::GameSettingCollection::GetSingleton();
+                if (setting) {
+                    auto* gmst = setting->GetSetting(gmstName);
+                    if (gmst && gmst->GetType() == RE::Setting::Type::kString) {
+                        const char* val = gmst->GetString();
+                        if (val && val[0] != '\0') {
+                            dayNames_[idx] = val;
+                            loaded++;
+                        }
+                    }
+                }
+            }
+            if (loaded > 0) {
+                SKSE::log::info("[Localization] Loaded {}/7 day names from GMSTs", loaded);
+            }
+        } else {
+            SKSE::log::info("[Localization] Day names from locale file — skipping GMSTs");
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  Locale definitions
-    // ═══════════════════════════════════════════════════════════════════
-
-    // ── English ────────────────────────────────────────────────────────
-    static const LocaleData kLocaleEnglish = {
-        // monthNames
-        {"Morning Star", "Sun's Dawn", "First Seed", "Rain's Hand",
-         "Second Seed", "Midyear", "Sun's Height", "Last Seed",
-         "Hearthfire", "Frostfall", "Sun's Dusk", "Evening Star"},
-        // dayNames
-        {"Sundas", "Morndas", "Tirdas", "Middas", "Turdas", "Fredas", "Loredas"},
-        // formatDateLong: "Sundas, 17 Last Seed, 4E 201"
-        [](const char* day, int d, const char* month, int y) -> std::string {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "%s, %d %s, 4E %d", day, d, month, y);
-            return buf;
-        },
-        // formatDateShort: "17 Last Seed, 4E 201"
-        [](int d, const char* month, int y) -> std::string {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "%d %s, 4E %d", d, month, y);
-            return buf;
-        },
-        // formatDiaryTitle
-        [](const std::string& name) -> std::string { return name + "'s Diary"; },
-        // formatVolumeSuffix
-        [](int vol) -> std::string {
-            return (vol > 1) ? ", v" + std::to_string(vol) : "";
-        },
-        // emptyVolumeText
-        "All entries from this time period have been removed."
-    };
-
-    // ── French ─────────────────────────────────────────────────────────
-    static const LocaleData kLocaleFrench = {
-        {"Prim\u00e9toile", "Clairciel", "Semailles", "Ondepluie",
-         "Plantaisons", "Mi-l'An", "Hautz\u00e9nith", "Vifazur",
-         "Atrefeu", "Soufflegivre", "Sombreciel", "Soir\u00e9toile"},
-        {"Sundas", "Morndas", "Tirdas", "Middas", "Turdas", "Fredas", "Loredas"},
-        [](const char* day, int d, const char* month, int y) -> std::string {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "%s, %d %s, 4E %d", day, d, month, y);
-            return buf;
-        },
-        [](int d, const char* month, int y) -> std::string {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "%d %s, 4E %d", d, month, y);
-            return buf;
-        },
-        [](const std::string& name) -> std::string { return "Journal de " + name; },
-        [](int vol) -> std::string {
-            return (vol > 1) ? ", vol. " + std::to_string(vol) : "";
-        },
-        "Toutes les entr\u00e9es de cette p\u00e9riode ont \u00e9t\u00e9 supprim\u00e9es."
-    };
-
-    // ── German ─────────────────────────────────────────────────────────
-    static const LocaleData kLocaleGerman = {
-        {"Morgenstern", "Sonnenaufgang", "Erste Saat", "Regenhand",
-         "Zweite Saat", "Jahresmitte", "Sonnenh\u00f6he", "Letzte Saat",
-         "Herzfeuer", "Eisherbst", "Sonnenuntergang", "Abendstern"},
-        {"Sundas", "Morndas", "Tirdas", "Middas", "Turdas", "Fredas", "Loredas"},
-        [](const char* day, int d, const char* month, int y) -> std::string {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "%s, %d %s, 4E %d", day, d, month, y);
-            return buf;
-        },
-        [](int d, const char* month, int y) -> std::string {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "%d %s, 4E %d", d, month, y);
-            return buf;
-        },
-        [](const std::string& name) -> std::string { return name + "s Tagebuch"; },
-        [](int vol) -> std::string {
-            return (vol > 1) ? ", Buch " + std::to_string(vol) : "";
-        },
-        "Alle Eintr\u00e4ge aus diesem Zeitraum wurden entfernt."
-    };
-
-    // ── Italian ────────────────────────────────────────────────────────
-    static const LocaleData kLocaleItalian = {
-        {"Stella del Mattino", "Luce dell'Alba", "Primo Seme", "Mano della Pioggia",
-         "Secondo Seme", "Met\u00e0 Annata", "Luce del Cielo", "Ultimo Seme",
-         "Focolare", "Gelata", "Luce del Crepuscolo", "Stella della Sera"},
-        {"Sundas", "Morndas", "Tirdas", "Middas", "Turdas", "Fredas", "Loredas"},
-        [](const char* day, int d, const char* month, int y) -> std::string {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "%s, %d %s, 4E %d", day, d, month, y);
-            return buf;
-        },
-        [](int d, const char* month, int y) -> std::string {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "%d %s, 4E %d", d, month, y);
-            return buf;
-        },
-        [](const std::string& name) -> std::string { return "Diario di " + name; },
-        [](int vol) -> std::string {
-            return (vol > 1) ? " - Vol. " + std::to_string(vol) : "";
-        },
-        "Tutte le voci di questo periodo sono state rimosse."
-    };
-
-    // ── Spanish ────────────────────────────────────────────────────────
-    static const LocaleData kLocaleSpanish = {
-        {"Estrella del alba", "Amanecer", "Primera semilla", "Mano de lluvia",
-         "Segunda semilla", "Mitad de a\u00f1o", "Culminaci\u00f3n solar", "\u00daltima semilla",
-         "Fuego hogar", "Oto\u00f1o de escarcha", "Ocaso", "Estrella vespertina"},
-        {"Sundas", "Morndas", "Tirdas", "Middas", "Turdas", "Fredas", "Loredas"},
-        [](const char* day, int d, const char* month, int y) -> std::string {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "%s, %d de %s, 4E %d", day, d, month, y);
-            return buf;
-        },
-        [](int d, const char* month, int y) -> std::string {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "%d de %s, 4E %d", d, month, y);
-            return buf;
-        },
-        [](const std::string& name) -> std::string { return "Diario de " + name; },
-        [](int vol) -> std::string {
-            return (vol > 1) ? ", vol. " + std::to_string(vol) : "";
-        },
-        "Todas las entradas de este periodo han sido eliminadas."
-    };
-
-    // ── Polish ─────────────────────────────────────────────────────────
-    static const LocaleData kLocalePolish = {
-        {"Gwiazda Por.", "Wsch. S\u0142o\u0144ce", "Pierw. Siew", "Deszcz. D\u0142o\u0144",
-         "Drugi Siew", "\u015ar\u00f3drocze", "Pe\u0142nia S\u0142o\u0144ca", "Ostatni Siew",
-         "Dom. ognisko", "Pierw. Mrozy", "Zach. S\u0142o\u0144ce", "Gwiazda Wiecz."},
-        {"Sundas", "Morndas", "Tirdas", "Middas", "Turdas", "Fredas", "Loredas"},
-        [](const char* day, int d, const char* month, int y) -> std::string {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "%s, %d %s, 4E %d", day, d, month, y);
-            return buf;
-        },
-        [](int d, const char* month, int y) -> std::string {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "%d %s, 4E %d", d, month, y);
-            return buf;
-        },
-        [](const std::string& name) -> std::string { return "Dziennik: " + name; },
-        [](int vol) -> std::string {
-            return (vol > 1) ? std::string(", ksi\u0119ga ") + std::to_string(vol) : "";
-        },
-        "Wszystkie wpisy z tego okresu zosta\u0142y usuni\u0119te."
-    };
-
-    // ── Russian ────────────────────────────────────────────────────────
-    static const LocaleData kLocaleRussian = {
-        {"\u0423\u0442\u0440\u0435\u043d\u043d\u0435\u0439 \u0437\u0432\u0435\u0437\u0434\u044b",          // Утренней звезды
-         "\u0412\u043e\u0441\u0445\u043e\u0434\u0430 \u0441\u043e\u043b\u043d\u0446\u0430",                  // Восхода солнца
-         "\u041f\u0435\u0440\u0432\u043e\u0433\u043e \u0437\u0435\u0440\u043d\u0430",                        // Первого зерна
-         "\u0420\u0443\u043a\u0438 \u0434\u043e\u0436\u0434\u044f",                                          // Руки дождя
-         "\u0412\u0442\u043e\u0440\u043e\u0433\u043e \u0437\u0435\u0440\u043d\u0430",                        // Второго зерна
-         "\u0421\u0435\u0440\u0435\u0434\u0438\u043d\u044b \u0433\u043e\u0434\u0430",                        // Середины года
-         "\u0412\u044b\u0441\u043e\u043a\u043e\u0433\u043e \u0441\u043e\u043b\u043d\u0446\u0430",            // Высокого солнца
-         "\u041f\u043e\u0441\u043b\u0435\u0434\u043d\u0435\u0433\u043e \u0437\u0435\u0440\u043d\u0430",      // Последнего зерна
-         "\u041e\u0433\u043d\u044f \u043e\u0447\u0430\u0433\u0430",                                          // Огня очага
-         "\u041d\u0430\u0447\u0430\u043b\u0430 \u043c\u043e\u0440\u043e\u0437\u043e\u0432",                  // Начала морозов
-         "\u0417\u0430\u043a\u0430\u0442\u0430 \u0441\u043e\u043b\u043d\u0446\u0430",                        // Заката солнца
-         "\u0412\u0435\u0447\u0435\u0440\u043d\u0435\u0439 \u0437\u0432\u0435\u0437\u0434\u044b"},           // Вечерней звезды
-        // dayNames: Cyrillic transliterations
-        {"\u0421\u0430\u043d\u0434\u0430\u0441",     // Сандас
-         "\u041c\u043e\u0440\u043d\u0434\u0430\u0441", // Морндас
-         "\u0422\u0438\u0440\u0434\u0430\u0441",     // Тирдас
-         "\u041c\u0438\u0434\u0434\u0430\u0441",     // Миддас
-         "\u0422\u0443\u0440\u0434\u0430\u0441",     // Турдас
-         "\u0424\u0440\u0435\u0434\u0430\u0441",     // Фредас
-         "\u041b\u043e\u0440\u0435\u0434\u0430\u0441"}, // Лоредас
-        // formatDateLong: "Сандас, 17 день месяца Последнего зерна, 4Э 201"
-        [](const char* day, int d, const char* month, int y) -> std::string {
-            char buf[256];
-            snprintf(buf, sizeof(buf), "%s, %d \u0434\u0435\u043d\u044c \u043c\u0435\u0441\u044f\u0446\u0430 %s, 4\u042d %d",
-                     day, d, month, y);
-            return buf;
-        },
-        // formatDateShort: "17 день месяца Последнего зерна, 4Э 201"
-        [](int d, const char* month, int y) -> std::string {
-            char buf[256];
-            snprintf(buf, sizeof(buf), "%d \u0434\u0435\u043d\u044c \u043c\u0435\u0441\u044f\u0446\u0430 %s, 4\u042d %d",
-                     d, month, y);
-            return buf;
-        },
-        // formatDiaryTitle: "Дневник: Name"
-        [](const std::string& name) -> std::string {
-            return std::string("\u0414\u043d\u0435\u0432\u043d\u0438\u043a: ") + name;
-        },
-        // formatVolumeSuffix: ", т. N"
-        [](int vol) -> std::string {
-            return (vol > 1) ? std::string(", \u0442. ") + std::to_string(vol) : "";
-        },
-        // emptyVolumeText
-        "\u0412\u0441\u0435 \u0437\u0430\u043f\u0438\u0441\u0438 \u0437\u0430 \u044d\u0442\u043e\u0442 \u043f\u0435\u0440\u0438\u043e\u0434 \u0431\u044b\u043b\u0438 \u0443\u0434\u0430\u043b\u0435\u043d\u044b."  // Все записи за этот период были удалены.
-    };
-
-    // ── Traditional Chinese ────────────────────────────────────────────
-    static const LocaleData kLocaleChinese = {
-        {"\u6668\u661f\u6708",     // 晨星月
-         "\u65e5\u66d9\u6708",     // 日曙月
-         "\u521d\u7a2e\u6708",     // 初種月
-         "\u96e8\u624b\u6708",     // 雨手月
-         "\u6b21\u7a2e\u6708",     // 次種月
-         "\u5e74\u4e2d\u6708",     // 年中月
-         "\u65e5\u9ad8\u6708",     // 日高月
-         "\u672b\u7a2e\u6708",     // 末種月
-         "\u7210\u706b\u6708",     // 爐火月
-         "\u971c\u843d\u6708",     // 霜落月
-         "\u65e5\u66ae\u6708",     // 日暮月
-         "\u591c\u661f\u6708"},    // 夜星月
-        // dayNames
-        {"\u9031\u65e5",   // 週日
-         "\u9031\u4e00",   // 週一
-         "\u9031\u4e8c",   // 週二
-         "\u9031\u4e09",   // 週三
-         "\u9031\u56db",   // 週四
-         "\u9031\u4e94",   // 週五
-         "\u9031\u516d"},  // 週六
-        // formatDateLong: "末種月第17天，第四紀元 201年，週日"
-        [](const char* day, int d, const char* month, int y) -> std::string {
-            char buf[256];
-            snprintf(buf, sizeof(buf), "%s\u7b2c%d\u5929\uff0c\u7b2c\u56db\u7d00\u5143 %d\u5e74\uff0c%s",
-                     month, d, y, day);
-            return buf;
-        },
-        // formatDateShort: "末種月第17天，第四紀元 201年"
-        [](int d, const char* month, int y) -> std::string {
-            char buf[256];
-            snprintf(buf, sizeof(buf), "%s\u7b2c%d\u5929\uff0c\u7b2c\u56db\u7d00\u5143 %d\u5e74",
-                     month, d, y);
-            return buf;
-        },
-        // formatDiaryTitle: "Name的日記"
-        [](const std::string& name) -> std::string {
-            return name + "\u7684\u65e5\u8a18";
-        },
-        // formatVolumeSuffix: "，卷二"  (uses Chinese numerals)
-        [](int vol) -> std::string {
-            return (vol > 1) ? std::string("\uff0c\u5377") + ChineseNumeral(vol) : "";
-        },
-        // emptyVolumeText
-        "\u6b64\u6642\u671f\u7684\u6240\u6709\u689d\u76ee\u5df2\u88ab\u522a\u9664\u3002"  // 此時期的所有條目已被刪除。
-    };
-
-    // ── Japanese ───────────────────────────────────────────────────────
-    static const LocaleData kLocaleJapanese = {
-        {"\u6681\u661f\u306e\u6708",         // 暁星の月
-         "\u8584\u660e\u306e\u6708",         // 薄明の月
-         "\u8494\u7a2e\u306e\u6708",         // 蒔種の月
-         "\u30ec\u30a4\u30f3\u30ba\u30fb\u30cf\u30f3\u30c9", // レインズ・ハンド
-         "\u683d\u57f9\u306e\u6708",         // 栽培の月
-         "\u5e74\u592e",                     // 年央
-         "\u5357\u4e2d\u306e\u6708",         // 南中の月
-         "\u53ce\u7a6b\u306e\u6708",         // 収穫の月
-         "\u85aa\u6728\u306e\u6708",         // 薪木の月
-         "\u964d\u971c\u306e\u6708",         // 降霜の月
-         "\u9ec4\u660f\u306e\u6708",         // 黄昏の月
-         "\u661f\u971c\u306e\u6708"},        // 星霜の月
-        // dayNames: single kanji
-        {"\u65e5",   // 日
-         "\u6708",   // 月
-         "\u706b",   // 火
-         "\u6c34",   // 水
-         "\u6728",   // 木
-         "\u91d1",   // 金
-         "\u571f"},  // 土
-        // formatDateLong: "第四紀201年 収穫の月17日 日"
-        [](const char* day, int d, const char* month, int y) -> std::string {
-            char buf[256];
-            snprintf(buf, sizeof(buf), "\u7b2c\u56db\u7d00%d\u5e74 %s%d\u65e5 %s",
-                     y, month, d, day);
-            return buf;
-        },
-        // formatDateShort: "第四紀201年 収穫の月17日"
-        [](int d, const char* month, int y) -> std::string {
-            char buf[256];
-            snprintf(buf, sizeof(buf), "\u7b2c\u56db\u7d00%d\u5e74 %s%d\u65e5",
-                     y, month, d);
-            return buf;
-        },
-        // formatDiaryTitle: "Nameの日記"
-        [](const std::string& name) -> std::string {
-            return name + "\u306e\u65e5\u8a18";
-        },
-        // formatVolumeSuffix: " 第2巻"
-        [](int vol) -> std::string {
-            return (vol > 1) ? std::string(" \u7b2c") + std::to_string(vol) + "\u5dfb" : "";
-        },
-        // emptyVolumeText
-        "\u3053\u306e\u671f\u9593\u306e\u3059\u3079\u3066\u306e\u8a18\u4e8b\u306f\u524a\u9664\u3055\u308c\u307e\u3057\u305f\u3002"  // この期間のすべての記事は削除されました。
-    };
-
-    // ═══════════════════════════════════════════════════════════════════
-    //  Locale table
-    // ═══════════════════════════════════════════════════════════════════
-
-    static const LocaleData* GetLocaleForLanguage(Language lang) {
-        switch (lang) {
-            case Language::French:              return &kLocaleFrench;
-            case Language::German:              return &kLocaleGerman;
-            case Language::Italian:             return &kLocaleItalian;
-            case Language::Spanish:             return &kLocaleSpanish;
-            case Language::Polish:              return &kLocalePolish;
-            case Language::Russian:             return &kLocaleRussian;
-            case Language::ChineseTraditional:  return &kLocaleChinese;
-            case Language::Japanese:            return &kLocaleJapanese;
-            default:                            return &kLocaleEnglish;
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //  Public API
-    // ═══════════════════════════════════════════════════════════════════
-
+    // ── Initialize ─────────────────────────────────────────────────────
     void Localization::Initialize() {
-        languageString_ = DetectSkyrimLanguage();
-        language_ = ParseLanguage(languageString_);
-        activeLocale_ = GetLocaleForLanguage(language_);
-        SKSE::log::info("[Localization] Detected language: '{}' -> locale initialized", languageString_);
+        // Check for INI override first, fall back to Skyrim.ini detection
+        std::string override = Config::GetSingleton()->GetLanguageOverride();
+        if (!override.empty()) {
+            std::transform(override.begin(), override.end(), override.begin(), ::toupper);
+            languageString_ = override;
+            SKSE::log::info("[Localization] Language override from INI: '{}'", languageString_);
+        } else {
+            languageString_ = DetectSkyrimLanguage();
+        }
+
+        // Start with English defaults
+        monthNames_ = kEnglishMonths;
+        dayNames_ = kEnglishDays;
+
+        // English format defaults
+        dateLongFmt_ = "{Day}, {d} {Month}, 4E {y}";
+        dateShortFmt_ = "{d} {Month}, 4E {y}";
+        diaryTitleFmt_ = "{Name}'s Diary";
+        volumeSuffixFmt_ = ", v{n}";
+        emptyVolumeText_ = "All entries from this time period have been removed.";
+
+        // Load locale file (may override formats, months, days)
+        LoadLocaleFile(languageString_);
+
+        // GMSTs are not available yet at plugin load — ReadGMSTs() is called
+        // later from the DataLoaded event handler.
+
+        SKSE::log::info("[Localization] Initialized for language '{}' (GMST read deferred to DataLoaded)",
+                       languageString_);
+    }
+
+    // ── Format functions ───────────────────────────────────────────────
+    std::string Localization::FormatDateLong(const char* dayName, int day,
+                                            const char* monthName, int year) const {
+        return ApplyTemplate(dateLongFmt_, dayName, day, monthName, year);
+    }
+
+    std::string Localization::FormatDateShort(int day, const char* monthName, int year) const {
+        return ApplyTemplate(dateShortFmt_, nullptr, day, monthName, year);
+    }
+
+    std::string Localization::FormatDiaryTitle(const std::string& actorName) const {
+        std::string result;
+        result.reserve(diaryTitleFmt_.size() + actorName.size());
+        for (size_t i = 0; i < diaryTitleFmt_.size(); ++i) {
+            if (diaryTitleFmt_[i] == '{') {
+                auto close = diaryTitleFmt_.find('}', i + 1);
+                if (close != std::string::npos) {
+                    std::string key = diaryTitleFmt_.substr(i + 1, close - i - 1);
+                    if (key == "Name") {
+                        result += actorName;
+                    } else {
+                        result += diaryTitleFmt_.substr(i, close - i + 1);
+                    }
+                    i = close;
+                    continue;
+                }
+            }
+            result += diaryTitleFmt_[i];
+        }
+        return result;
+    }
+
+    std::string Localization::FormatVolumeSuffix(int volumeNumber) const {
+        if (volumeNumber <= 1) return "";
+        // Reuse ApplyTemplate with day=volumeNumber for {n} and {cn}
+        return ApplyTemplate(volumeSuffixFmt_, nullptr, volumeNumber, nullptr, 0);
     }
 
     std::string Localization::FormatBookName(const std::string& actorName, int volumeNumber) const {
-        std::string name = activeLocale_->formatDiaryTitle(actorName);
-        name += activeLocale_->formatVolumeSuffix(volumeNumber);
+        std::string name = FormatDiaryTitle(actorName);
+        name += FormatVolumeSuffix(volumeNumber);
         return name;
     }
 

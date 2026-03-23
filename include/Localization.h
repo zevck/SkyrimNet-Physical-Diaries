@@ -2,44 +2,8 @@
 
 #include <array>
 #include <string>
-#include <functional>
 
 namespace SkyrimNetDiaries {
-
-    enum class Language {
-        English,
-        French,
-        German,
-        Italian,
-        Spanish,
-        Polish,
-        Russian,
-        ChineseTraditional,
-        Japanese
-    };
-
-    struct LocaleData {
-        // Tamrielic month names (12 months, indexed 0-11)
-        std::array<const char*, 12> monthNames;
-
-        // Tamrielic day names (7 days, indexed 0-6: Sundas=0 .. Loredas=6)
-        std::array<const char*, 7> dayNames;
-
-        // Format a full date: "Sundas, 17 Last Seed, 4E 201"
-        std::function<std::string(const char* dayName, int day, const char* monthName, int year)> formatDateLong;
-
-        // Format a short date (no weekday): "17 Last Seed, 4E 201"
-        std::function<std::string(int day, const char* monthName, int year)> formatDateShort;
-
-        // Format diary title: "Stromm's Diary"
-        std::function<std::string(const std::string& actorName)> formatDiaryTitle;
-
-        // Format volume suffix: ", v2"  (returns empty string for volume 1)
-        std::function<std::string(int volumeNumber)> formatVolumeSuffix;
-
-        // "All entries from this time period have been removed."
-        const char* emptyVolumeText;
-    };
 
     class Localization {
     public:
@@ -48,23 +12,39 @@ namespace SkyrimNetDiaries {
             return &singleton;
         }
 
-        // Detect game language and select locale. Call once during plugin load.
+        // Detect game language, read GMSTs, load locale file. Call once during plugin load.
         void Initialize();
 
-        // Active locale data
-        const LocaleData& Get() const { return *activeLocale_; }
+        // Must be called after DataLoaded (GMSTs available). Reads sMonth*/sDay* GMSTs
+        // and overwrites month/day arrays unless the locale file provided overrides.
+        void ReadGMSTs();
 
-        // Detected language enum
-        Language GetLanguage() const { return language_; }
+        // Month/day names (populated from locale file, GMSTs, or English fallback)
+        const std::string& GetMonthName(int index) const { return monthNames_[index % 12]; }
+        const std::string& GetDayName(int index) const { return dayNames_[index % 7]; }
+
+        // Format a full date: "Sundas, 17 Last Seed, 4E 201"
+        std::string FormatDateLong(const char* dayName, int day, const char* monthName, int year) const;
+
+        // Format a short date (no weekday): "17 Last Seed, 4E 201"
+        std::string FormatDateShort(int day, const char* monthName, int year) const;
+
+        // Format diary title: "Stromm's Diary"
+        std::string FormatDiaryTitle(const std::string& actorName) const;
+
+        // Format volume suffix: ", v2" (empty string for volume 1)
+        std::string FormatVolumeSuffix(int volumeNumber) const;
+
+        // Convenience: title + volume suffix combined
+        std::string FormatBookName(const std::string& actorName, int volumeNumber) const;
+
+        // Empty volume placeholder text
+        const std::string& GetEmptyVolumeText() const { return emptyVolumeText_; }
 
         // Detected language as uppercase string (e.g. "RUSSIAN")
         const std::string& GetLanguageString() const { return languageString_; }
 
-        // Convenience: format full book name (title + volume suffix)
-        std::string FormatBookName(const std::string& actorName, int volumeNumber) const;
-
-        // Language-independent sentinel prepended to empty volume text.
-        // Used for detection in API queries so we don't need to match translated strings.
+        // Language-independent sentinel for empty volume detection
         static constexpr const char* kEmptySentinel = "<!-- SNPD_EMPTY -->";
 
     private:
@@ -73,9 +53,28 @@ namespace SkyrimNetDiaries {
         Localization(const Localization&) = delete;
         Localization& operator=(const Localization&) = delete;
 
-        Language language_ = Language::English;
+        // Apply template substitution: {Day}, {d}, {Month}, {y}, {Name}, {n}
+        std::string ApplyTemplate(const std::string& tmpl,
+                                  const char* dayName, int day,
+                                  const char* monthName, int year) const;
+
+        // Load locale .ini from Locales/{LANGUAGE}.ini
+        bool LoadLocaleFile(const std::string& language);
+
         std::string languageString_ = "ENGLISH";
-        const LocaleData* activeLocale_ = nullptr;
+
+        // Calendar data — 12 months, 7 days
+        std::array<std::string, 12> monthNames_;
+        std::array<std::string, 7> dayNames_;
+        bool monthsFromLocaleFile_ = false;  // true = locale file provided months, skip GMST
+        bool daysFromLocaleFile_ = false;    // true = locale file provided days, skip GMST
+
+        // Format templates (loaded from locale file or defaults)
+        std::string dateLongFmt_;    // e.g. "{Day}, {d} {Month}, 4E {y}"
+        std::string dateShortFmt_;   // e.g. "{d} {Month}, 4E {y}"
+        std::string diaryTitleFmt_;  // e.g. "{Name}'s Diary"
+        std::string volumeSuffixFmt_; // e.g. ", v{n}"
+        std::string emptyVolumeText_;
     };
 
 }  // namespace SkyrimNetDiaries
