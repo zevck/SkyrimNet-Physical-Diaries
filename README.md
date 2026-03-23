@@ -31,6 +31,7 @@ Found under **SkyrimNet Physical Diaries** in the Mod Configuration Menu.
 **Settings**
 - **Entries Per Volume** — How many diary entries fit in one book before a new volume begins (default: 10, range: 1–50)
 - **Font Sizes** — Separate sliders for title, date, body text, and small text in the diary books
+- **Book Font** — Switch font faces for readability
 
 **Maintenance**
 - **Reset All Diaries** — Removes all physical diary books from NPCs and clears all tracking. Your SkyrimNet diary entries are untouched; books will regenerate automatically on next load.
@@ -136,6 +137,7 @@ If these sections are omitted, the plugin falls back to reading month/day names 
 
 This translates the in-game settings menu. The file must be **UTF-16 LE with BOM** encoding, with tab-separated key/value pairs. See the existing English file for the full list of keys.
 
+
 If you would like to correct or contribute any translations feel free to submit a PR.
 
 ---
@@ -144,4 +146,4 @@ If you would like to correct or contribute any translations feel free to submit 
 
 - Diary books appear in NPC inventories after SkyrimNet generates the NPC's first diary entry. NPCs without any diary entries will have no books. You must generate SkyrimNet's diary entries yourself.
 - Player character diaries are supported and will appear in the player's inventory.
-- If books are missing after installing on an existing save, use **Reset All Diaries** followed by saving and reloading.
+- If books are missing after installing on an existing save, use **Reset All Diaries** followed by saving and reloading. Also ensure you have Native EditorID Fixes installed so the mod can locate the templates.

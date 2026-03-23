@@ -69,7 +69,7 @@ event OnConfigInit()
 
     _fontDisplayNames = new string[3]
     _fontDisplayNames[0] = "Handwritten"
-    _fontDisplayNames[1] = "UI Font"
+    _fontDisplayNames[1] = "Everywhere"
     _fontDisplayNames[2] = "Book"
 endevent
 
@@ -83,7 +83,7 @@ event OnConfigOpen()
 
     _fontDisplayNames = new string[3]
     _fontDisplayNames[0] = "Handwritten"
-    _fontDisplayNames[1] = "UI Font"
+    _fontDisplayNames[1] = "Everywhere"
     _fontDisplayNames[2] = "Book"
 
     _fontTitleOnOpen   = GetFontSizeTitle()
