@@ -147,3 +147,4 @@ If you would like to correct or contribute any translations feel free to submit 
 - Diary books appear in NPC inventories after SkyrimNet generates the NPC's first diary entry. NPCs without any diary entries will have no books. You must generate SkyrimNet's diary entries yourself.
 - Player character diaries are supported and will appear in the player's inventory.
 - If books are missing after installing on an existing save, use **Reset All Diaries** followed by saving and reloading. Also ensure you have Native EditorID Fixes installed so the mod can locate the templates.
+- Generic NPCs that share a name (e.g. multiple "Whiterun Guard") will share a single, pooled diary. SkyrimNet groups memories by actor name, so same-named NPCs are treated as one identity. To give these NPCs distinct diaries, use a mod that assigns unique names such as **Real Names Extended** — with unique names, each NPC gets its own diary.
