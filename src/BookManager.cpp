@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <mutex>
+#include <deque>
 #include <unordered_map>
 
 // External declarations from main.cpp
@@ -15,23 +16,91 @@ extern std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryE
 
 namespace SkyrimNetDiaries {
 
-    // Actor lookup cache - persists for entire game session (FormIDs stable until game restart)
+    // Actor lookup cache - persists for entire game session.
+    // Two indexes for the same logical mapping:
+    //   - g_actorCache:        FormID → Actor* (fast path for vanilla NPCs with stable FormIDs)
+    //   - g_actorCacheByUuid:  UUID   → Actor* (authoritative for SkyrimNet-tracked actors,
+    //                                            survives ESL load-order changes that shift FormIDs)
+    // Both are cleared together on each game load via ClearActorCache().
     static std::mutex g_actorCacheMutex;
     static std::unordered_map<RE::FormID, RE::Actor*> g_actorCache;
+    static std::unordered_map<std::string, RE::Actor*> g_actorCacheByUuid;
+
+    // Forward declaration — definition is below RegisterBook etc.  Used by the
+    // DPFCreateCallback inventory placement path which appears earlier in this file.
+    static RE::Actor* FindActorForBook(RE::FormID targetFormID,
+                                       const std::string& actorName,
+                                       const std::string& bioTemplate,
+                                       const std::string& actorUuid = "");
+
+    // ── Serial DPF creation queue ────────────────────────────────────
+    // DynamicPersistentForms.Create() is dispatched async to the Papyrus VM and
+    // its callback runs on a VM worker thread.  DPF's FormID allocator is NOT
+    // thread-safe: when many books are created at once (catch-up scan queues one
+    // task per actor, each creating multiple volumes), concurrent callbacks get
+    // handed the SAME FormID.  Two actors then share a book FormID, so opening
+    // one shows the other's content (the cross-linked-diary bug).
+    //
+    // We serialize: only one Create() is ever in flight.  Each request is queued;
+    // a request is dispatched only after the previous one's callback has fired
+    // (DPF has finished allocating that FormID).  This removes the race entirely.
+    struct PendingDiaryCreation {
+        std::string actorUuid;
+        std::string actorName;
+        std::string bioTemplateName;
+        std::string journalTemplate;
+        double startTime = 0.0;
+        double endTime = 0.0;
+        double prevVolumeLastCreationTime = 0.0;
+        int volumeNumber = 1;
+        int prevVolumeCountAtBoundary = 0;
+        RE::FormID targetActorFormID = 0;
+        std::vector<DiaryEntry> entries;
+        RE::TESObjectBOOK* templateBook = nullptr;
+        int retryCount = 0;  // bumped when DPF hands back a colliding FormID
+    };
+    static std::mutex g_createQueueMutex;
+    static std::deque<PendingDiaryCreation> g_createQueue;
+    static bool g_createInFlight = false;
+
+    // Synchronous FormID claim table.  When DPF.Create()'s callback returns a form,
+    // we claim its FormID HERE (immediately, on the VM thread) — registration into
+    // books_ is deferred to a game-thread task, so books_ can't be trusted for
+    // collision detection in the callback.  If DPF hands back a FormID already
+    // claimed by a DIFFERENT actor (its allocator recycled a duplicate deleted
+    // record — see PumpDiaryCreateQueue comment), we reject that form and re-queue
+    // the creation.  DPF's next AddForm consumes the duplicate slot and returns a
+    // fresh ID, so retries both fix the content AND drain the poisoned pool.
+    static std::mutex g_claimedFormIdMutex;
+    static std::unordered_map<RE::FormID, std::string> g_claimedFormIds;  // FormID → owning UUID
+    static constexpr int kMaxCreateRetries = 16;
+
+    static void PumpDiaryCreateQueue();  // defined after DPFCreateCallback
 
     // Custom callback functor to capture DPF.Create() return value
     class DPFCreateCallback : public RE::BSScript::IStackCallbackFunctor {
     public:
         DPFCreateCallback(std::string uuid, std::string actorName, double startTime, double endTime, int volumeNum, RE::FormID targetFormID,
                        std::vector<SkyrimNetDiaries::DiaryEntry> cachedEntries = {}, std::string bioTemplate = "", std::string journalTemplate = "",
-                       double prevVolLastCreationTime = 0.0, int prevVolCountAtBoundary = 0) 
+                       double prevVolLastCreationTime = 0.0, int prevVolCountAtBoundary = 0,
+                       RE::TESObjectBOOK* templateBook = nullptr, int retryCount = 0)
             : actorUuid(uuid), actorName(actorName), startTime(startTime), endTime(endTime), volumeNumber(volumeNum), targetActorFormID(targetFormID),
               diaryEntries(std::move(cachedEntries)), bioTemplateName(std::move(bioTemplate)), journalTemplateName(std::move(journalTemplate)),
-              prevVolumeLastCreationTime(prevVolLastCreationTime), prevVolumeCountAtBoundary(prevVolCountAtBoundary) {}
+              prevVolumeLastCreationTime(prevVolLastCreationTime), prevVolumeCountAtBoundary(prevVolCountAtBoundary),
+              templateBook(templateBook), retryCount(retryCount) {}
         
         virtual void operator()(RE::BSScript::Variable a_result) override {
+            // This DPF.Create() has completed — DPF has finished allocating this
+            // FormID, so it's now safe to dispatch the next queued creation.  Done
+            // FIRST so the early-return error paths below can't stall the queue.
+            {
+                std::lock_guard<std::mutex> lock(g_createQueueMutex);
+                g_createInFlight = false;
+            }
+            SKSE::GetTaskInterface()->AddTask([]() { PumpDiaryCreateQueue(); });
+
             SKSE::log::debug("DPF.Create() callback invoked for {}", actorName);
-            
+
             if (a_result.IsNoneObject() || !a_result.IsObject()) {
                 SKSE::log::error("DPF.Create() returned None/non-object for {}", actorName);
                 return;
@@ -44,8 +113,56 @@ namespace SkyrimNetDiaries {
             }
             
             auto* newBook = static_cast<RE::TESObjectBOOK*>(form);
-            SKSE::log::info("DPF created book FormID 0x{:X} for {}", newBook->GetFormID(), actorName);
-            
+            const RE::FormID newFormId = newBook->GetFormID();
+            SKSE::log::info("DPF created book FormID 0x{:X} for {}", newFormId, actorName);
+
+            // ── FormID collision detection ──────────────────────────────
+            // Claim this FormID synchronously.  If it's already claimed by a
+            // DIFFERENT actor, DPF's allocator recycled a duplicate deleted slot
+            // and handed us a FormID that's already in use — registering it would
+            // cross-link two actors' diaries.  Reject and re-queue; DPF's next
+            // AddForm consumes the duplicate slot and returns a fresh ID.
+            {
+                std::lock_guard<std::mutex> lock(g_claimedFormIdMutex);
+                auto it = g_claimedFormIds.find(newFormId);
+                if (it != g_claimedFormIds.end() && it->second != actorUuid) {
+                    // Collision.
+                    if (retryCount < kMaxCreateRetries && templateBook) {
+                        SKSE::log::warn("[DPF] FormID 0x{:X} collision: already owned by UUID {}, "
+                                        "requested by {} — re-queuing (retry {})",
+                                        newFormId, it->second, actorName, retryCount + 1);
+                        PendingDiaryCreation retry;
+                        retry.actorUuid                  = actorUuid;
+                        retry.actorName                  = actorName;
+                        retry.bioTemplateName            = bioTemplateName;
+                        retry.journalTemplate            = journalTemplateName;
+                        retry.startTime                  = startTime;
+                        retry.endTime                    = endTime;
+                        retry.prevVolumeLastCreationTime = prevVolumeLastCreationTime;
+                        retry.volumeNumber               = volumeNumber;
+                        retry.prevVolumeCountAtBoundary  = prevVolumeCountAtBoundary;
+                        retry.targetActorFormID          = targetActorFormID;
+                        retry.entries                    = diaryEntries;
+                        retry.templateBook               = templateBook;
+                        retry.retryCount                 = retryCount + 1;
+                        {
+                            std::lock_guard<std::mutex> qlock(g_createQueueMutex);
+                            g_createQueue.push_back(std::move(retry));
+                        }
+                    } else {
+                        SKSE::log::error("[DPF] FormID 0x{:X} collision for {} unresolved after {} retries "
+                                         "— giving up (diary not created this pass)",
+                                         newFormId, actorName, retryCount);
+                    }
+                    // The slot was already released at the top of operator(); the
+                    // pumped queue will pick up the re-queued request.  Abandon this
+                    // colliding form (never added to any inventory or books_).
+                    return;
+                }
+                // Unclaimed (or already ours) — take it.
+                g_claimedFormIds[newFormId] = actorUuid;
+            }
+
             // Capture values by copy for the lambda
             std::string uuid = actorUuid;
             std::string name = actorName;
@@ -178,142 +295,12 @@ namespace SkyrimNetDiaries {
                             // We need to defer the inventory add to the main game thread
                             SKSE::log::debug("Attempting to add book to actor 0x{:X} ({})...", targetFormID, name);
                             
-                            SKSE::GetTaskInterface()->AddTask([targetFormID, newBook, bookName, name = std::string(name), bioTemplate]() {
-                                RE::Actor* targetActor = nullptr;
-                                
-                                // Handle player diaries (UUID = "player_special")
-                                if (bioTemplate == "player_special" || targetFormID == 0x14) {
-                                    targetActor = RE::PlayerCharacter::GetSingleton();
-                                    SKSE::log::debug("Player diary detected - assigning to player (FormID 0x14)");
-                                } else {
-                                
-                                // Check cache first to avoid repeated expensive searches
-                                bool foundInCache = false;
-                                {
-                                    std::lock_guard<std::mutex> lock(g_actorCacheMutex);
-                                    auto it = g_actorCache.find(targetFormID);
-                                    if (it != g_actorCache.end()) {
-                                        targetActor = it->second;
-                                        foundInCache = true;
-                                        if (targetActor) {
-                                            SKSE::log::debug("✓ Found actor 0x{:X} ({}) in cache - skipping search", targetFormID, name);
-                                        }
-                                    }
-                                }
-                                
-                                // Only do expensive search if not in cache
-                                if (!foundInCache) {
-                                    SKSE::log::debug("Looking up actor for book '{}', targetFormID=0x{:X}, bioTemplate='{}'", bookName, targetFormID, bioTemplate);
-                                
-                                // For actors with bio_template_name, use name + last 3 digits matching
-                                // bio_template_name format: "actorname_XYZ" where XYZ are last 3 hex digits of REFERENCE FormID
-                                if (!bioTemplate.empty() && bioTemplate.find('_') != std::string::npos) {
-                                    SKSE::log::debug("Using bio_template_name matching for: '{}'", bioTemplate);
+                            SKSE::GetTaskInterface()->AddTask([uuid, targetFormID, newBook, bookName, name = std::string(name), bioTemplate]() {
+                                // Use FindActorForBook for the unified UUID-first lookup.
+                                // FindActorForBook handles player special-case, cache hits, and the
+                                // 3-tier resolution (UUID → stored FormID → legacy name+hex fallback).
+                                RE::Actor* targetActor = FindActorForBook(targetFormID, name, bioTemplate, uuid);
 
-                                    // Extract last 3 digits from bio_template_name (e.g., "fetri_el_874" -> "874")
-                                    size_t lastUnderscore = bioTemplate.find_last_of('_');
-                                    std::string expectedLast3;
-                                    if (lastUnderscore != std::string::npos && lastUnderscore + 1 < bioTemplate.length()) {
-                                        expectedLast3 = bioTemplate.substr(lastUnderscore + 1);
-                                        // Convert to lowercase for case-insensitive matching
-                                        std::transform(expectedLast3.begin(), expectedLast3.end(), expectedLast3.begin(), ::tolower);
-                                        SKSE::log::debug("Searching for actor '{}' with REFERENCE FormID ending in '{}'", name, expectedLast3);
-                                    }
-                                    
-                                    if (!expectedLast3.empty()) {
-                                        // Search actor REFERENCES using ProcessLists (high/middle/low)
-                                        auto processLists = RE::ProcessLists::GetSingleton();
-                                        if (processLists) {
-                                            int actorsChecked = 0;
-                                            int nameMatches = 0;
-                                            
-                                            // Helper lambda to search an actor list
-                                            auto searchActorList = [&](RE::BSTArray<RE::ActorHandle>& actorHandles) {
-                                                for (auto& handle : actorHandles) {
-                                                    // Use LookupByHandle (RELOCATION_ID 12204/12332) instead of
-                                                    // handle.get() which uses BSPointerHandle::get() (ID 12785/12922)
-                                                    // and crashes in VR if the address library entry is missing.
-                                                    RE::NiPointer<RE::Actor> actorPtr;
-                                                    if (!RE::Actor::LookupByHandle(handle.native_handle(), actorPtr)) {
-                                                        continue;
-                                                    }
-                                                    auto* actorRef = actorPtr.get(); // NiPointer::get() - safe raw ptr
-                                                    if (actorRef) {
-                                                        auto actorBase = actorRef->GetActorBase();
-                                                        if (actorBase) {
-                                                            std::string engineName = actorBase->GetFullName();
-                                                            uint32_t refFormID = actorRef->GetFormID();
-                                                            
-                                                            actorsChecked++;
-                                                            
-                                                            // Name check: exact match OR engine name is a suffix of
-                                                            // the SkyrimNet display name.  The suffix check handles
-                                                            // rank-prefixed names where SkyrimNet prepends a title
-                                                            // (e.g. SkyrimNet "Jarl Elisif the Fair" vs engine
-                                                            // "Elisif the Fair").
-                                                            bool nameMatch = (engineName == name) ||
-                                                                (!engineName.empty() &&
-                                                                 name.size() > engineName.size() &&
-                                                                 name.compare(name.size() - engineName.size(),
-                                                                              engineName.size(), engineName) == 0);
-                                                            if (nameMatch) {
-                                                                nameMatches++;
-                                                                // Get last 3 hex digits of REFERENCE FormID
-                                                                char refLast3[4];
-                                                                snprintf(refLast3, sizeof(refLast3), "%03x", refFormID & 0xFFF);
-                                                                
-                                                                SKSE::log::debug("  Found '{}' at 0x{:X} (last3: {})", engineName, refFormID, refLast3);
-                                                                
-                                                                // Match last 3 digits of reference FormID
-                                                                if (expectedLast3 == refLast3) {
-                                                                    targetActor = actorRef;
-                                                                    SKSE::log::debug("✓ Matched! Found actor via bio_template_name: '{}' (0x{:X})", engineName, refFormID);
-                                                                    return true; // Found!
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                return false;
-                                            };
-                                            
-                                            // Search high, middle, and low process actors
-                                            if (!searchActorList(processLists->highActorHandles)) {
-                                                if (!searchActorList(processLists->middleHighActorHandles)) {
-                                                    if (!searchActorList(processLists->middleLowActorHandles)) {
-                                                        searchActorList(processLists->lowActorHandles);
-                                                    }
-                                                }
-                                            }
-                                            
-                                            if (!targetActor) {
-                                                SKSE::log::error("Actor lookup failed: checked {} actors, found {} with name '{}'", actorsChecked, nameMatches, name);
-                                                SKSE::log::error("Looking for: name='{}', last3='{}', bioTemplate='{}'", name, expectedLast3, bioTemplate);
-                                            }
-                                        }
-                                    } else {
-                                        SKSE::log::warn("Could not extract last 3 digits from bio_template_name: '{}'", bioTemplate);
-                                    }
-                                } else {
-                                    // No bio_template_name - use FormID lookup (vanilla actors)
-                                    SKSE::log::debug("No bio_template_name, using FormID lookup for 0x{:X}", targetFormID);
-                                    targetActor = RE::TESForm::LookupByID<RE::Actor>(targetFormID);
-                                }
-                                
-                                    // Cache the result (even if nullptr) to avoid repeating search
-                                    {
-                                        std::lock_guard<std::mutex> lock(g_actorCacheMutex);
-                                        g_actorCache[targetFormID] = targetActor;
-                                        if (targetActor) {
-                                            SKSE::log::debug("✓ Cached actor 0x{:X} ({}) for subsequent volumes", targetFormID, name);
-                                        } else {
-                                            SKSE::log::debug("Cached nullptr for actor 0x{:X} to avoid repeated searches", targetFormID);
-                                        }
-                                    }
-                                } // End of !foundInCache block
-                                } // End of player check
-                                
-                                actor_resolved:
                                 if (targetActor) {
                                     // Actor found - add book to inventory
                                     // If found in ProcessLists, they're loaded enough to manipulate inventory
@@ -362,6 +349,8 @@ namespace SkyrimNetDiaries {
         std::string journalTemplateName;  // Which journal template to use for this actor
         double prevVolumeLastCreationTime = 0.0;  // creation_time of last entry in previous volume (boundary de-dup)
         int prevVolumeCountAtBoundary = 0;           // how many prev-vol entries share the boundary date/CT
+        RE::TESObjectBOOK* templateBook = nullptr;   // kept so a colliding create can be re-queued
+        int retryCount = 0;                          // FormID-collision retry counter
     };
 
     BookManager* BookManager::GetSingleton() {
@@ -490,34 +479,83 @@ namespace SkyrimNetDiaries {
             return nullptr;
         }
 
-        // Use DynamicPersistentForms.Create() - this is async so we dispatch and handle result in callback
-        auto vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-        if (!vm) {
-            SKSE::log::error("VM not available - cannot create books!");
-            return nullptr;
+        // Enqueue the creation rather than dispatching immediately.  DPF.Create()
+        // FormID allocation is not thread-safe, and many of these calls are issued
+        // back-to-back (catch-up scan), so we serialize them through a global queue
+        // and only ever have one Create() in flight.  See the queue comment near
+        // the top of this file.
+        PendingDiaryCreation req;
+        req.actorUuid                  = actorUuid;
+        req.actorName                  = actorName;
+        req.bioTemplateName            = bioTemplateName;
+        req.journalTemplate            = templateToUse;
+        req.startTime                  = startTime;
+        req.endTime                    = endTime;
+        req.prevVolumeLastCreationTime = prevVolumeLastCreationTime;
+        req.volumeNumber               = volumeNumber;
+        req.prevVolumeCountAtBoundary  = prevVolumeCountAtBoundary;
+        req.targetActorFormID          = targetActorFormID;
+        req.entries                    = entries;
+        req.templateBook               = templateBook;
+
+        {
+            std::lock_guard<std::mutex> lock(g_createQueueMutex);
+            g_createQueue.push_back(std::move(req));
+        }
+        SKSE::log::debug("Queued DPF.Create() for {} (volume {}) — {} now pending",
+                         actorName, volumeNumber, g_createQueue.size());
+
+        PumpDiaryCreateQueue();
+
+        // Creation is async (serialized) — the callback handles the rest.
+        return nullptr;
+    }
+
+    // ── Serial DPF creation pump ─────────────────────────────────────
+    // Dispatches the next queued creation, if any, when no Create() is in flight.
+    // Called when a request is enqueued and again from each DPFCreateCallback once
+    // the previous Create() has completed.  Guarantees one-at-a-time dispatch so
+    // DPF's FormID allocator never races.
+    void PumpDiaryCreateQueue() {
+        PendingDiaryCreation req;
+        {
+            std::lock_guard<std::mutex> lock(g_createQueueMutex);
+            if (g_createInFlight || g_createQueue.empty()) return;
+            req = std::move(g_createQueue.front());
+            g_createQueue.pop_front();
+            g_createInFlight = true;
         }
 
-        SKSE::log::debug("Dispatching async DPF.Create() for {} (volume {}) with {} cached entries...", actorName, volumeNumber, entries.size());
-        
-        // Create callback that will handle the created book asynchronously
-        auto callback = RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor>(
-            new DPFCreateCallback(actorUuid, actorName, startTime, endTime, volumeNumber, targetActorFormID, entries, bioTemplateName, templateToUse, prevVolumeLastCreationTime, prevVolumeCountAtBoundary)
-        );
-        
-        RE::TESForm* templatePtr = templateBook;
-        auto createArgs = RE::MakeFunctionArguments(std::move(templatePtr));
-        
-        bool dispatched = vm->DispatchStaticCall("DynamicPersistentForms", "Create", createArgs, callback);
-        
-        if (!dispatched) {
-            SKSE::log::error("DPF.Create() dispatch FAILED - Dynamic Persistent Forms mod is NOT loaded!");
-            return nullptr;
+        auto vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+        if (!vm || !req.templateBook) {
+            SKSE::log::error("PumpDiaryCreateQueue: VM/template unavailable for {} — dropping and continuing",
+                             req.actorName);
+            {
+                std::lock_guard<std::mutex> lock(g_createQueueMutex);
+                g_createInFlight = false;
+            }
+            // Try the next one (this slot is dead, but others may be fine).
+            SKSE::GetTaskInterface()->AddTask([]() { PumpDiaryCreateQueue(); });
+            return;
         }
-        
-        SKSE::log::debug("DPF.Create() dispatched - book will be created asynchronously");
-        
-        // Return nullptr since creation is async - the callback will handle everything
-        return nullptr;
+
+        auto callback = RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor>(
+            new DPFCreateCallback(req.actorUuid, req.actorName, req.startTime, req.endTime,
+                                  req.volumeNumber, req.targetActorFormID, req.entries,
+                                  req.bioTemplateName, req.journalTemplate,
+                                  req.prevVolumeLastCreationTime, req.prevVolumeCountAtBoundary,
+                                  req.templateBook, req.retryCount));
+
+        RE::TESForm* templatePtr = req.templateBook;
+        auto createArgs = RE::MakeFunctionArguments(std::move(templatePtr));
+        bool dispatched = vm->DispatchStaticCall("DynamicPersistentForms", "Create", createArgs, callback);
+
+        if (!dispatched) {
+            SKSE::log::error("DPF.Create() dispatch FAILED for {} — Dynamic Persistent Forms not loaded?",
+                             req.actorName);
+            std::lock_guard<std::mutex> lock(g_createQueueMutex);
+            g_createInFlight = false;  // callback won't fire; unblock the queue
+        }
     }
 
     bool BookManager::UpdateBookText(RE::TESObjectBOOK* book, const std::string& actorUuid,
@@ -859,22 +897,49 @@ namespace SkyrimNetDiaries {
     }
 
     void BookManager::ClearActorCache() {
-        std::lock_guard<std::mutex> lock(g_actorCacheMutex);
-        g_actorCache.clear();
-        SKSE::log::debug("[BookManager] Actor cache cleared");
+        {
+            std::lock_guard<std::mutex> lock(g_actorCacheMutex);
+            g_actorCache.clear();
+            g_actorCacheByUuid.clear();
+        }
+        // FormID claims are per-session; clear alongside the actor cache so a fresh
+        // load/regeneration starts with a clean claim table.
+        {
+            std::lock_guard<std::mutex> lock(g_claimedFormIdMutex);
+            g_claimedFormIds.clear();
+        }
+        SKSE::log::debug("[BookManager] Actor cache + FormID claims cleared");
     }
 
     // ---------------------------------------------------------------------------
     // FindActorForBook: resolve the owning NPC for a diary volume.
-    // Uses bio_template_name matching (for ESL/mod-added NPCs) or direct FormID
-    // lookup (for vanilla NPCs), with g_actorCache to avoid repeated searches.
+    //
+    // Lookup priority (UUID-first to fix the same-name swap bug):
+    //   1. UUID → live FormID via SkyrimNet API (authoritative, distinguishes
+    //      multiple NPCs sharing a name like guards/bandits/wolves)
+    //   2. Stored targetFormID via TESForm::LookupByID (fast path for vanilla
+    //      actors and legacy DB rows where actorFormId was populated)
+    //   3. bio_template_name + last-3 hex matching (legacy fallback for old DB
+    //      rows that pre-date UUID/FormID storage)
+    //
+    // The first two paths are O(1); only the legacy fallback walks ProcessLists.
+    // Cache hits skip everything.
     // ---------------------------------------------------------------------------
     static RE::Actor* FindActorForBook(RE::FormID targetFormID,
                                        const std::string& actorName,
-                                       const std::string& bioTemplate) {
-        if (bioTemplate == "player_special" || targetFormID == 0x14)
+                                       const std::string& bioTemplate,
+                                       const std::string& actorUuid) {
+        if (bioTemplate == "player_special" || targetFormID == 0x14 || actorUuid == "player_special")
             return RE::PlayerCharacter::GetSingleton();
 
+        // Cache hit by UUID (preferred — survives FormID shifts across sessions)
+        if (!actorUuid.empty()) {
+            std::lock_guard<std::mutex> lock(g_actorCacheMutex);
+            auto it = g_actorCacheByUuid.find(actorUuid);
+            if (it != g_actorCacheByUuid.end()) return it->second;
+        }
+
+        // Cache hit by stored FormID (fast path for repeated lookups in same session)
         {
             std::lock_guard<std::mutex> lock(g_actorCacheMutex);
             auto it = g_actorCache.find(targetFormID);
@@ -883,7 +948,29 @@ namespace SkyrimNetDiaries {
 
         RE::Actor* result = nullptr;
 
-        if (!bioTemplate.empty() && bioTemplate.find('_') != std::string::npos) {
+        // Priority 1: UUID → live FormID (authoritative for non-unique NPCs)
+        if (!actorUuid.empty()) {
+            uint32_t liveFormId = SkyrimNetDiaries::Database::GetFormIDForUUID(actorUuid);
+            if (liveFormId != 0) {
+                result = RE::TESForm::LookupByID<RE::Actor>(liveFormId);
+                if (result) {
+                    SKSE::log::debug("[FindActorForBook] Resolved '{}' via UUID {} → live FormID 0x{:X}",
+                                     actorName, actorUuid, liveFormId);
+                }
+            }
+        }
+
+        // Priority 2: stored targetFormID
+        if (!result && targetFormID != 0) {
+            result = RE::TESForm::LookupByID<RE::Actor>(targetFormID);
+            if (result) {
+                SKSE::log::debug("[FindActorForBook] Resolved '{}' via stored FormID 0x{:X}",
+                                 actorName, targetFormID);
+            }
+        }
+
+        // Priority 3: legacy name + last-3 hex matching (fallback for old DB rows)
+        if (!result && !bioTemplate.empty() && bioTemplate.find('_') != std::string::npos) {
             size_t lastUnderscore = bioTemplate.find_last_of('_');
             std::string expectedLast3;
             if (lastUnderscore != std::string::npos && lastUnderscore + 1 < bioTemplate.size()) {
@@ -902,9 +989,6 @@ namespace SkyrimNetDiaries {
                             auto* base = ref->GetActorBase();
                             if (!base) continue;
                             std::string engineName = base->GetFullName();
-                            // Exact match OR engine name is a suffix of the SkyrimNet display name.
-                            // Handles rank-prefixed names: "Jarl Elisif the Fair" (SkyrimNet) vs
-                            // "Elisif the Fair" (engine GetFullName).
                             bool nameMatch = (engineName == actorName) ||
                                 (!engineName.empty() &&
                                  actorName.size() > engineName.size() &&
@@ -921,15 +1005,20 @@ namespace SkyrimNetDiaries {
                         if (!searchList(pl->middleHighActorHandles))
                             if (!searchList(pl->middleLowActorHandles))
                                 searchList(pl->lowActorHandles);
+                    if (result) {
+                        SKSE::log::debug("[FindActorForBook] Resolved '{}' via LEGACY name+last3hex fallback (bioTemplate={})",
+                                         actorName, bioTemplate);
+                    }
                 }
             }
-        } else {
-            result = RE::TESForm::LookupByID<RE::Actor>(targetFormID);
         }
 
+        // Cache the result under all keys we have (negative results too — avoids
+        // re-walking ProcessLists for unresolvable actors).
         {
             std::lock_guard<std::mutex> lock(g_actorCacheMutex);
-            g_actorCache[targetFormID] = result;
+            if (targetFormID != 0) g_actorCache[targetFormID] = result;
+            if (!actorUuid.empty()) g_actorCacheByUuid[actorUuid] = result;
         }
         return result;
     }
@@ -938,19 +1027,23 @@ namespace SkyrimNetDiaries {
     // EnsureBookInInventory: if the NPC doesn't have the book, add it.
     // Called after LoadFromDB for volumes whose DPF form exists but may not be
     // in the NPC's inventory (e.g. after reload-without-save).
+    //
+    // actorUuid is REQUIRED to correctly route diaries for non-unique NPCs
+    // (guards, bandits, wolves) — passing it lets FindActorForBook resolve
+    // by UUID instead of falling back to name matching which can collide.
     // ---------------------------------------------------------------------------
     static void EnsureBookInInventory(RE::FormID bookFormId, RE::FormID targetFormID,
                                       const std::string& actorName, const std::string& bioTemplate,
-                                      const std::string& bookName) {
+                                      const std::string& bookName, const std::string& actorUuid) {
         auto* book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(bookFormId);
         if (!book) {
             SKSE::log::warn("[EnsureInventory] Book 0x{:X} no longer valid — skipping '{}'", bookFormId, bookName);
             return;
         }
 
-        RE::Actor* actor = FindActorForBook(targetFormID, actorName, bioTemplate);
+        RE::Actor* actor = FindActorForBook(targetFormID, actorName, bioTemplate, actorUuid);
         if (!actor) {
-            SKSE::log::warn("[EnsureInventory] Could not find actor '{}' for '{}'", actorName, bookName);
+            SKSE::log::warn("[EnsureInventory] Could not find actor '{}' (UUID {}) for '{}'", actorName, actorUuid, bookName);
             return;
         }
 
@@ -980,12 +1073,18 @@ namespace SkyrimNetDiaries {
                     continue;
                 }
                 RE::FormID bookFid   = vol.bookFormId;
-                RE::FormID actorFid  = static_cast<RE::FormID>(actorFormId);
+                // Prefer the volume's stored actorFormId (set at creation time);
+                // fall back to live UUID→FormID resolution if it wasn't persisted
+                // on older DB rows.
+                RE::FormID actorFid  = vol.actorFormId != 0
+                                          ? vol.actorFormId
+                                          : static_cast<RE::FormID>(actorFormId);
                 std::string aName    = vol.actorName;
                 std::string bio      = vol.bioTemplateName;
                 std::string bName    = Localization::GetSingleton()->FormatBookName(vol.actorName, vol.volumeNumber);
-                SKSE::GetTaskInterface()->AddTask([bookFid, actorFid, aName, bio, bName]() {
-                    EnsureBookInInventory(bookFid, actorFid, aName, bio, bName);
+                std::string aUuid    = uuid;
+                SKSE::GetTaskInterface()->AddTask([bookFid, actorFid, aName, bio, bName, aUuid]() {
+                    EnsureBookInInventory(bookFid, actorFid, aName, bio, bName, aUuid);
                 });
                 ++queued;
             }
@@ -1071,6 +1170,14 @@ namespace SkyrimNetDiaries {
             // Pre-warm cachedActorFormId so RefreshVolumeOnOpen never needs UUID roundtrip.
             if (row.actorFormId != 0) {
                 data.cachedActorFormId = static_cast<RE::FormID>(row.actorFormId);
+            }
+
+            // Claim this loaded diary's FormID so a later creation can't be handed
+            // the same ID (guards against a duplicate deleted record in DPF's pool
+            // that happens to match an already-live loaded diary).
+            {
+                std::lock_guard<std::mutex> lock(g_claimedFormIdMutex);
+                g_claimedFormIds[static_cast<RE::FormID>(row.bookFormId)] = data.actorUuid;
             }
 
             books_[data.actorUuid].push_back(std::move(data));

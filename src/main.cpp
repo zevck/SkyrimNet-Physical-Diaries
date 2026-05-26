@@ -1159,9 +1159,15 @@ int ResetAllDiariesInternal() {
         struct RemovalEntry { std::string uuid; RE::FormID bookFormId; std::string label; };
         std::vector<RemovalEntry> pendingRemovals;
 
+        // Collect UUIDs while we iterate — needed below for DiaryDB row deletion
+        // (must be captured before bookManager->Revert() empties the map).
+        std::vector<std::string> uuidsToDelete;
+        uuidsToDelete.reserve(allBooks.size());
+
         for (const auto& [uuid, volumes] : allBooks) {
             if (volumes.empty()) continue;
             ++actorsAffected;
+            uuidsToDelete.push_back(uuid);
 
             for (const auto& vol : volumes) {
                 pendingRemovals.push_back({uuid, vol.bookFormId,
@@ -1180,16 +1186,35 @@ int ResetAllDiariesInternal() {
             }
         }
 
+        // Wipe DiaryDB rows BEFORE clearing in-memory state.  Without this,
+        // LoadFromDB() on the next save reload reads the persisted rows back,
+        // the catch-up scan sees actors already have books, and skips
+        // regeneration — making Reset appear to "stop working" after one cycle.
+        // DeleteActor removes from both `volumes` and `actor_templates` tables.
+        // Also clear stolen-volume tracking so theft state doesn't linger.
+        auto* diaryDb = SkyrimNetDiaries::DiaryDB::GetSingleton();
+        if (diaryDb && diaryDb->IsOpen()) {
+            int dbRowsCleared = 0;
+            for (const auto& uuid : uuidsToDelete) {
+                if (diaryDb->DeleteActor(uuid)) ++dbRowsCleared;
+                diaryDb->ClearAllStolenVolumes(uuid);
+            }
+            SKSE::log::info("ResetAllDiariesInternal: deleted {} actor(s) from DiaryDB", dbRowsCleared);
+        } else {
+            SKSE::log::warn("ResetAllDiariesInternal: DiaryDB not open — DB rows NOT deleted "
+                            "(reload will restore the diaries)");
+        }
+
         // Clear all in-memory tracking immediately (safe — no game-thread state involved).
         bookManager->Revert();
         g_actorUuidCache.clear();
         g_currentSaveFolder.clear();
 
-        // Dispatch inventory removals and DPF disposal to the game thread.
+        // Dispatch inventory removals to the game thread.  We deliberately do NOT
+        // dispose the DPF forms (see the per-entry comment below) to avoid
+        // poisoning DPF's FormID recycle pool.
         if (!pendingRemovals.empty()) {
             SKSE::GetTaskInterface()->AddTask([pendingRemovals]() {
-                auto  vm     = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-
                 for (const auto& entry : pendingRemovals) {
                     auto* bookForm = RE::TESForm::LookupByID<RE::TESObjectBOOK>(entry.bookFormId);
                     if (!bookForm) {
@@ -1224,26 +1249,29 @@ int ResetAllDiariesInternal() {
                         }
                     }
 
-                    // --- Step 2: Tell DPF to stop persisting this form ---
-                    // Removes the entry from DPF's save data so it won't be recreated
-                    // on the next game load.
-                    if (vm) {
-                        RE::TESForm* formPtr = bookForm;
-                        auto disposeArgs = RE::MakeFunctionArguments(std::move(formPtr));
-                        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> noopCallback;
-                        vm->DispatchStaticCall("DynamicPersistentForms", "Dispose", disposeArgs, noopCallback);
-                        SKSE::log::debug("  Disposed DPF form 0x{:X} for {}", entry.bookFormId, entry.label);
-                    }
-
-                    // --- Step 3: Mark the base form as deleted globally ---
-                    // SetDelete(true) sets the kDeleted flag on the TESObjectBOOK base form.
-                    // Any reference to this form ID in an unloaded cell (a chest in a far-
-                    // away dungeon, a shelf in an unloaded house, etc.) will be treated as
-                    // a missing/orphaned form reference when those cells eventually load,
-                    // and Skyrim silently drops such references. This is the only reliable
-                    // way to "reach" containers that are not currently in memory.
-                    bookForm->SetDelete(true);
-                    SKSE::log::debug("  Marked base form 0x{:X} as deleted for {}", entry.bookFormId, entry.label);
+                    // --- We intentionally do NOT Dispose or SetDelete the form ---
+                    //
+                    // DPF.Dispose() marks the form's FormRecord as `deleted`, which
+                    // adds it to DPF's recycle pool.  DPF's AddForm() recycles deleted
+                    // records by FormID before allocating fresh ones, and its persisted
+                    // pool (co-save + cache file) accumulates DUPLICATE deleted records
+                    // for the same FormID across repeated reset/reload cycles.  Those
+                    // duplicates get recycled more than once, handing the SAME FormID to
+                    // two different actors — the root cause of cross-linked diary content
+                    // (e.g. "Frea's Diary" showing Fetri El's text).
+                    //
+                    // SetDelete(true) is also avoided: the form would be dropped on the
+                    // next load, DPF's restore would fail, and DPF would re-mark the
+                    // record deleted — re-poisoning the pool the same way.
+                    //
+                    // Leaving the form fully alive keeps DPF's lastFormId monotonically
+                    // increasing, so every future Create() gets a unique FormID.  The
+                    // orphaned book is inert: removed from all loaded inventories above,
+                    // no longer in our DiaryDB, never re-added.  Trade-off: NPCs in
+                    // unloaded cells keep a stale (untracked) copy until regeneration,
+                    // and orphaned forms slowly accumulate — both harmless versus the
+                    // alternative of corrupted, cross-linked diaries.
+                    (void)bookForm;
                 }
             });
         }
@@ -1642,6 +1670,43 @@ namespace {
                     }
                 }
                 
+                // Verify the diary template books resolve.  If they don't, every
+                // diary creation silently fails with "Template book not found" spam.
+                // Common causes: ESP not actually enabled, an EditorID-exposure
+                // plugin (e.g. po3_Tweaks / Native EditorID Fix) missing or the wrong
+                // runtime build, or a tool stripped the template records.
+                {
+                    auto* t1 = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>("SkyrimNetDiaryTemplate");
+                    auto* t2 = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>("SkyrimNetDiaryTemplate2");
+                    auto* t3 = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>("SkyrimNetDiaryTemplate3");
+                    auto* tN = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>("SkyrimNetDiaryTemplateN");
+                    if (!t1 || !t2 || !t3 || !tN) {
+                        SKSE::log::error("================================================================");
+                        SKSE::log::error("[Physical Diaries] DIARY TEMPLATE BOOKS NOT FOUND — diaries cannot be created!");
+                        SKSE::log::error("  SkyrimNetDiaryTemplate:  {}", t1 ? "OK" : "MISSING");
+                        SKSE::log::error("  SkyrimNetDiaryTemplate2: {}", t2 ? "OK" : "MISSING");
+                        SKSE::log::error("  SkyrimNetDiaryTemplate3: {}", t3 ? "OK" : "MISSING");
+                        SKSE::log::error("  SkyrimNetDiaryTemplateN: {}", tN ? "OK" : "MISSING");
+                        SKSE::log::error("  Possible causes:");
+                        SKSE::log::error("   1. 'SkyrimNet Physical Diaries.esp' is not enabled in the load order");
+                        SKSE::log::error("   2. An EditorID-exposure plugin (po3_Tweaks / Native EditorID Fix) is");
+                        SKSE::log::error("      missing or is the wrong runtime build (SE vs AE vs VR)");
+                        SKSE::log::error("   3. The ESP was modified by a tool that stripped the template records");
+                        SKSE::log::error("================================================================");
+                        SKSE::GetTaskInterface()->AddTask([]() {
+                            auto* msgBoxData = RE::UIMessageDataFactory::Create<RE::MessageBoxData>();
+                            if (msgBoxData) {
+                                msgBoxData->bodyText = "SkyrimNet Physical Diaries: diary template books were not found.\n\nDiaries cannot be created. Check that:\n - 'SkyrimNet Physical Diaries.esp' is enabled\n - Native EditorID Fix (or po3_Tweaks) is installed for your game version\n\nSee SkyrimNetPhysicalDiaries.log for details.";
+                                msgBoxData->buttonText.push_back("OK");
+                                msgBoxData->cancelOptionIndex = 0;
+                                RE::MessageBoxMenu::QueueMessage(msgBoxData);
+                            }
+                        });
+                    } else {
+                        SKSE::log::info("[Physical Diaries] Diary template books verified (all 4 resolved)");
+                    }
+                }
+
                 // Now that GMSTs are loaded, read localized month/day names
                 SkyrimNetDiaries::Localization::GetSingleton()->ReadGMSTs();
 
