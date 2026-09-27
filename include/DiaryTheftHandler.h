@@ -23,6 +23,10 @@ namespace DiaryTheftHandler {
     // Register the event handler for diary theft detection
     void Register();
 
+    // The NPC wrote about their missing diary (or a mod said so): clears every stolen
+    // volume and stamps the current game time.
+    void ClearStolenVolumes(const std::string& actorUuid);
+
     // Registers the snpd_diary_stolen decorator with SkyrimNet.  SkyrimNet clears
     // decorator registrations on every load, so call this on every kPostLoadGame.
     void RegisterStolenDecorator();

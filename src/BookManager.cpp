@@ -33,23 +33,23 @@ namespace SkyrimNetDiaries {
         return &singleton;
     }
 
-    void BookManager::Initialize(const std::string& baseTemplate, 
+    void BookManager::Initialize(const std::string& baseTemplate,
                                  const std::string& journal01,
                                  const std::string& journal02,
                                  const std::string& journal03,
                                  const std::string& journal04,
                                  const std::string& nightingaleJournal) {
         templateBookEditorId_ = baseTemplate;
-        
+
         // Store journal variants (include base template for more variety)
         journalTemplates_.push_back(baseTemplate);
         if (!journal01.empty()) journalTemplates_.push_back(journal01);
         if (!journal02.empty()) journalTemplates_.push_back(journal02);
         if (!journal03.empty()) journalTemplates_.push_back(journal03);
         if (!journal04.empty()) journalTemplates_.push_back(journal04);
-        
+
         nightingaleTemplate_ = nightingaleJournal;
-        
+
         // Log initialization
         if (!journalTemplates_.empty() && !nightingaleTemplate_.empty()) {
             SKSE::log::info("BookManager initialized with base template: {}, {} journal variants, Nightingale: {}",
@@ -65,7 +65,25 @@ namespace SkyrimNetDiaries {
         }
     }
 
-    std::string BookManager::SelectJournalTemplate(const std::string& actorUuid, const std::string& actorName) {
+    namespace {
+        // Karliah, Gallus and Mercer Frey (Skyrim.esm NPC_ records) get the Nightingale
+        // journal.  Matched by the actor's base form, never by name: names are
+        // localized, and SkyrimNet display names can differ from the engine's.
+        bool IsNightingale(RE::FormID actorFormId) {
+            static constexpr RE::FormID kNightingaleNPCs[] = {
+                0x0001B07F,  // Karliah
+                0x0001BB5D,  // Gallus
+                0x0001B07C,  // MercerFrey
+            };
+            auto* actor = RE::TESForm::LookupByID<RE::Actor>(actorFormId);
+            auto* base = actor ? actor->GetActorBase() : nullptr;
+            return base && std::find(std::begin(kNightingaleNPCs), std::end(kNightingaleNPCs),
+                                     base->GetFormID()) != std::end(kNightingaleNPCs);
+        }
+    }
+
+    std::string BookManager::SelectJournalTemplate(const std::string& actorUuid, const std::string& actorName,
+                                                   RE::FormID actorFormId) {
         // Check if we already selected a template for this actor
         // An empty name (a row created by UpdateLastKnownGameTime before any volume) is no choice.
         auto it = actorTemplates_.find(actorUuid);
@@ -73,12 +91,12 @@ namespace SkyrimNetDiaries {
             SKSE::log::debug("Using cached journal template for {}: {}", actorName, it->second);
             return it->second;
         }
-        
+
         std::string selectedTemplate;
-        
+
         // Check for Nightingale NPCs (special journal)
         if (!nightingaleTemplate_.empty()) {
-            if (actorName == "Karliah" || actorName == "Gallus" || actorName == "Mercer Frey") {
+            if (IsNightingale(actorFormId)) {
                 selectedTemplate = nightingaleTemplate_;
                 SKSE::log::debug("Selected Nightingale journal for {}", actorName);
                 actorTemplates_[actorUuid] = selectedTemplate;
@@ -86,7 +104,7 @@ namespace SkyrimNetDiaries {
                 return selectedTemplate;
             }
         }
-        
+
         // If no variants configured, use base template
         if (journalTemplates_.empty()) {
             selectedTemplate = templateBookEditorId_;
@@ -94,10 +112,10 @@ namespace SkyrimNetDiaries {
             actorTemplates_[actorUuid] = selectedTemplate;
             return selectedTemplate;
         }
-        
+
         // Pick a variant from the actor's UUID so the choice is stable across reloads.
         selectedTemplate = journalTemplates_[std::hash<std::string>{}(actorUuid) % journalTemplates_.size()];
-        
+
         SKSE::log::debug("Selected journal template for {}: {}", actorName, selectedTemplate);
         actorTemplates_[actorUuid] = selectedTemplate;
         DiaryDB::GetSingleton()->UpsertActorTemplate(actorUuid, selectedTemplate);
@@ -185,7 +203,7 @@ namespace SkyrimNetDiaries {
             for (auto& book : it->second) {
                 if (book.volumeNumber == volumeNumber) {
                     book.endTime = endTime;
-                    SKSE::log::debug("Updated book endTime for {} volume {} (FormID 0x{:X}) to {}", 
+                    SKSE::log::debug("Updated book endTime for {} volume {} (FormID 0x{:X}) to {}",
                                    actorUuid, volumeNumber, book.bookFormId, endTime);
                     DiaryDB::GetSingleton()->UpdateEndTime(actorUuid, volumeNumber, endTime);
                     return;
@@ -193,7 +211,7 @@ namespace SkyrimNetDiaries {
             }
         }
     }
-    
+
     void BookManager::SetVolumeText(DiaryBookData& vol, const std::vector<DiaryEntry>& entries) {
         const int maxEntries = Config::GetSingleton()->GetEntriesPerVolume();
         std::string text = FormatDiaryEntries(entries, vol.actorName, vol.startTime, vol.endTime, maxEntries);
@@ -488,15 +506,24 @@ namespace SkyrimNetDiaries {
             data.cachedBookText              = row.bookText;  // pre-warmed from DB
             data.persistedInSave             = row.persistedInSave;
             data.actorFormId                 = static_cast<RE::FormID>(row.actorFormId);
-            // Pre-warm cachedActorFormId so RefreshVolumeOnOpen never needs UUID roundtrip.
-            if (row.actorFormId != 0) {
-                data.cachedActorFormId = static_cast<RE::FormID>(row.actorFormId);
-            }
 
             // Claim this loaded diary's FormID so a later creation can't be handed
             // the same ID (guards against a duplicate deleted record in DPF's pool
             // that happens to match an already-live loaded diary).
             ClaimBookFormId(static_cast<RE::FormID>(row.bookFormId), data.actorUuid);
+
+            // DPF may have restored this form with another owner's data: a FormID it
+            // handed out in an earlier session keeps that session's name in a save
+            // made then.  DiaryDB is authoritative, so re-apply the volume's look.
+            {
+                const std::string bookName = Localization::GetSingleton()->FormatBookName(data.actorName, data.volumeNumber);
+                auto* templateBook = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>(data.journalTemplate);
+                const std::string previous = form->GetName();
+                if (ConfigureDiaryForm(form->As<RE::TESObjectBOOK>(), templateBook, bookName)) {
+                    SKSE::log::info("[LoadFromDB] Book 0x{:X} was named '{}' — renamed to '{}'",
+                                    row.bookFormId, previous, bookName);
+                }
+            }
 
             books_[data.actorUuid].push_back(std::move(data));
         }
@@ -524,14 +551,17 @@ namespace SkyrimNetDiaries {
             vol->bioTemplateName = Database::GetTemplateNameByUUID(vol->actorUuid);
         }
 
-        // Lazy FormID lookup — prefer the authoritative stored actorFormId; fall back
-        // to UUID roundtrip only for volumes that pre-date this field (actorFormId == 0).
+        // Resolve the actor's FormID once per session from the UUID.  The stored
+        // actorFormId is only a fallback, and only if SkyrimNet maps it back to this
+        // UUID: after a load-order change it can belong to someone else, whose entries
+        // the book would then show.
         if (vol->cachedActorFormId == 0) {
-            if (vol->actorFormId != 0) {
-                vol->cachedActorFormId = vol->actorFormId;
-            } else {
-                vol->cachedActorFormId = Database::GetFormIDForUUID(vol->actorUuid);
+            RE::FormID live = Database::GetFormIDForUUID(vol->actorUuid);
+            if (live == 0 && vol->actorFormId != 0 &&
+                Database::GetUUIDFromFormID(vol->actorFormId) == vol->actorUuid) {
+                live = vol->actorFormId;
             }
+            vol->cachedActorFormId = live;
         }
         if (vol->cachedActorFormId == 0) return;
 

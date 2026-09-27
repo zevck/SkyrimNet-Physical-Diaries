@@ -33,6 +33,13 @@ namespace SkyrimNetDiaries {
     // Claims are per-session; cleared from BookManager::ClearActorCache on each load.
     void ClearBookFormIdClaims();
 
+    // Gives a diary form SNPD's look: book type, model and item card from its
+    // template, weight, value, no flags, and its name.  Returns true if the name had
+    // to change.  Used at creation and on every load, because DPF can restore a form
+    // with data (a name) from an earlier owner of the same FormID.
+    bool ConfigureDiaryForm(RE::TESObjectBOOK* book, const RE::TESObjectBOOK* templateBook,
+                            const std::string& name);
+
     // True while any of the actor's volumes are queued or being created, i.e. not
     // yet in books_.  Anything that decides "which volumes does this actor have"
     // must wait for these, or it creates the same volumes twice.

@@ -56,7 +56,7 @@ namespace SkyrimNetDiaries {
         struct VolumeRow {
             std::string  actorUuid;
             std::string  actorName;
-            std::uint32_t actorFormId                  = 0;  // Actor's game FormID — more stable than UUID roundtrip
+            std::uint32_t actorFormId                  = 0;  // Actor's FormID at creation; a hint, checked against the UUID before use
             std::uint32_t bookFormId                   = 0;
             int           volumeNumber                 = 1;
             double        startTime                    = 0.0;

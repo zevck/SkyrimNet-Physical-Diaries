@@ -29,6 +29,7 @@ The folder is located from **the DLL's own path** (`GetModuleHandleExA` on a fun
 | `[Format] DiaryTitle` | Book title | `{Name}` |
 | `[Format] VolumeSuffix` | Appended from volume 2 on (default `, v{n}`) | `{n}` number, `{cn}` Chinese numeral |
 | `[Format] EmptyVolumeText` | Page shown when all of a volume's entries were deleted | |
+| `[Messages] DpfMissing`, `TemplatesMissing` | The startup warnings shown when Dynamic Persistent Forms or the template books are missing. One line each; `\n` is a line break. The button uses the game's own `sOk` string. | |
 | `[Months]`, `[Days]` | Optional name overrides, keyed by the English name | |
 
 Anything missing falls back to English.
@@ -44,6 +45,6 @@ Precedence: locale `[Months]`/`[Days]` → the game's GMSTs → English. `ReadGM
 ## Rules
 
 - Don't hard-code user-visible, language-specific strings outside `Localization.cpp` and the locale files.
-- **Code that compares book names breaks in other languages.** `DiaryTheftHandler` currently filters on the English word "Diary" and so does nothing for 8 of the 9 shipped languages. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md). Identify books by FormID (`BookManager::GetBookForFormID`), never by name.
+- **Never compare names.** Book titles and NPC names are localized (theft detection used to filter on the English word "Diary" and did nothing in 8 of 9 languages). Identify books by FormID (`BookManager::GetBookForFormID`) and NPCs by UUID or base form.
 - Cyrillic text is converted to Windows-1251 at injection time. See [BOOK_TEXT.md](BOOK_TEXT.md#utf-8--windows-1251).
 - The MCM font dropdown: `$StartGameFont` renders as boxes, and in vanilla `$HandwrittenBold` is the same as `$HandwrittenFont`. SkyUI's `OnOptionMenuOpen` must fill the list without checking the option ID, or the menu opens empty.

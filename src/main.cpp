@@ -39,6 +39,24 @@
 
 namespace {
 
+    // Queues a one-button message box with the game's own (localized) OK label.
+    void ShowWarning(std::string text) {
+        SKSE::GetTaskInterface()->AddTask([text = std::move(text)]() {
+            auto* msgBoxData = RE::UIMessageDataFactory::Create<RE::MessageBoxData>();
+            if (!msgBoxData) return;
+            const char* ok = "OK";
+            if (auto* settings = RE::GameSettingCollection::GetSingleton()) {
+                if (auto* setting = settings->GetSetting("sOk"); setting && setting->GetString() && *setting->GetString()) {
+                    ok = setting->GetString();
+                }
+            }
+            msgBoxData->bodyText = text.c_str();
+            msgBoxData->buttonText.push_back(ok);
+            msgBoxData->cancelButtonIndex = 0;
+            RE::MessageBoxMenu::QueueMessage(msgBoxData);
+        });
+    }
+
     // Bumped on every kPreLoadGame so a post-load setup still waiting from an
     // earlier load gives up instead of running against the new one.
     std::atomic<std::uint32_t> g_loadGeneration{ 0 };
@@ -65,16 +83,7 @@ namespace {
                     bool dpfInstalled = dataHandler && dataHandler->LookupModByName("Dynamic Persistent Forms.esp");
                     if (!dpfInstalled) {
                         SKSE::log::error("kDataLoaded: 'Dynamic Persistent Forms.esp' is not installed — diary books cannot be created");
-                        SKSE::GetTaskInterface()->AddTask([]() {
-                            auto* msgBoxData = RE::UIMessageDataFactory::Create<RE::MessageBoxData>();
-                            if (msgBoxData) {
-                                msgBoxData->bodyText = "SkyrimNet Physical Diaries requires 'Dynamic Persistent Forms' to be installed.\n\nDiary books cannot be created without it. Please install Dynamic Persistent Forms and restart the game.";
-                                msgBoxData->buttonText.push_back("OK");
-                                msgBoxData->cancelButtonIndex = 0;
-                                RE::MessageBoxMenu::QueueMessage(msgBoxData);
-                                SKSE::log::info("kDataLoaded: DPF missing warning queued");
-                            }
-                        });
+                        ShowWarning(SkyrimNetDiaries::Localization::GetSingleton()->GetDpfMissingText());
                     }
                 }
                 
@@ -101,15 +110,7 @@ namespace {
                         SKSE::log::error("      missing or is the wrong runtime build (SE vs AE vs VR)");
                         SKSE::log::error("   3. The ESP was modified by a tool that stripped the template records");
                         SKSE::log::error("================================================================");
-                        SKSE::GetTaskInterface()->AddTask([]() {
-                            auto* msgBoxData = RE::UIMessageDataFactory::Create<RE::MessageBoxData>();
-                            if (msgBoxData) {
-                                msgBoxData->bodyText = "SkyrimNet Physical Diaries: diary template books were not found.\n\nDiaries cannot be created. Check that:\n - 'SkyrimNet Physical Diaries.esp' is enabled\n - Native EditorID Fix (or po3_Tweaks) is installed for your game version\n\nSee SkyrimNetPhysicalDiaries.log for details.";
-                                msgBoxData->buttonText.push_back("OK");
-                                msgBoxData->cancelButtonIndex = 0;
-                                RE::MessageBoxMenu::QueueMessage(msgBoxData);
-                            }
-                        });
+                        ShowWarning(SkyrimNetDiaries::Localization::GetSingleton()->GetTemplatesMissingText());
                     } else {
                         SKSE::log::info("[Physical Diaries] Diary template books verified (all 4 resolved)");
                     }

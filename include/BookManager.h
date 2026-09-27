@@ -43,11 +43,13 @@ namespace SkyrimNetDiaries {
         double prevVolumeLastCreationTime = 0.0;
         int prevVolumeCountAtBoundary = 0;   // how many prev-vol entries share the boundary date/CT
 
-        // Actor FormID stored at creation time — authoritative, never derived from UUID roundtrip.
+        // Actor FormID stored at creation time.  Only a hint: a load-order change can
+        // make it point at someone else, so it is used only after SkyrimNet maps it
+        // back to actorUuid.
         RE::FormID actorFormId = 0;
 
-        // Runtime-only cache — never serialized, populated on first open per session.
-        // Lets all subsequent opens skip SQLite + file I/O entirely.
+        // Runtime-only: the actor's FormID resolved from actorUuid this session (0 =
+        // not resolved yet).  Never loaded from DiaryDB.
         RE::FormID cachedActorFormId = 0;
         std::string cachedBookText;
 
@@ -63,7 +65,7 @@ namespace SkyrimNetDiaries {
 
         // Initialize with template book Editor IDs from ESP
         // baseTemplate is the default, others are for variety (pass empty strings to disable variety)
-        void Initialize(const std::string& baseTemplate, 
+        void Initialize(const std::string& baseTemplate,
                        const std::string& journal01 = "",
                        const std::string& journal02 = "",
                        const std::string& journal03 = "",
@@ -102,7 +104,7 @@ namespace SkyrimNetDiaries {
 
         // Update a book's endTime (when diary is stolen/removed)
         void UpdateBookEndTime(const std::string& actorUuid, int volumeNumber, double endTime);
-        
+
         // Renders `entries` into the volume (bounded by its startTime/endTime), writes the
         // text and entry count to DiaryDB, and updates cachedBookText / lastKnownEntryCount.
         void SetVolumeText(DiaryBookData& vol, const std::vector<DiaryEntry>& entries);
@@ -159,7 +161,8 @@ namespace SkyrimNetDiaries {
         BookManager& operator=(const BookManager&) = delete;
 
         // Select appropriate journal template for an actor
-        std::string SelectJournalTemplate(const std::string& actorUuid, const std::string& actorName);
+        std::string SelectJournalTemplate(const std::string& actorUuid, const std::string& actorName,
+                                          RE::FormID actorFormId);
 
         std::string templateBookEditorId_;  // Default/base template
         std::vector<std::string> journalTemplates_;  // Additional template variants

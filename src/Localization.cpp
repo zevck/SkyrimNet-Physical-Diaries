@@ -214,6 +214,19 @@ namespace SkyrimNetDiaries {
                 else if (key == "DiaryTitle") diaryTitleFmt_ = value;
                 else if (key == "VolumeSuffix") volumeSuffixFmt_ = value;
                 else if (key == "EmptyVolumeText") emptyVolumeText_ = value;
+            } else if (currentSection == "messages") {
+                // One line per message; "\n" in the file is a line break.
+                std::string text;
+                for (std::size_t i = 0; i < value.size(); ++i) {
+                    if (value[i] == '\\' && i + 1 < value.size() && value[i + 1] == 'n') {
+                        text += '\n';
+                        ++i;
+                    } else {
+                        text += value[i];
+                    }
+                }
+                if (key == "DpfMissing") dpfMissingText_ = text;
+                else if (key == "TemplatesMissing") templatesMissingText_ = text;
             } else if (currentSection == "months") {
                 for (auto& [mk, idx] : monthKeys) {
                     if (key == mk) {
@@ -327,6 +340,15 @@ namespace SkyrimNetDiaries {
         diaryTitleFmt_ = "{Name}'s Diary";
         volumeSuffixFmt_ = ", v{n}";
         emptyVolumeText_ = "All entries from this time period have been removed.";
+        dpfMissingText_ =
+            "SkyrimNet Physical Diaries requires Dynamic Persistent Forms.\n\n"
+            "Diary books can't be created without it. Install Dynamic Persistent Forms and restart the game.";
+        templatesMissingText_ =
+            "SkyrimNet Physical Diaries: the diary template books were not found.\n\n"
+            "Diaries can't be created. Check that:\n"
+            " - SkyrimNet Physical Diaries.esp is enabled\n"
+            " - powerofthree's Tweaks or Native EditorID Fix is installed for your game version\n\n"
+            "See SkyrimNetPhysicalDiaries.log for details.";
 
         // Load locale file (may override formats, months, days)
         LoadLocaleFile(languageString_);

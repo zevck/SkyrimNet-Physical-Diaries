@@ -152,23 +152,12 @@ namespace SkyrimNetDiaries {
                 return;
             }
 
-            // From the template: book type (must be a tome, 0x00; a note scroll, 0xFF,
-            // ignores [pagebreak]), model and item card.  Flags are not copied.  Never
-            // touch data.teaches: clearing it crashed DPF's serializer on save.
-            const auto* templateBook = req.templateBook;
-            newBook->data.type = templateBook->data.type;
-            newBook->inventoryModel = templateBook->inventoryModel;
-            newBook->itemCardDescription = templateBook->itemCardDescription;
-            newBook->weight = 0.5f;
-            newBook->value = 0;
+            const std::string bookName = Localization::GetSingleton()->FormatBookName(req.actorName, req.volumeNumber);
+            ConfigureDiaryForm(newBook, req.templateBook, bookName);
             ClearBogusSourceFiles(newBook);
-            newBook->data.flags = static_cast<RE::OBJ_BOOK::Flag>(0);
             newBook->data.flags.set(RE::OBJ_BOOK::Flag::kCantTake);
             SKSE::log::debug("[DPF] Template '{}' data.type=0x{:02X} (0x00=BookTome, 0xFF=NoteScroll)",
                              req.journalTemplate, static_cast<unsigned>(newBook->data.type.underlying()));
-
-            const std::string bookName = Localization::GetSingleton()->FormatBookName(req.actorName, req.volumeNumber);
-            newBook->SetFullName(bookName.c_str());
 
             auto* bookManager = BookManager::GetSingleton();
             bookManager->RegisterBook(req.actorUuid, req.actorName, bookId, req.startTime,
@@ -329,6 +318,26 @@ namespace SkyrimNetDiaries {
         g_claimedFormIds.clear();
     }
 
+    bool ConfigureDiaryForm(RE::TESObjectBOOK* book, const RE::TESObjectBOOK* templateBook,
+                            const std::string& name) {
+        // From the template: book type (must be a tome, 0x00; a note scroll, 0xFF,
+        // ignores [pagebreak]), model and item card.  Flags are not copied.  Never
+        // touch data.teaches: clearing it crashed DPF's serializer on save.
+        if (templateBook) {
+            book->data.type = templateBook->data.type;
+            book->inventoryModel = templateBook->inventoryModel;
+            book->itemCardDescription = templateBook->itemCardDescription;
+        }
+        book->weight = 0.5f;
+        book->value = 0;
+        book->data.flags = static_cast<RE::OBJ_BOOK::Flag>(0);
+
+        const char* current = book->GetFullName();
+        const bool renamed = !current || name != current;
+        if (renamed) book->SetFullName(name.c_str());
+        return renamed;
+    }
+
     bool HasPendingCreations(const std::string& actorUuid) {
         std::lock_guard<std::mutex> lock(g_createQueueMutex);
         return g_pendingByUuid.contains(actorUuid);
@@ -358,7 +367,7 @@ namespace SkyrimNetDiaries {
                                       double prevVolumeLastCreationTime, int prevVolumeCountAtBoundary) {
         if (entries.empty()) return;
 
-        const std::string templateToUse = SelectJournalTemplate(actorUuid, actorName);
+        const std::string templateToUse = SelectJournalTemplate(actorUuid, actorName, targetActorFormID);
 
         // Look the template up by EditorID.  This works with powerofthree's Tweaks or
         // Native EditorID Fix.  Don't scan books comparing GetFormEditorID(): that

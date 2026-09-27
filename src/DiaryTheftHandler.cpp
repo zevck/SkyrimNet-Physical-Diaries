@@ -25,464 +25,202 @@
 #include <mutex>
 
 namespace DiaryTheftHandler {
-    
-    // Track dialogue/container state for legitimate trade detection.
-    // We only need to know whether dialogue was open when a container opened —
-    // not which specific NPC, so we avoid MenuTopicManager::speaker.get()
-    // which uses a REL::ID lookup that is unavailable without the VR Address Library.
+
     namespace {
-        bool g_dialogueIsOpen = false;      // Is "Dialogue Menu" currently open?
-        bool g_consoleIsOpen = false;        // Is the console currently open?
-        bool g_legitimateTradeActive = false; // Container opened during dialogue (no console)
-        std::mutex g_dialogueMutex;
-    }
-    
-    // Menu event handler to track dialogue (open/close only — no speaker lookup)
-    class MenuEventHandler : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
-    public:
-        static MenuEventHandler* GetSingleton() {
-            static MenuEventHandler singleton;
-            return &singleton;
+
+        // Menu state for telling a willing handover from theft: a container opened
+        // while dialogue is open (and the console isn't) is the dialogue trade menu,
+        // e.g. a follower's inventory.  Only open/close is tracked, never the speaker
+        // (MenuTopicManager::speaker needs an id the VR Address Library lacks).
+        bool g_dialogueIsOpen = false;
+        bool g_consoleIsOpen = false;
+        bool g_legitimateTradeActive = false;
+        std::mutex g_menuMutex;
+
+        double GameTimeSeconds() {
+            auto* calendar = RE::Calendar::GetSingleton();
+            return calendar ? calendar->GetCurrentGameTime() * 86400.0 : 0.0;
         }
 
-        RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event,
-                                               RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
-            if (!a_event || a_event->menuName != "Dialogue Menu") {
+        // SkyrimNet UUID of a live actor, or "" when SkyrimNet doesn't know it.
+        std::string UuidOf(const RE::Actor* actor) {
+            std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(actor->GetFormID());
+            return uuid == "0" ? std::string{} : uuid;
+        }
+
+        // True if the player's copy of `book` carries ownership data, i.e. the engine
+        // flagged it as stolen (pickpocketed or taken).  An unflagged copy came from a
+        // trade, the console or similar.
+        bool PlayerCopyIsStolen(RE::PlayerCharacter* player, RE::TESBoundObject* book) {
+            auto inv = player->GetInventory([book](RE::TESBoundObject& a_obj) { return &a_obj == book; });
+            auto it = inv.find(book);
+            if (it == inv.end() || it->second.first <= 0 || !it->second.second || !it->second.second->extraLists) {
+                return false;
+            }
+            for (auto* xList : *it->second.second->extraLists) {
+                if (xList && xList->HasType(RE::ExtraDataType::kOwnership)) return true;
+            }
+            return false;
+        }
+
+        // Tracks dialogue, console and container menus in one sink.
+        class MenuSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
+        public:
+            static MenuSink* GetSingleton() {
+                static MenuSink singleton;
+                return &singleton;
+            }
+
+            RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event,
+                                                  RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
+                if (!a_event) return RE::BSEventNotifyControl::kContinue;
+                std::lock_guard<std::mutex> lock(g_menuMutex);
+                if (a_event->menuName == "Dialogue Menu") {
+                    g_dialogueIsOpen = a_event->opening;
+                } else if (a_event->menuName == "Console") {
+                    g_consoleIsOpen = a_event->opening;
+                } else if (a_event->menuName == "ContainerMenu") {
+                    g_legitimateTradeActive = a_event->opening && g_dialogueIsOpen && !g_consoleIsOpen;
+                }
                 return RE::BSEventNotifyControl::kContinue;
             }
 
-            std::lock_guard<std::mutex> lock(g_dialogueMutex);
-            g_dialogueIsOpen = a_event->opening;
+        private:
+            MenuSink() = default;
+        };
 
-            return RE::BSEventNotifyControl::kContinue;
+        void RecordTheft(const std::string& actorUuid, const std::string& actorName,
+                         const std::string& bookName, int volumeNumber) {
+            const double gameTime = GameTimeSeconds();
+            auto* diaryDB = SkyrimNetDiaries::DiaryDB::GetSingleton();
+            diaryDB->AddStolenVolume(actorUuid, volumeNumber, gameTime);
+            // Stamp the time so a later load of an earlier save sees the travel back.
+            diaryDB->UpdateLastKnownGameTime(actorUuid, gameTime);
+            SKSE::log::info("[Physical Diaries] Player stole '{}' (vol {}) from {}", bookName, volumeNumber, actorName);
         }
 
-    private:
-        MenuEventHandler() = default;
-        MenuEventHandler(const MenuEventHandler&) = delete;
-        MenuEventHandler(MenuEventHandler&&) = delete;
-        MenuEventHandler& operator=(const MenuEventHandler&) = delete;
-        MenuEventHandler& operator=(MenuEventHandler&&) = delete;
-    };
-    
-    // Console menu event handler to detect console usage
-    class ConsoleMenuHandler : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
-    public:
-        static ConsoleMenuHandler* GetSingleton() {
-            static ConsoleMenuHandler singleton;
-            return &singleton;
-        }
-
-        RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event,
-                                               RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
-            if (!a_event || a_event->menuName != "Console") {
-                return RE::BSEventNotifyControl::kContinue;
-            }
-
-            std::lock_guard<std::mutex> lock(g_dialogueMutex);
-            g_consoleIsOpen = a_event->opening;
-
-            return RE::BSEventNotifyControl::kContinue;
-        }
-
-    private:
-        ConsoleMenuHandler() = default;
-        ConsoleMenuHandler(const ConsoleMenuHandler&) = delete;
-        ConsoleMenuHandler(ConsoleMenuHandler&&) = delete;
-        ConsoleMenuHandler& operator=(const ConsoleMenuHandler&) = delete;
-        ConsoleMenuHandler& operator=(ConsoleMenuHandler&&) = delete;
-    };
-    
-    // Container menu event handler to clear dialogue tracking
-    class ContainerMenuHandler : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
-    public:
-        static ContainerMenuHandler* GetSingleton() {
-            static ContainerMenuHandler singleton;
-            return &singleton;
-        }
-
-        RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event,
-                                               RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
-            if (!a_event || a_event->menuName != "ContainerMenu") {
-                return RE::BSEventNotifyControl::kContinue;
-            }
-
-            std::lock_guard<std::mutex> lock(g_dialogueMutex);
-            if (a_event->opening) {
-                // Legitimate trade = container opened while dialogue is active and console is not
-                g_legitimateTradeActive = !g_consoleIsOpen && g_dialogueIsOpen;
-            } else {
-                g_legitimateTradeActive = false;
-            }
-
-            return RE::BSEventNotifyControl::kContinue;
-        }
-
-    private:
-        ContainerMenuHandler() = default;
-        ContainerMenuHandler(const ContainerMenuHandler&) = delete;
-        ContainerMenuHandler(ContainerMenuHandler&&) = delete;
-        ContainerMenuHandler& operator=(const ContainerMenuHandler&) = delete;
-        ContainerMenuHandler& operator=(ContainerMenuHandler&&) = delete;
-    };
-    
-    class ContainerChangeHandler : public RE::BSTEventSink<RE::TESContainerChangedEvent> {
-    public:
-        static ContainerChangeHandler* GetSingleton() {
-            static ContainerChangeHandler singleton;
-            return &singleton;
-        }
-
-        RE::BSEventNotifyControl ProcessEvent(const RE::TESContainerChangedEvent* a_event,
-                                               RE::BSTEventSource<RE::TESContainerChangedEvent>*) override {
-            try {
-                if (!a_event) {
-                    return RE::BSEventNotifyControl::kContinue;
-                }
-
-                auto* player = RE::PlayerCharacter::GetSingleton();
-                if (!player) {
-                    return RE::BSEventNotifyControl::kContinue;
-                }
-
-                // Get the item being transferred
-                auto* baseItem = RE::TESForm::LookupByID<RE::TESBoundObject>(a_event->baseObj);
-                if (!baseItem || baseItem->GetFormType() != RE::FormType::Book) {
-                    return RE::BSEventNotifyControl::kContinue;
-                }
-
-                auto* book = baseItem->As<RE::TESObjectBOOK>();
-                if (!book) {
-                    return RE::BSEventNotifyControl::kContinue;
-                }
-
-                // Check if it's a diary (name contains "Diary" or "diary")
-                std::string bookName = book->GetFullName();
-                if (bookName.find("Diary") == std::string::npos && bookName.find("diary") == std::string::npos) {
-                    return RE::BSEventNotifyControl::kContinue;
-                }
-
-                // Case 1: Player RECEIVED a diary from an NPC (potential theft)
-                if (a_event->newContainer == player->GetFormID()) {
-                    HandleDiaryAcquired(a_event, bookName);
-                }
-                // Case 2: Player GAVE a diary to an NPC (potential return)
-                else if (a_event->oldContainer == player->GetFormID()) {
-                    HandleDiaryReturned(a_event, bookName);
-                }
-
-                return RE::BSEventNotifyControl::kContinue;
-            } catch (const std::exception& e) {
-                SKSE::log::error("[DiaryTheftHandler] container change exception: {}", e.what());
-            } catch (...) {
-                SKSE::log::error("[DiaryTheftHandler] container change: unknown exception");
-            }
-            return RE::BSEventNotifyControl::kContinue;
-        }
-
-    private:
-        void HandleDiaryAcquired(const RE::TESContainerChangedEvent* a_event, const std::string& bookName) {
-            auto* player = RE::PlayerCharacter::GetSingleton();
-
-            // Look up our tracking data first — this is the authoritative ownership check.
-            // actorFormId was stored at DPF book-creation time and is more reliable than
-            // a substring name search (handles titled NPCs, apostrophes, etc.).
-            auto* bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
-            auto* bookData = bookManager->GetBookForFormID(a_event->baseObj);
-            if (!bookData) {
-                return; // Not one of our tracked diary volumes
-            }
-
-            // Get source actor (who had the diary)
-            auto* sourceRef = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_event->oldContainer);
-            if (!sourceRef) {
-                return; // Not from a reference (crafting, etc.)
-            }
-
-            auto* sourceActor = sourceRef->As<RE::Actor>();
-            if (!sourceActor || sourceActor == player) {
-                return; // Not from an NPC or from player themselves
-            }
-
-            // Ignore dead actors (corpse looting doesn't count as theft for our purposes)
-            if (sourceActor->IsDead()) {
-                return;
-            }
-
-            // Confirm this diary belongs to the source actor via UUID comparison.
-            // UUIDs are stable across load-order changes (unlike stored FormIDs which break
-            // for ESL-flagged plugins). We resolve the source actor's UUID from its live
-            // FormID (safe — we hold an in-memory actor pointer, so the runtime FormID is
-            // always correct). Falls back to name-in-title for volumes whose actorUuid was
-            // not yet assigned by SkyrimNet at creation time.
-            std::string sourceUuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(sourceActor->GetFormID());
-            if (!sourceUuid.empty() && sourceUuid != "0" &&
-                !bookData->actorUuid.empty() && bookData->actorUuid != "0") {
-                if (sourceUuid != bookData->actorUuid) {
-                    SKSE::log::info("[Physical Diaries] Diary '{}' belongs to UUID '{}', not {} ('{}') — ignoring",
-                                   bookName, bookData->actorUuid,
-                                   sourceActor->GetName(), sourceUuid);
-                    return;
-                }
-            } else {
-                // Legacy fallback: UUID not yet available, use name-in-title check
-                std::string sourceName = sourceActor->GetName();
-                if (bookName.find(sourceName) == std::string::npos) {
-                    return;
-                }
-            }
-
-            // Check if the book was flagged as stolen (has ownership data)
-            // This is the reliable way to detect actual theft vs console commands/legitimate trades
-            auto* baseItem = RE::TESForm::LookupByID<RE::TESBoundObject>(a_event->baseObj);
-            if (!baseItem) {
-                return;
-            }
-
-            bool wasStolen = false;
-            auto inv = player->GetInventory();
-            for (const auto& [item, invData] : inv) {
-                if (item->GetFormID() == baseItem->GetFormID() && invData.first > 0) {
-                    // Found the item in player's inventory - check if any instances are stolen
-                    if (invData.second && invData.second->extraLists) {
-                        for (auto& xList : *invData.second->extraLists) {
-                            if (xList && xList->HasType(RE::ExtraDataType::kOwnership)) {
-                                // Item has ownership data (stolen flag)
-                                wasStolen = true;
-                                break;
-                            }
-                        }
-                    }
-                    break;
-                }
-            }
-
-            if (!wasStolen) {
-                bool isLegitimateTransfer = false;
-                {
-                    std::lock_guard<std::mutex> lock(g_dialogueMutex);
-                    isLegitimateTransfer = g_legitimateTradeActive;
-                }
-                
-                if (isLegitimateTransfer) {
-                    // Dispatch mod event for SkyrimNet trigger
-                    HandleLegitimateTransfer(sourceActor, bookName);
-                } else {
-                    // Not flagged as stolen and not a legitimate trade
-                    // This is either a console command or edge case - just ignore
-                }
-                
-                return;
-            }
-
-            // Item is flagged as stolen - this was actual theft (pickpocketing or stealing)
-            SKSE::log::info("[Physical Diaries] Player stole {} from {} (item flagged as stolen)", 
-                           bookName, sourceActor->GetName());
-
-            // Apply the stolen diary effect for ANY volume that belongs to this NPC
-            // Even old volumes matter - they are still personal diaries
-            if (bookData) {
-                SKSE::log::debug("[Physical Diaries] Applying theft tracking for {} volume {} - any diary theft matters", 
-                               sourceActor->GetName(), bookData->volumeNumber);
-                // Derive UUID fresh from the actor's FormID so it always matches what
-                // IsDiaryStolen uses (GetUUIDFromFormID on the same FormID).  Using
-                // bookData->actorUuid caused mismatches when SkyrimNet hadn't yet
-                // assigned a stable UUID at book-creation time.
-                std::string liveUuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(sourceActor->GetFormID());
-                if (liveUuid.empty() || liveUuid == "0") {
-                    SKSE::log::warn("[Physical Diaries] Could not resolve UUID for {} (FormID 0x{:X}) — falling back to stored UUID",
-                                   sourceActor->GetName(), sourceActor->GetFormID());
-                    liveUuid = bookData->actorUuid;
-                }
-                SKSE::log::debug("[Physical Diaries] Using live UUID {} for theft tracking (stored: {})",
-                               liveUuid, bookData->actorUuid);
-                ApplyStolenDiaryEffect(sourceActor, bookName, liveUuid, bookData->volumeNumber);
-            } else {
-                SKSE::log::warn("[Physical Diaries] Could not find book data for stolen diary FormID 0x{:X}", 
-                               a_event->baseObj);
-            }
-        }
-
-        void HandleDiaryReturned(const RE::TESContainerChangedEvent* a_event, const std::string& bookName) {
-            auto* player = RE::PlayerCharacter::GetSingleton();
-            
-            // Get destination actor (who received the diary back)
-            auto* destRef = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_event->newContainer);
-            if (!destRef) {
-                return; // Not to a reference (dropped, etc.)
-            }
-
-            auto* destActor = destRef->As<RE::Actor>();
-            if (!destActor || destActor == player) {
-                return; // Not to an NPC or to player themselves
-            }
-
-            // Ignore dead actors
-            if (destActor->IsDead()) {
-                return;
-            }
-
-            // Use BookManager as the authoritative source for volume tracking.
-            // More reliable than scanning the NPC's current inventory, which may not
-            // include newer volumes that are stored in containers elsewhere.
-            auto* bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
-            auto* bookData = bookManager->GetBookForFormID(a_event->baseObj);
-            if (!bookData) {
-                // Not one of our tracked diary volumes - nothing to do
-                return;
-            }
-
-            // Confirm the diary actually belongs to the NPC receiving it.
-            // Giving someone else's diary to an NPC must not clear that NPC's stolen marker.
-            // Use live UUID from the actor's FormID (same as what IsDiaryStolen and the
-            // theft-recording path use) rather than bookData->actorUuid which may have
-            // been stored before SkyrimNet assigned a stable UUID.
-            std::string destUuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(destActor->GetFormID());
-            if (destUuid.empty() || destUuid == "0") {
-                SKSE::log::warn("[Physical Diaries] Could not resolve live UUID for {} — using stored UUID for return check",
-                               destActor->GetName());
-                destUuid = bookData->actorUuid;
-            }
-            // The book's owner UUID may also be the stale version; resolve it live too.
-            std::string bookOwnerUuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(
-                SkyrimNetDiaries::Database::GetFormIDForUUID(bookData->actorUuid));
-            if (bookOwnerUuid.empty() || bookOwnerUuid == "0") {
-                bookOwnerUuid = bookData->actorUuid;
-            }
-            if (bookOwnerUuid != destUuid) {
-                SKSE::log::info("[Physical Diaries] '{}' belongs to UUID '{}', not '{}' ({}) - ignoring for theft purposes",
-                               bookName, bookOwnerUuid, destActor->GetName(), destUuid);
-                return;
-            }
-
-            int returnedVolume = bookData->volumeNumber;
-            int maxVolume = returnedVolume;
-
-            auto* allVolumes = bookManager->GetAllVolumesForActor(bookData->actorUuid);
-            if (allVolumes) {
-                for (const auto& vol : *allVolumes) {
-                    if (vol.volumeNumber > maxVolume) maxVolume = vol.volumeNumber;
-                }
-            }
-
-            if (returnedVolume < maxVolume) {
-                SKSE::log::info("[Physical Diaries] '{}' returned (v{}) but NPC has written up to v{} - removing from stolen list but may still show stolen if other volumes missing",
-                               bookName, returnedVolume, maxVolume);
-                RemoveStolenDiaryEffect(destActor, bookName, destUuid, returnedVolume);
-            } else {
-                SKSE::log::info("[Physical Diaries] '{}' returned (v{}, NPC's latest) - removing from stolen list",
-                               bookName, returnedVolume);
-                RemoveStolenDiaryEffect(destActor, bookName, destUuid, returnedVolume);
-            }
-        }
-
-        void ApplyStolenDiaryEffect(RE::Actor* actor, const std::string& bookName, const std::string& actorUuid, int volumeNumber) {
-            if (!actor) {
-                SKSE::log::warn("[Physical Diaries] ApplyStolenDiaryEffect called with null actor");
-                return;
-            }
-            
-            // Record this specific volume as stolen in DB
-            auto calendar = RE::Calendar::GetSingleton();
-            if (calendar) {
-                double gameTime = calendar->GetCurrentGameTime() * 86400.0;
-                auto* diaryDB = SkyrimNetDiaries::DiaryDB::GetSingleton();
-                
-                diaryDB->AddStolenVolume(actorUuid, volumeNumber, gameTime);
-                // Update last_known_game_time so backwards time travel detection works
-                // even if the player doesn't save after stealing
-                diaryDB->UpdateLastKnownGameTime(actorUuid, gameTime);
-                
-                SKSE::log::debug("[Physical Diaries] Recorded volume {} theft for {} at game time {:.2f} (UUID: {}, book: {})", 
-                               volumeNumber, actor->GetName(), gameTime, actorUuid, bookName);
-            } else {
-                SKSE::log::error("[Physical Diaries] Failed to get Calendar singleton for theft tracking");
-            }
-        }
-
-        void RemoveStolenDiaryEffect(RE::Actor* actor, const std::string& bookName, const std::string& actorUuid, int volumeNumber) {
-            if (!actor) {
-                SKSE::log::warn("[Physical Diaries] RemoveStolenDiaryEffect called with null actor");
-                return;
-            }
-            
-            // Remove this specific volume from stolen list
+        void RecordReturn(const std::string& actorUuid, const std::string& actorName,
+                          const std::string& bookName, int volumeNumber) {
             auto* diaryDB = SkyrimNetDiaries::DiaryDB::GetSingleton();
             diaryDB->RemoveStolenVolume(actorUuid, volumeNumber);
-            
-            // Update last_known_game_time for backwards time travel detection
-            auto calendar = RE::Calendar::GetSingleton();
-            if (calendar) {
-                double gameTime = calendar->GetCurrentGameTime() * 86400.0;
-                diaryDB->UpdateLastKnownGameTime(actorUuid, gameTime);
-            }
-            
-            SKSE::log::debug("[Physical Diaries] Removed volume {} from stolen list for {} (returned: {})",
-                           volumeNumber, actor->GetName(), bookName);
+            diaryDB->UpdateLastKnownGameTime(actorUuid, GameTimeSeconds());
+            SKSE::log::info("[Physical Diaries] '{}' (vol {}) returned to {} - removed from stolen list",
+                            bookName, volumeNumber, actorName);
         }
 
-        void HandleLegitimateTransfer(RE::Actor* actor, const std::string& bookName) {
-            // Send mod event for SkyrimNet to detect and generate NPC dialogue
-            // Event: "PhysicalDiary_Shared" with actor FormID as numeric argument
-            
+        void SendSharedEvent(RE::Actor* actor, const std::string& bookName) {
+            // "PhysicalDiary_Shared": the player took the diary openly through the
+            // dialogue trade menu.  Other mods (SkyrimNet triggers) can react to it.
             auto* eventSource = SKSE::GetModCallbackEventSource();
             if (!eventSource) {
                 SKSE::log::warn("[Physical Diaries] Cannot send mod event - event source unavailable");
                 return;
             }
-            
-            SKSE::ModCallbackEvent event{
-                "PhysicalDiary_Shared",
-                bookName.c_str(),
-                static_cast<float>(actor->GetFormID()),
-                actor
-            };
-            
+            SKSE::ModCallbackEvent event{ "PhysicalDiary_Shared", bookName.c_str(),
+                                          static_cast<float>(actor->GetFormID()), actor };
             eventSource->SendEvent(&event);
-            
-            SKSE::log::info("[Physical Diaries] ✓ Sent 'PhysicalDiary_Shared' mod event for {} (FormID: 0x{:X}, legitimate transfer of {})", 
-                           actor->GetName(), actor->GetFormID(), bookName);
+            SKSE::log::info("[Physical Diaries] ✓ Sent 'PhysicalDiary_Shared' mod event for {} (FormID: 0x{:X}, legitimate transfer of {})",
+                            actor->GetName(), actor->GetFormID(), bookName);
         }
 
-        ContainerChangeHandler() = default;
-        ContainerChangeHandler(const ContainerChangeHandler&) = delete;
-        ContainerChangeHandler(ContainerChangeHandler&&) = delete;
-        ContainerChangeHandler& operator=(const ContainerChangeHandler&) = delete;
-        ContainerChangeHandler& operator=(ContainerChangeHandler&&) = delete;
-    };
+        // Watches diary volumes moving between the player and their owner.  A book is
+        // a diary only if BookManager tracks its base FormID; names are never used
+        // (they're localized, and same-named NPCs share them).
+        class ContainerChangeHandler : public RE::BSTEventSink<RE::TESContainerChangedEvent> {
+        public:
+            static ContainerChangeHandler* GetSingleton() {
+                static ContainerChangeHandler singleton;
+                return &singleton;
+            }
+
+            RE::BSEventNotifyControl ProcessEvent(const RE::TESContainerChangedEvent* a_event,
+                                                  RE::BSTEventSource<RE::TESContainerChangedEvent>*) override {
+                try {
+                    if (!a_event) return RE::BSEventNotifyControl::kContinue;
+                    auto* player = RE::PlayerCharacter::GetSingleton();
+                    if (!player) return RE::BSEventNotifyControl::kContinue;
+
+                    const bool toPlayer = a_event->newContainer == player->GetFormID();
+                    const bool fromPlayer = a_event->oldContainer == player->GetFormID();
+                    if (!toPlayer && !fromPlayer) return RE::BSEventNotifyControl::kContinue;
+
+                    auto* vol = SkyrimNetDiaries::BookManager::GetSingleton()->GetBookForFormID(a_event->baseObj);
+                    if (!vol) return RE::BSEventNotifyControl::kContinue;  // not one of our diary volumes
+
+                    // The NPC on the other side of the transfer, alive.
+                    auto* otherRef = RE::TESForm::LookupByID<RE::TESObjectREFR>(toPlayer ? a_event->oldContainer
+                                                                                        : a_event->newContainer);
+                    auto* other = otherRef ? otherRef->As<RE::Actor>() : nullptr;
+                    if (!other || other == player || other->IsDead()) return RE::BSEventNotifyControl::kContinue;
+
+                    // Only the diary's owner counts: taking or giving someone else's
+                    // diary changes nobody's theft state.
+                    const std::string otherUuid = UuidOf(other);
+                    if (otherUuid.empty() || otherUuid != vol->actorUuid) {
+                        SKSE::log::debug("[Physical Diaries] '{}' (vol {}) moved to/from {}, who doesn't own it — ignored",
+                                         vol->actorName, vol->volumeNumber, other->GetName());
+                        return RE::BSEventNotifyControl::kContinue;
+                    }
+
+                    auto* book = RE::TESForm::LookupByID<RE::TESBoundObject>(a_event->baseObj);
+                    const std::string bookName = book ? book->GetName() : vol->actorName;
+                    const int volumeNumber = vol->volumeNumber;
+
+                    if (fromPlayer) {
+                        RecordReturn(otherUuid, other->GetName(), bookName, volumeNumber);
+                    } else if (book && PlayerCopyIsStolen(player, book)) {
+                        RecordTheft(otherUuid, other->GetName(), bookName, volumeNumber);
+                    } else {
+                        bool legitimateTrade = false;
+                        {
+                            std::lock_guard<std::mutex> lock(g_menuMutex);
+                            legitimateTrade = g_legitimateTradeActive;
+                        }
+                        // Not flagged as stolen and not a trade: console or an edge case, ignored.
+                        if (legitimateTrade) SendSharedEvent(other, bookName);
+                    }
+                } catch (const std::exception& e) {
+                    SKSE::log::error("[DiaryTheftHandler] container change exception: {}", e.what());
+                } catch (...) {
+                    SKSE::log::error("[DiaryTheftHandler] container change: unknown exception");
+                }
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
+        private:
+            ContainerChangeHandler() = default;
+        };
+
+    } // namespace
 
     void Register() {
         auto* eventSourceHolder = RE::ScriptEventSourceHolder::GetSingleton();
         if (eventSourceHolder) {
             eventSourceHolder->AddEventSink(ContainerChangeHandler::GetSingleton());
             SKSE::log::info("Registered diary theft/return event handler (TESContainerChangedEvent)");
-            
-            // Note: ESP verification moved to kDataLoaded message handler in main.cpp
-            // (it needs to run after ESPs are loaded)
         } else {
             SKSE::log::error("Failed to get ScriptEventSourceHolder for diary theft handler");
         }
-        
-        // Register menu event handlers for dialogue tracking
+
         auto* ui = RE::UI::GetSingleton();
         if (ui) {
-            ui->AddEventSink<RE::MenuOpenCloseEvent>(MenuEventHandler::GetSingleton());
-            ui->AddEventSink<RE::MenuOpenCloseEvent>(ConsoleMenuHandler::GetSingleton());
-            ui->AddEventSink<RE::MenuOpenCloseEvent>(ContainerMenuHandler::GetSingleton());
+            ui->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
             SKSE::log::info("Registered dialogue, console, and container menu tracking for legitimate transfers");
         } else {
             SKSE::log::error("Failed to get UI singleton for menu tracking");
         }
     }
 
+    void ClearStolenVolumes(const std::string& actorUuid) {
+        auto* diaryDB = SkyrimNetDiaries::DiaryDB::GetSingleton();
+        diaryDB->ClearAllStolenVolumes(actorUuid);
+        diaryDB->UpdateLastKnownGameTime(actorUuid, GameTimeSeconds());
+    }
+
     void RegisterStolenDecorator() {
         try {
-            // Re-register the snpd_diary_stolen decorator with SkyrimNet's prompt engine.
-            // SkyrimNet resets all Papyrus decorator registrations on every game load.
-            // Papyrus OnInit (which originally called RegisterDecorator) only fires on
-            // new game creation, so existing saves would lose the decorator after any
-            // reload.  We call SkyrimNetApi::RegisterDecorator via the Papyrus VM
-            // directly from C++ here, which works for every load of every save.
+            // SkyrimNet clears decorator registrations on every load, and the Papyrus
+            // OnInit that also registers it only runs on a new game.
             auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
             if (vm) {
                 auto* args = RE::MakeFunctionArguments(
@@ -520,20 +258,12 @@ namespace DiaryTheftHandler {
                 int clearedCount = 0;
                 for (const auto& [uuid, templateName] : actorTemplates) {
                     double lastKnownTime = diaryDB->GetLastKnownGameTime(uuid);
-                    std::string actorName = SkyrimNetDiaries::Database::GetActorName(uuid);
-                    if (actorName.empty()) {
-                        actorName = templateName;  // Fallback to template name if lookup fails
-                    }
-
-                    SKSE::log::debug("[Theft Reconciliation] {} ({}): last_known={:.2f}, current={:.2f}, delta={:.2f}",
-                                   actorName, uuid.substr(0, 8), lastKnownTime, currentTime, currentTime - lastKnownTime);
 
                     // Detect backwards time travel - clear all stolen volumes if save is from earlier in time
                     if (currentTime < lastKnownTime) {
-                        SKSE::log::warn("[Physical Diaries] ⚠ Backwards time travel detected for {} - loaded save from {:.2f} but last session was at {:.2f} (went back {:.2f} seconds)",
-                                       actorName, currentTime, lastKnownTime, lastKnownTime - currentTime);
+                        SKSE::log::debug("[Theft Reconciliation] {} went back in time: loaded {:.2f}, last session {:.2f} — clearing stolen volumes",
+                                         SkyrimNetDiaries::Database::GetActorName(uuid), currentTime, lastKnownTime);
                         diaryDB->ClearAllStolenVolumes(uuid);
-                        SKSE::log::debug("[Physical Diaries] ✓ Cleared all stolen volumes for {} due to time travel", actorName);
                         clearedCount++;
                     }
 

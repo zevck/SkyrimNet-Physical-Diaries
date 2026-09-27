@@ -22,6 +22,7 @@
 #include "Config.h"
 #include "Database.h"
 #include "DiaryDB.h"
+#include "DiaryTheftHandler.h"
 #include "VolumeSync.h"
 #include <spdlog/spdlog.h>
 
@@ -43,12 +44,7 @@ namespace PapyrusAPI {
             // will return None from Game.GetForm, which silently skips SetTheftCleared).
             std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(formId);
             if (!uuid.empty() && uuid != "0") {
-                auto* diaryDB = SkyrimNetDiaries::DiaryDB::GetSingleton();
-                diaryDB->ClearAllStolenVolumes(uuid);
-                auto calendar = RE::Calendar::GetSingleton();
-                if (calendar) {
-                    diaryDB->UpdateLastKnownGameTime(uuid, calendar->GetCurrentGameTime() * 86400.0);
-                }
+                DiaryTheftHandler::ClearStolenVolumes(uuid);
             }
 
             SkyrimNetDiaries::UpdateDiaryForActorInternal(formId);
@@ -101,19 +97,19 @@ namespace PapyrusAPI {
             if (!akActor) {
                 return "{\"error\": \"null actor\"}";
             }
-        
+
             std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(akActor->GetFormID());
             if (uuid.empty() || uuid == "0") {
                 return "{\"stolen\": false}";  // Unknown actor = no theft tracking
             }
-        
+
             bool hasStolen = SkyrimNetDiaries::DiaryDB::GetSingleton()->HasAnyStolenVolumes(uuid);
-        
+
             // If any volume is stolen, diary is stolen
             if (hasStolen) {
                 return "{\"stolen\": true, \"chronicled\": false}";
             }
-        
+
             return "{\"stolen\": false}";
         } catch (const std::exception& e) {
             SKSE::log::error("[PapyrusAPI] GetDiaryTheftStatus exception: {}", e.what());
@@ -122,25 +118,25 @@ namespace PapyrusAPI {
         }
         return "{\"stolen\": false}";
     }
-    
+
     RE::BSFixedString IsDiaryStolen(RE::StaticFunctionTag*, RE::Actor* akActor) {
         try {
             if (!akActor) {
                 SKSE::log::debug("[IsDiaryStolen] Null actor - returning false");
                 return "false";
             }
-        
+
             std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(akActor->GetFormID());
             if (uuid.empty() || uuid == "0") {
                 SKSE::log::debug("[IsDiaryStolen] {} - no UUID, returning false", akActor->GetName());
                 return "false";  // Unknown actor = no theft tracking
             }
-        
+
             bool hasStolen = SkyrimNetDiaries::DiaryDB::GetSingleton()->HasAnyStolenVolumes(uuid);
-        
-            SKSE::log::debug("[IsDiaryStolen] {} (UUID: {}) - has stolen volumes: {}", 
+
+            SKSE::log::debug("[IsDiaryStolen] {} (UUID: {}) - has stolen volumes: {}",
                            akActor->GetName(), uuid, hasStolen ? "YES" : "NO");
-        
+
             return hasStolen ? "true" : "false";
         } catch (const std::exception& e) {
             SKSE::log::error("[PapyrusAPI] IsDiaryStolen exception: {}", e.what());
@@ -149,35 +145,27 @@ namespace PapyrusAPI {
         }
         return "false";
     }
-    
+
     void SetTheftCleared(RE::StaticFunctionTag*, RE::Actor* akActor) {
         try {
             if (!akActor) {
                 SKSE::log::warn("[PapyrusAPI] SetTheftCleared called with null actor");
                 return;
             }
-        
+
             std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(akActor->GetFormID());
             if (uuid.empty() || uuid == "0") {
                 SKSE::log::warn("[PapyrusAPI] SetTheftCleared: Unable to get UUID for actor {}", akActor->GetName());
                 return;
             }
-        
-            SKSE::log::debug("[PapyrusAPI] SetTheftCleared called for {} (FormID: 0x{:X}, UUID: {})", 
+
+            SKSE::log::debug("[PapyrusAPI] SetTheftCleared called for {} (FormID: 0x{:X}, UUID: {})",
                            akActor->GetName(), akActor->GetFormID(), uuid);
-        
+
             // Clear ALL stolen volumes for this actor - they wrote a new diary entry
-            auto* diaryDB = SkyrimNetDiaries::DiaryDB::GetSingleton();
-            diaryDB->ClearAllStolenVolumes(uuid);
-        
-            // Update last_known_game_time for backwards time travel detection
-            auto calendar = RE::Calendar::GetSingleton();
-            if (calendar) {
-                double gameTime = calendar->GetCurrentGameTime() * 86400.0;
-                diaryDB->UpdateLastKnownGameTime(uuid, gameTime);
-            }
-        
-            SKSE::log::debug("[PapyrusAPI] Cleared all stolen volumes for {} (UUID: {}) - diary entry written", 
+            DiaryTheftHandler::ClearStolenVolumes(uuid);
+
+            SKSE::log::debug("[PapyrusAPI] Cleared all stolen volumes for {} (UUID: {}) - diary entry written",
                            akActor->GetName(), uuid);
         } catch (const std::exception& e) {
             SKSE::log::error("[PapyrusAPI] SetTheftCleared exception: {}", e.what());

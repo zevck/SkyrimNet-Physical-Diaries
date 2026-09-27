@@ -8,23 +8,21 @@ Code: `src/DiaryTheftHandler.cpp`, `src/PapyrusAPI.cpp` (`IsDiaryStolen`, `GetDi
 
 ## Detection
 
-`DiaryTheftHandler::Register()` adds one `TESContainerChangedEvent` sink and three `MenuOpenCloseEvent` sinks.
+`DiaryTheftHandler::Register()` adds one `TESContainerChangedEvent` sink and one `MenuOpenCloseEvent` sink.
 
-The menu sinks track only whether the **Dialogue Menu**, **Console** and **ContainerMenu** are open. A container opened while dialogue is open and the console is not counts as a legitimate trade. (Reading the dialogue speaker would need `MenuTopicManager::speaker`, whose address is missing from the VR Address Library, so the handler avoids it.)
+The menu sink tracks only whether the **Dialogue Menu**, **Console** and **ContainerMenu** are open. A container opened while dialogue is open and the console is not counts as a legitimate trade. (Reading the dialogue speaker would need `MenuTopicManager::speaker`, whose address is missing from the VR Address Library, so the handler avoids it.)
 
 `ContainerChangeHandler::ProcessEvent`, for book transfers into or out of the player:
 
-1. Pre-filter: the book's name must contain `"Diary"` or `"diary"`. **This is a bug**: book names are localized, so this filter rejects every book in 8 of the 9 shipped languages. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
-2. `BookManager::GetBookForFormID(baseObj)`: not one of our volumes → ignore. This is the real check.
+1. `BookManager::GetBookForFormID(baseObj)`: not one of our volumes → ignore. Book names are never looked at (they're localized, and same-named NPCs share them).
+2. The NPC on the other side of the transfer must be alive (looting a corpse is not theft), and must **own** the volume: its live UUID (`GetUUIDFromFormID`) must equal the volume's UUID. If SkyrimNet doesn't know the NPC, or it's someone else's diary, nothing is recorded.
 
-**Player receives a diary** (`HandleDiaryAcquired`):
-- The source must be a living NPC. Looting a corpse is not theft.
-- Owner check: the source NPC's live UUID must equal the volume's UUID. If either UUID is missing, fall back to the NPC's name appearing in the book title.
+**Player receives a diary:**
 - **Theft** = the instance in the player's inventory has `ExtraDataType::kOwnership`, the engine's stolen marker. Record it: `DiaryDB::AddStolenVolume(uuid, volume, gameTime)` and update `last_known_game_time`. Every volume counts, not only the latest.
 - No ownership data, but a legitimate trade is under way → send ModEvent **`PhysicalDiary_Shared`** (`strArg` = book name, `numArg` = the actor's FormID as a float, sender = the actor), so a SkyrimNet trigger can have the NPC react to the player taking their diary.
 - Neither → ignore (for example, console `additem`).
 
-**Player gives a diary to an NPC** (`HandleDiaryReturned`): if the receiving NPC's live UUID matches the book owner's (both resolved live), `RemoveStolenVolume(uuid, volume)`. Giving someone else's diary to an NPC does not clear anything.
+**Player gives a diary to its owner:** `RemoveStolenVolume(uuid, volume)`. Giving someone else's diary to an NPC does not clear anything (the owner check above).
 
 ## How SkyrimNet learns about it
 

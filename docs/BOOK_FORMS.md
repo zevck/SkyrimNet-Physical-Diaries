@@ -54,7 +54,7 @@ From the template: `data.type` (must be a book tome, `0x00`. A note scroll, `0xF
 
 Four EditorIDs, passed to `BookManager::Initialize` in `SKSEPlugin_Load`: `SkyrimNetDiaryTemplate`, `SkyrimNetDiaryTemplate2`, `SkyrimNetDiaryTemplate3`, and `SkyrimNetDiaryTemplateN` (Nightingale).
 
-`SelectJournalTemplate`: Karliah, Gallus and Mercer Frey (matched by name) get the Nightingale template. Everyone else gets `variants[hash(uuid) % count]`, so the choice is stable across reloads. It is cached in `actorTemplates_` and stored in DiaryDB `actor_templates`, so every volume of an NPC looks the same.
+`SelectJournalTemplate`: Karliah, Gallus and Mercer Frey get the Nightingale template. They are matched by the actor's base NPC (`Skyrim.esm` `0x1B07F`, `0x1BB5D`, `0x1B07C`), never by name, so it works in every language and doesn't catch same-named NPCs. Everyone else gets `variants[hash(uuid) % count]`, so the choice is stable across reloads. It is cached in `actorTemplates_` and stored in DiaryDB `actor_templates`, so every volume of an NPC looks the same.
 
 Templates are found with `LookupByEditorID`, which works with powerofthree's Tweaks or Native EditorID Fix. `kDataLoaded` checks all four the same way and shows a message box if any are missing. Don't compare `GetFormEditorID()` on the form itself: without Native EditorID Fix it returns "" for books, so a scan finds nothing even though the lookup succeeds. Before 2026-09-26 `CreateDiaryBook` did exactly that, and every creation failed on a setup with only powerofthree's Tweaks.
 
@@ -82,7 +82,7 @@ DPF restores its forms from its own co-save before `kPostLoadGame`. `LoadFromDB`
 
 - The book FormID no longer resolves to a book → delete the row and queue the actor for recreation. This happens after a save revert that predates the form.
 - `persisted_in_save = 0` and the form is gone → the volume was created and never saved. Delete the row and recreate.
-- Otherwise → claim the FormID, load into `books_`. (`sourceFiles` was already fixed by the load sweep.)
+- Otherwise → claim the FormID, load into `books_`, and **re-apply the volume's look** (`ConfigureDiaryForm`: name, template model, book type, item card). DPF hands the same FormIDs out again in later sessions, and a save made in an earlier session restores its own data for that FormID, including another NPC's name (seen: Katarina's volume showing as "Svala's Diary" while opening Katarina's text). DiaryDB is authoritative, so the look is reset on every load and a corrected name is logged. (`sourceFiles` was already fixed by the load sweep.)
 
 `QueueInventoryCheck` then re-adds books to NPCs, but **only for volumes not yet in a save** (`persisted_in_save = 0`). That covers reload-without-save, where the DPF form survived in memory but the inventory entry did not. Volumes that were in a save are left alone, because their inventory state in the `.ess` is authoritative and re-adding would give a pickpocketed diary back.
 
