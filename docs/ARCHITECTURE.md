@@ -10,16 +10,16 @@ This document gives the map. Follow the links in [Related docs](#related-docs) f
 
 ## Repo layout
 
-The repo has the layout of an MO2 mod folder. Builds are deployed as a `Physical Diaries - Dev` mod folder into three test instances: MO2 (AE), FUS (VR) and Nolvus (SE). See [DEVELOPMENT.md](DEVELOPMENT.md#deploy).
+The repo has the layout of an MO2 mod folder. Builds are deployed as a `Physical Diaries - Dev` mod folder into one test instance per runtime (SE, AE, VR). See [DEVELOPMENT.md](DEVELOPMENT.md#deploy).
 
 | Path | What lives there |
 |---|---|
 | `src/` | C++ sources |
 | `include/` | Headers, one per component, plus `PCH.h` (force-included: `RE/Skyrim.h`, `SKSE/SKSE.h`, spdlog), `SkyrimNetPublicAPI.h` (vendored SkyrimNet API loader) and `SkyrimNetPhysicalDiariesAPI.h` (SNPD's own inter-plugin API, for other mods) |
-| `.resources/CommonLibVR-4.5.0/` | Vendored CommonLibSSE-NG 4.5.0. **Gitignored** (`/.resources`), so a fresh clone cannot build. See [DEVELOPMENT.md](DEVELOPMENT.md#build). |
+| `lib/commonlibsse-ng/` | CommonLibSSE-NG v9.1.0 as a git submodule. See [DEVELOPMENT.md](DEVELOPMENT.md#build). |
 | `Source/Scripts/*.psc` → `Scripts/*.pex` | Papyrus: `SkyrimNetDiaries_API`, `_Decorators`, `_EventListener`, `_MCM`, `_Native`. See [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md). |
 | `SkyrimNet Physical Diaries.esp` | The four template books (`SkyrimNetDiaryTemplate`, `…2`, `…3`, `…N`), the MCM quest and the event-listener quest. Also `SNPD_DiaryStolenFaction`, which nothing uses any more (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). |
-| `SKSE/Plugins/SkyrimNetPhysicalDiaries.dll` | Deployed DLL. Tracked in git even though `.gitignore` lists `*.dll` (it was committed before the rule). |
+| `SKSE/Plugins/SkyrimNetPhysicalDiaries.dll` | Build output, not tracked (`*.dll` and `*.pex` are gitignored). |
 | `SKSE/Plugins/SkyrimNetPhysicalDiaries/Locales/*.ini` | Per-language date and title formats. See [LOCALIZATION.md](LOCALIZATION.md). |
 | `Interface/Translations/SkyrimNet Physical Diaries_*.txt` | MCM translations (UTF-16 LE with BOM) |
 | `docs/` | These developer docs |
@@ -140,7 +140,7 @@ Rules: anything touching forms, inventories or references must run on the game t
 | powerofthree's Tweaks **or** Native EditorID Fix | Templates are found with `LookupByEditorID`, which needs one of these. Don't read a form's own ID with `GetFormEditorID()`: it returns "" for books without Native EditorID Fix. |
 | SkyUI | MCM |
 | Address Library (SE/AE) or VR Address Library | The book hook. See [DEVELOPMENT.md](DEVELOPMENT.md#engine-touchpoints). |
-| Build: CommonLibSSE-NG 4.5.0 (vendored), vcpkg `sqlite3`, `nlohmann-json`, `spdlog`, `fmt` | |
+| Build: CommonLibSSE-NG v9.1.0 (submodule), vcpkg `sqlite3`, `nlohmann-json`, `spdlog`, `fmt` | |
 
 ---
 

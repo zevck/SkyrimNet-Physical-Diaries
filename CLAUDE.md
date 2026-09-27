@@ -12,7 +12,7 @@ SKSE plugin (CommonLibSSE-NG, C++23; one DLL for SE, AE and VR) that turns the d
 - Never `DPF.Dispose()` forms (or release DPF RE slots) on Reset. See [docs/BOOK_FORMS.md](docs/BOOK_FORMS.md).
 - Game state is touched only on the game thread (`SKSE::GetTaskInterface()->AddTask`). DPF callbacks and natives arrive on VM threads.
 - A Papyrus change is done only when the `.pex` is compiled into `Scripts/` **and** shipped. See [docs/PAPYRUS_AND_API.md](docs/PAPYRUS_AND_API.md).
-- **Build and deploy with `.\Build_Local.ps1`**: incremental plugin build, Pyro (`skyrimse.ppj`, same as the VS Code task), and deploy to the `Physical Diaries - Dev` mod folder in MO2 (AE), FUS (VR) and Nolvus (SE). Paths are in the gitignored `Build_Config_Local.ps1`. PASS/FAIL is also written to `%TEMP%\snpd-build-result.json`. Never `/t:Rebuild`: it rebuilds all of CommonLib. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#build).
+- **Build and deploy with `.\Build_Local.ps1`**: incremental plugin build, Pyro (`skyrimse.ppj`, same as the VS Code task), and deploy to the `Physical Diaries - Dev` mod folder in each test instance (one per runtime: SE, AE, VR). Paths are in the gitignored `Build_Config_Local.ps1`. PASS/FAIL is also written to `%TEMP%\snpd-build-result.json`. Never `/t:Rebuild`: it rebuilds all of CommonLib. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#build).
 
 ## Open work (as of 2026-09-26)
 

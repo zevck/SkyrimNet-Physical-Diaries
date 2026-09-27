@@ -104,7 +104,7 @@ Real ESP records avoid every DPF problem (no allocator, no ordering hazard, work
 
 ### DPF RE ("Dynamic Persistent Forms RE::thinked") — open option
 
-Source at `C:\dev\DPF RE`. It keeps only slot identity (plugin + local FormID + type + owner + key) in a global `Data/SKSE/Plugins/DPF_Cache.bin`, not full form records in the co-save. It has a C++ API (`DPFAPI.h`, `GetDPFAPI` export) as well as Papyrus.
+It keeps only slot identity (plugin + local FormID + type + owner + key) in a global `Data/SKSE/Plugins/DPF_Cache.bin`, not full form records in the co-save. It has a C++ API (`DPFAPI.h`, `GetDPFAPI` export) as well as Papyrus.
 
 - `GetOrCreateByOwnerKey(owner, key, type, …)` gives a **deterministic** FormID for `(uuid, volume)`, which matches `PRIMARY KEY (actor_uuid, volume_number)`. `book_form_id` would become a cache rather than the source of truth, and most of the `LoadFromDB` validation would go away.
 - Slots are registered lazily: loading the registry creates no forms (`RegisterDynamicSlot` is bookkeeping only). Unused slots cost a map entry.

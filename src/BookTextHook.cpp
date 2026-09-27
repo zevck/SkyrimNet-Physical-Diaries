@@ -1,4 +1,23 @@
-﻿#include "BookTextHook.h"
+﻿/*
+ * SkyrimNet Physical Diaries - a Skyrim SKSE plugin that turns SkyrimNet NPC
+ * diary entries into books you can find and read in the world.
+ * Copyright (C) 2026 Zevick
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#include "BookTextHook.h"
 #include "BookManager.h"
 #include "Localization.h"
 
@@ -300,8 +319,22 @@ namespace
             REL::Relocation<std::uintptr_t> target{ RELOCATION_ID(50122, 51053) };
             auto& trampoline = SKSE::GetTrampoline();
 
-            // Reserve enough for all cases + write_branch<5> relay stub.
-            SKSE::AllocTrampoline(20 + 14 + 8);
+            // Reserve enough for all cases + write_branch<5> relay stub: SKSE's branch
+            // pool if available, otherwise our own block near the game module
+            // (CommonLib v9's SKSE::AllocTrampoline silently allocates nothing
+            // without a TrampolineInterface).
+            {
+                constexpr std::size_t trampolineSize = 20 + 14 + 8;
+                void* mem = nullptr;
+                if (const auto* intfc = SKSE::GetTrampolineInterface()) {
+                    mem = intfc->AllocateFromBranchPool(trampolineSize);
+                }
+                if (mem) {
+                    trampoline.set_trampoline(mem, trampolineSize);
+                } else {
+                    trampoline.create(trampolineSize);
+                }
+            }
 
             const auto targetAddr = target.address();
             const auto* p = reinterpret_cast<const std::uint8_t*>(targetAddr);

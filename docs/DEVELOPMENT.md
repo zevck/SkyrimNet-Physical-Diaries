@@ -8,11 +8,16 @@ There is **no automated test suite**. Every change is checked in game, through t
 
 ## Build
 
-Prerequisites: MSVC x64 with C++23, CMake ≥ 3.21, vcpkg at `C:/vcpkg` (hard-coded in `CMakePresets.json`), and CommonLibSSE-NG 4.5.0 at `.resources/CommonLibVR-4.5.0`.
+Prerequisites: MSVC x64 with C++23, CMake ≥ 3.21 and vcpkg with the `VCPKG_ROOT` environment variable set (`CMakePresets.json` reads the toolchain file from it).
 
-**`.resources/` is gitignored.** The CommonLib that `CMakeLists.txt` builds with `add_subdirectory(...)` is not in the repo, so a fresh clone does not build until it is put back by hand. STFU solves this with a pinned git submodule; doing the same here belongs with the CommonLib update.
+**CommonLib is the `lib/commonlibsse-ng` submodule** (alandtse CommonLibSSE-NG, `ng` branch, pinned at v9.1.0), built with `add_subdirectory(...)`. Clone with `--recursive`, or run `git submodule update --init --recursive` in an existing clone. The `--recursive` matters: CommonLib has a nested `extern/openvr` submodule, and without it the VR code fails with `Cannot open include file: 'openvr.h'`. The first build compiles all of CommonLib and takes several minutes; later builds are incremental. CommonLib is GPL-3.0, which is why SNPD is GPL-3.0-or-later (`LICENSE.md`).
 
-**Use `Build_Local.ps1`** (repo root, modeled on SkyrimNet's). It builds only the plugin, incrementally; compiles Papyrus with Pyro; and deploys to all three test instances. It ends with a PASS/FAIL banner, and the same result is written to `%TEMP%\snpd-build-result.json`.
+v9 changes that SNPD relies on (keep them when updating CommonLib again):
+- The entry point is `SKSE_PLUGIN_LOAD(...)`; v9 removed the `SKSEAPI` macro.
+- `SKSE::Init(a_skse, { .log = false })`. By default v9 installs its own logger on the same `SkyrimNetPhysicalDiaries.log` file, replacing the one `InitializeLog` set up.
+- `BookTextHook::Install` allocates its trampoline itself (SKSE's branch pool, else `trampoline.create`). v9's `SKSE::AllocTrampoline` is deprecated and silently allocates nothing when SKSE provides no `TrampolineInterface`, which would crash on the hook write.
+
+**Use `Build_Local.ps1`** (repo root, modeled on SkyrimNet's). It builds only the plugin, incrementally; compiles Papyrus with Pyro; and deploys to every configured test instance. It ends with a PASS/FAIL banner, and the same result is written to `%TEMP%\snpd-build-result.json`.
 
 ```powershell
 .\Build_Local.ps1                 # build + Pyro + deploy to all instances
@@ -44,15 +49,9 @@ Builds are incremental and fast. **Don't pass `/t:Rebuild`**: MSBuild's Rebuild 
 
 ## Deploy
 
-The build deploys to one **`Physical Diaries - Dev`** mod folder in each test instance, following SkyrimNet's `SkyrimNet - Dev` convention:
+The build deploys to a **`Physical Diaries - Dev`** mod folder in each test instance, following SkyrimNet's `SkyrimNet - Dev` convention. Use one MO2 instance per runtime (SE, AE, VR) so a change can be checked on all three. The folders are `$defaultOutputPath` and `$additionalOutputPaths` in `Build_Config_Local.ps1`.
 
-| Instance | Runtime | Folder |
-|---|---|---|
-| `C:\Modding\MO2` (primary) | AE | `mods\Physical Diaries - Dev` |
-| `C:\Modding\FUS` | VR | `mods\Physical Diaries - Dev` |
-| Nolvus Awakening | SE | `MODS\mods\Physical Diaries - Dev` |
-
-Enable the Dev folder in the MO2 profile you test with, and disable any other Physical Diaries mod in that profile. The repo itself (`MODS\mods\SkyrimNet Physical Diaries`, which the Nolvus `test` profile used to enable) and the older `SkyrimNetPhysicalDiaries …` test copies are not deploy targets.
+Enable the Dev folder in the MO2 profile you test with, and disable any other Physical Diaries mod in that profile. Don't point a deploy path at the repo itself.
 
 For each folder, `Build_Local.ps1` copies the DLL and ESP, and **mirrors** (`robocopy /MIR`) `Scripts`, `Source\Scripts`, `Locales` and `Interface\Translations`, so files removed from the repo disappear from the deploy too. `meta.ini` is never touched. If an instance's DLL is locked (its game is running), that instance is reported as failed and the others are still updated.
 

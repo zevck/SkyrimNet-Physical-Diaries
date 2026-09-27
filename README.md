@@ -148,3 +148,11 @@ If you would like to correct or contribute any translations feel free to submit 
 - Player character diaries are supported and will appear in the player's inventory.
 - If books are missing after installing on an existing save, use **Reset All Diaries** followed by saving and reloading. Also ensure you have powerofthree's Tweaks or Native EditorID Fix installed so the mod can locate the templates.
 - Generic NPCs that share a name (e.g. multiple "Whiterun Guard") will share a single, pooled diary. SkyrimNet groups memories by actor name, so same-named NPCs are treated as one identity. To give these NPCs distinct diaries, use a mod that assigns unique names such as **Real Names Extended** — with unique names, each NPC gets its own diary.
+
+---
+
+## License
+
+SkyrimNet Physical Diaries is Copyright © 2026 Zevick, released under the GNU General Public License v3.0 or later (GPL-3.0-or-later). See [LICENSE.md](LICENSE.md) for the full text.
+
+SkyrimNet Physical Diaries links against [CommonLibSSE-NG](https://github.com/alandtse/CommonLibSSE-NG) (GPL-3.0), which is why it is distributed under the GPL. You are free to use, study, modify, and redistribute it under the terms of the GPL, provided derivative works remain open source under the same license.

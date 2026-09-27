@@ -26,13 +26,12 @@ Fixed on 2026-09-26, for reference: `SkyrimNetDiaries_API.pex` had never shipped
 ## Tech debt
 
 13. **The co-save does no real work.** `SNDB` is a two-zero sentinel. `SNDF` is written and read, but the value is thrown away at `kPostLoadGame`. Removing the co-save changes the save format; do it on purpose. See [DATABASE.md](DATABASE.md#co-save-records).
-14. **CommonLib is not in the repo** (`.resources/` is gitignored) and is 4.5.0. STFU uses alandtse CommonLibSSE-NG v9.1.0 as a pinned submodule. See [DEVELOPMENT.md](DEVELOPMENT.md#build) and the [engine touchpoints](DEVELOPMENT.md#engine-touchpoints) to re-check.
-15. **The version says 1.0.0** in `CMakeLists.txt` and `vcpkg.json`, but v1.1.0 has shipped.
-16. **Unused ESP record** `SNPD_DiaryStolenFaction` (from a faction-based theft design). ESP edit.
-17. **VR fixes untested on VR:** `ClearBogusSourceFiles` / `SanitizeLoadedBookForms` (`BookCreation.cpp`) and `useDefaultPos` (`BookTextHook.cpp`) need a VR test. Also find where DPF's `0x1` comes from.
-18. **Hand-written inline hook.** `BookTextHook::Install` decodes the target's prologue itself. A detour library would be sturdier across runtime updates.
-19. `GetDiaryTheftStatus` always returns `"chronicled": false`, left over from an older design. Public API, so change it carefully.
+14. **The version says 1.0.0** in `CMakeLists.txt` and `vcpkg.json`, but v1.1.0 has shipped.
+15. **Unused ESP record** `SNPD_DiaryStolenFaction` (from a faction-based theft design). ESP edit.
+16. **VR fixes untested on VR:** `ClearBogusSourceFiles` / `SanitizeLoadedBookForms` (`BookCreation.cpp`) and `useDefaultPos` (`BookTextHook.cpp`) need a VR test. Also find where DPF's `0x1` comes from.
+17. **Hand-written inline hook.** `BookTextHook::Install` decodes the target's prologue itself. A detour library would be sturdier across runtime updates.
+18. `GetDiaryTheftStatus` always returns `"chronicled": false`, left over from an older design. Public API, so change it carefully.
 
 ## Open decision
 
-20. **Stay on DPF, move to DPF RE, or write our own.** DPF's two known bugs (unsafe allocator, duplicate recycled records) are handled (see [BOOK_FORMS.md](BOOK_FORMS.md#the-two-dpf-bugs-this-pipeline-works-around)). DPF RE would make book FormIDs deterministic, but has open questions (whole-registry rewrite on every create, thread safety, whether forms exist in time for `.ess` inventory). Per-instance identity and an ESL pool were tested and rejected. See [BOOK_FORMS.md](BOOK_FORMS.md#alternatives-evaluated).
+19. **Stay on DPF, move to DPF RE, or write our own.** DPF's two known bugs (unsafe allocator, duplicate recycled records) are handled (see [BOOK_FORMS.md](BOOK_FORMS.md#the-two-dpf-bugs-this-pipeline-works-around)). DPF RE would make book FormIDs deterministic, but has open questions (whole-registry rewrite on every create, thread safety, whether forms exist in time for `.ess` inventory). Per-instance identity and an ESL pool were tested and rejected. See [BOOK_FORMS.md](BOOK_FORMS.md#alternatives-evaluated).

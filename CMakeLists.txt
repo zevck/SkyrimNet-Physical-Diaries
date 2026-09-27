@@ -19,11 +19,11 @@ include(GNUInstallDirs)
 # Output directly to mod folder for MO2
 set(CMAKE_INSTALL_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}" CACHE PATH "Install prefix" FORCE)
 
-# ---- Add CommonLibSSE-NG 4.5.0 ----
+# ---- Add CommonLibSSE-NG (lib/commonlibsse-ng submodule) ----
 set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/.resources/CommonLibVR-4.5.0 EXCLUDE_FROM_ALL)
+add_subdirectory(lib/commonlibsse-ng ${CMAKE_CURRENT_BINARY_DIR}/CommonLibSSE-NG EXCLUDE_FROM_ALL)
 # Expose add_commonlibsse_plugin() and friends
-include(${CMAKE_CURRENT_SOURCE_DIR}/.resources/CommonLibVR-4.5.0/cmake/CommonLibSSE.cmake)
+include(lib/commonlibsse-ng/cmake/CommonLibSSE.cmake)
 
 # ---- Dependencies ----
 find_package(nlohmann_json CONFIG REQUIRED)
