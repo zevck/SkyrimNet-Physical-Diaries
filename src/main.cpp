@@ -7,18 +7,11 @@
 #include "DiaryDB.h"
 #include "PapyrusAPI.h"
 #include "Localization.h"
-#include "RE/F/FunctionArguments.h"
-#include "RE/V/VirtualMachine.h"
 #include <spdlog/sinks/basic_file_sink.h>
 #include <fstream>
-#include <sstream>
 #include <unordered_set>
 #include <unordered_map>
 #include <cstring>
-#include "RE/F/FxDelegate.h"
-#include "RE/F/FxResponseArgs.h"
-#include "RE/G/GFxValue.h"
-#include "RE/U/UI.h"
 
 
 
@@ -360,35 +353,19 @@ std::string FormatGameDateShort(double gameTime) {
 
 namespace
 {
-    // Cache actor reference ID → UUID (persistent across sessions)
-    std::unordered_map<RE::FormID, std::string> g_actorUuidCache;
-    
     // Cache the current save's folder name (e.g., "SkyrimNet-1772379483115-796523")
     std::string g_currentSaveFolder;
 
     constexpr std::uint32_t kSerializationVersion = 3;
     constexpr std::uint32_t kSerializationTypeBooks = 'SNDB'; // SkyrimNet Diary Books
-    constexpr std::uint32_t kSerializationTypeCache = 'SNDC'; // SkyrimNet Diary Cache (UUID mappings)
+    // Retired 'SNDC' records may still exist in older saves; LoadCallback skips them.
     constexpr std::uint32_t kSerializationTypeFolder = 'SNDF'; // SkyrimNet Diary Folder (save-specific database name)
 
 } // end anonymous namespace
 
-// Forward declaration — defined below after GetCurrentSaveFolder.
-std::string DetectSaveFolderFromLog();
-
-// Get the current save's folder name (e.g., "SkyrimNet-1772379483115-796523").
-// Returns the cached value when available; otherwise delegates to DetectSaveFolderFromLog
-// which reads the authoritative save ID from SkyrimNet.log.
-std::string GetCurrentSaveFolder() {
-    if (!g_currentSaveFolder.empty()) {
-        return g_currentSaveFolder;
-    }
-    return DetectSaveFolderFromLog();
-}
-
 // Parse SkyrimNet.log to detect the current save folder (more reliable than filesystem scan).
 // Finds the most recent "Using save ID: " entry, verifies the .db file exists, and caches
-// the result in g_currentSaveFolder. Returns "" on failure (caller falls back to GetCurrentSaveFolder).
+// the result in g_currentSaveFolder. Returns "" on failure.
 std::string DetectSaveFolderFromLog() {
     if (!g_currentSaveFolder.empty()) {
         return g_currentSaveFolder;
@@ -451,51 +428,6 @@ std::string DetectSaveFolderFromLog() {
         SKSE::log::error("DetectSaveFolderFromLog exception: {}", e.what());
         return "";
     }
-}
-
-// Generate bio_template_name from actor (for UUID resolution)
-std::string GetBioTemplateName(RE::Actor* actor) {
-    if (!actor || !actor->GetActorBase()) {
-        return "";
-    }
-    
-    // Get actor name and normalize it (lowercase, replace spaces with underscores)
-    std::string name = actor->GetActorBase()->GetName();
-    std::transform(name.begin(), name.end(), name.begin(), ::tolower);
-    std::replace(name.begin(), name.end(), ' ', '_');
-    std::replace(name.begin(), name.end(), '-', '_');
-    std::replace(name.begin(), name.end(), '\'', '_');
-    
-    // Get last 3 hex digits of reference ID (stable across ESL load order changes)
-    RE::FormID refID = actor->GetFormID();
-    std::string last3 = fmt::format("{:03X}", refID & 0xFFF);
-    
-    return fmt::format("{}_{}", name, last3);
-}
-
-// Resolve actor to UUID with caching
-std::string ResolveActorUUID(RE::Actor* actor) {
-    if (!actor) {
-        return "";
-    }
-    
-    RE::FormID actorRefID = actor->GetFormID();
-    
-    // Check cache first
-    auto it = g_actorUuidCache.find(actorRefID);
-    if (it != g_actorUuidCache.end()) {
-        return it->second;
-    }
-    
-    // Not cached - resolve via SkyrimNet API
-    std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(actorRefID);
-    if (!uuid.empty()) {
-        // Cache for future lookups
-        g_actorUuidCache[actorRefID] = uuid;
-        SKSE::log::debug("Resolved actor {} (FormID 0x{:X}) to UUID: {}", actor->GetActorBase()->GetName(), actorRefID, uuid);
-    }
-    
-    return uuid;
 }
 
 // Format diary entries - accessible from BookManager
@@ -596,16 +528,6 @@ std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& 
     return bookText;
 }
 
-
-namespace {
-
-    // NOTE: GFxFunctionHandler override of CreateDisplayPage was attempted and
-    // confirmed non-functional: compiled AS2 prototype methods are NOT shadowed
-    // by instance properties set via SetVariable, even though SetVariable returns
-    // ok=true.  The fix for UTF-8 Cyrillic pagination is applied at the C++ level
-    // by converting to Win-1251 when the game language is Russian (see BookTextHook.cpp).
-
-} // end anonymous namespace
 
 // =============================================================================
 // Create all diary volumes for an actor from a flat list of entries.
@@ -1134,8 +1056,8 @@ void RunDiscoveryBatch(std::shared_ptr<DiscoveryState> state) {
 }
 
 // =============================================================================
-// MCM Reset: remove all tracked diary books from NPC inventories, delete their
-// .txt files, and clear all BookManager tracking.  SkyrimNet diary ENTRIES are
+// MCM Reset: remove all tracked diary books from NPC inventories and clear all
+// BookManager and DiaryDB tracking.  SkyrimNet diary ENTRIES are
 // NOT touched - books will be regenerated on the next diary event or Rebuild.
 // Returns the number of actor records cleared (negative on exception).
 // =============================================================================
@@ -1143,8 +1065,6 @@ int ResetAllDiariesInternal() {
     SKSE::log::info("ResetAllDiariesInternal: starting");
 
     auto bookManager   = SkyrimNetDiaries::BookManager::GetSingleton();
-    auto booksBasePath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "SkyrimNetPhysicalDiaries" / "Books";
-    std::string saveFolder = g_currentSaveFolder; // snapshot before clearing
 
     int actorsAffected = 0;
     int booksRemoved   = 0;
@@ -1152,8 +1072,7 @@ int ResetAllDiariesInternal() {
     try {
         const auto& allBooks = bookManager->GetAllBooks();
 
-        // Build a flat list of (uuid, bookFormId) pairs to remove from inventory,
-        // plus delete .txt files now (filesystem ops are safe off the game thread).
+        // Build a flat list of (uuid, bookFormId) pairs to remove from inventory.
         // Inventory removal MUST happen on the game thread — queue a single task for it.
         // We use uuid (not a cached FormID) so ESL load-order shifts don't matter.
         struct RemovalEntry { std::string uuid; RE::FormID bookFormId; std::string label; };
@@ -1173,15 +1092,6 @@ int ResetAllDiariesInternal() {
                 pendingRemovals.push_back({uuid, vol.bookFormId,
                     vol.actorName + " vol " + std::to_string(vol.volumeNumber)});
 
-                // Delete .txt file (safe to do here on the Papyrus thread).
-                if (!saveFolder.empty() && !vol.bioTemplateName.empty()) {
-                    std::string bookName = SkyrimNetDiaries::Localization::GetSingleton()->FormatBookName(vol.actorName, vol.volumeNumber);
-                    auto txtPath = booksBasePath / saveFolder / vol.bioTemplateName / (bookName + ".txt");
-                    if (std::filesystem::exists(txtPath)) {
-                        std::filesystem::remove(txtPath);
-                        SKSE::log::debug("  Deleted {}", txtPath.string());
-                    }
-                }
                 ++booksRemoved;
             }
         }
@@ -1207,7 +1117,6 @@ int ResetAllDiariesInternal() {
 
         // Clear all in-memory tracking immediately (safe — no game-thread state involved).
         bookManager->Revert();
-        g_actorUuidCache.clear();
         g_currentSaveFolder.clear();
 
         // Dispatch inventory removals to the game thread.  We deliberately do NOT
@@ -1286,168 +1195,7 @@ int ResetAllDiariesInternal() {
     }
 }
 
-// =============================================================================
-// MCM Rebuild: reset then immediately recreate all books from existing entries.
-// Requires that the SkyrimNet database can be found (save folder detectable).
-// =============================================================================
-
 namespace {
-
-    // Container change event sink to track diary theft/removal
-    class ContainerChangedEventSink : public RE::BSTEventSink<RE::TESContainerChangedEvent> {
-    public:
-        static ContainerChangedEventSink* GetSingleton() {
-            static ContainerChangedEventSink singleton;
-            return &singleton;
-        }
-
-        RE::BSEventNotifyControl ProcessEvent(const RE::TESContainerChangedEvent* a_event,
-                                               RE::BSTEventSource<RE::TESContainerChangedEvent>*) override {
-            if (!a_event) {
-                return RE::BSEventNotifyControl::kContinue;
-            }
-
-            // Check if a diary was removed from an NPC
-            auto bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
-            auto diaryData = bookManager->GetBookForFormID(a_event->baseObj);
-            
-            if (!diaryData) {
-                return RE::BSEventNotifyControl::kContinue;
-            }
-
-            // Get the source (who lost the item) and destination (who received it)
-            auto fromRef = a_event->oldContainer ? RE::TESForm::LookupByID<RE::TESObjectREFR>(a_event->oldContainer) : nullptr;
-            auto toRef = a_event->newContainer ? RE::TESForm::LookupByID<RE::TESObjectREFR>(a_event->newContainer) : nullptr;
-            
-            // Check if diary was removed from an NPC (oldContainer = NPC, newContainer = player or world)
-            if (fromRef) {
-                auto fromActor = fromRef->As<RE::Actor>();
-                if (fromActor && fromActor->GetActorBase()) {
-                    // Diary was removed from this NPC - record the time
-                    std::string actorName = fromActor->GetActorBase()->GetName();
-                    
-                    try {
-                        // Resolve actor UUID using API
-                        std::string actorUuid = ResolveActorUUID(fromActor);
-                        
-                        if (!actorUuid.empty()) {
-                            auto calendar = RE::Calendar::GetSingleton();
-                            if (calendar) {
-                                // Convert from days to seconds to match SkyrimNet's database format
-                                double currentTime = calendar->GetCurrentGameTime() * 86400.0;
-                                
-                                SKSE::log::info("Diary v{} removed from {} (UUID: {}) at game time {} seconds", 
-                                               diaryData->volumeNumber, actorName, actorUuid, currentTime);
-                                // Note: Faction marker added by DiaryTheftHandler for SkyrimNet prompt
-                            }
-                        }
-                    } catch (const std::exception& e) {
-                        SKSE::log::error("Error tracking stolen diary: {}", e.what());
-                    }
-                }
-            }
-            
-            // Check if diary was returned to an NPC (oldContainer = player, newContainer = NPC)
-            if (toRef) {
-                auto toActor = toRef->As<RE::Actor>();
-                auto* player = RE::PlayerCharacter::GetSingleton();
-                if (toActor && toActor->GetActorBase() && toActor != player) {
-                    // Diary was returned to this NPC
-                    std::string actorName = toActor->GetActorBase()->GetName();
-                    
-                    // Get the baseObj to check if it's a diary book
-                    auto* baseObj = RE::TESForm::LookupByID(a_event->baseObj);
-                    if (baseObj && baseObj->GetFormType() == RE::FormType::Book) {
-                        auto* book = baseObj->As<RE::TESObjectBOOK>();
-                        if (book) {
-                            // Check if this is one of our diary books by looking up in BookManager
-                            auto bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
-                            auto* bookData = bookManager->GetBookForFormID(book->GetFormID());
-                            
-                            if (bookData) {
-                                // This is a diary book being returned
-                                std::string bookName = book->GetName();
-                                int volNum = bookData->volumeNumber;
-                                SKSE::log::info("Diary '{}' (v{}) being returned to {}", 
-                                              bookName, volNum, actorName);
-                                
-                                // Don't remove the book from BookManager - keep it tracked for history
-                                // Just check if it was the latest volume to determine if we should clear session tracking
-                                auto* allVolumes = bookManager->GetAllVolumesForActor(bookData->actorUuid);
-                                bool wasLatest = true;
-                                if (allVolumes) {
-                                    for (const auto& vol : *allVolumes) {
-                                        if (vol.volumeNumber > volNum) {
-                                            wasLatest = false;
-                                            break;
-                                        }
-                                    }
-                                }
-                                
-                                if (wasLatest) {
-                                    // Latest volume returned - NPC can now receive new updates (inventory check on next daily update)
-                                    std::string actorUuid = ResolveActorUUID(toActor);
-                                    
-                                    if (!actorUuid.empty()) {
-                                        SKSE::log::debug("Latest volume v{} returned to {} (UUID: {})", 
-                                                       volNum, actorName, actorUuid);
-                                    }
-                                } else {
-                                    // Old volume returned but newer volumes exist
-                                    SKSE::log::debug("Old volume v{} returned - NPC has moved on to newer volumes", volNum);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            return RE::BSEventNotifyControl::kContinue;
-        }
-
-    private:
-        ContainerChangedEventSink() = default;
-        ContainerChangedEventSink(const ContainerChangedEventSink&) = delete;
-        ContainerChangedEventSink& operator=(const ContainerChangedEventSink&) = delete;
-    };
-
-    void WriteDiaryEntriesToLog(const std::vector<SkyrimNetDiaries::DiaryEntry>& entries) {
-        SKSE::log::debug("========================================");
-        SKSE::log::debug("DIARY ENTRIES FOUND: {}", entries.size());
-        SKSE::log::debug("========================================");
-
-        for (size_t i = 0; i < entries.size(); ++i) {
-            const auto& entry = entries[i];
-            
-            SKSE::log::debug("");
-            SKSE::log::debug("--- Entry {} ---", i + 1);
-            SKSE::log::debug("Actor: {} (UUID: {})", entry.actor_name, entry.actor_uuid);
-            SKSE::log::debug("Location: {}", entry.location);
-            SKSE::log::debug("Emotion: {}", entry.emotion);
-            SKSE::log::debug("Date: {}", entry.entry_date);
-            SKSE::log::debug("Importance: {}", entry.importance_score);
-            SKSE::log::debug("Content:");
-            SKSE::log::debug("{}", entry.content);
-            SKSE::log::debug("");
-        }
-
-        SKSE::log::debug("========================================");
-    }
-
-    // DEPRECATED: Database polling functions - no longer needed with API
-    /* 
-    void TestDatabaseConnection() {
-        // This function is deprecated - uses direct database access
-    }
-
-    void PollForActiveDatabase() {
-        // This function is deprecated - API handles database access
-    }
-
-    void UpdateDatabasePath() {
-        // This function is deprecated - API handles database path
-    }
-    */
 
     void SaveCallback(SKSE::SerializationInterface* a_intfc) {
         // Ensure the DiaryDB is open before writing the sentinel.
@@ -1488,39 +1236,6 @@ namespace {
         }
         SkyrimNetDiaries::BookManager::GetSingleton()->Save(a_intfc);
 
-        // Save UUID cache
-        if (!a_intfc->OpenRecord(kSerializationTypeCache, kSerializationVersion)) {
-            SKSE::log::error("Failed to open cache serialization record");
-            return;
-        }
-
-        std::uint32_t cacheSize = static_cast<std::uint32_t>(g_actorUuidCache.size());
-        if (!a_intfc->WriteRecordData(&cacheSize, sizeof(cacheSize))) {
-            SKSE::log::error("Failed to write cache size");
-            return;
-        }
-
-        for (const auto& [formId, uuid] : g_actorUuidCache) {
-            // Write FormID
-            if (!a_intfc->WriteRecordData(&formId, sizeof(formId))) {
-                SKSE::log::error("Failed to write cached FormID");
-                continue;
-            }
-
-            // Write UUID length and string
-            std::uint32_t uuidLen = static_cast<std::uint32_t>(uuid.length());
-            if (!a_intfc->WriteRecordData(&uuidLen, sizeof(uuidLen))) {
-                SKSE::log::error("Failed to write UUID length");
-                continue;
-            }
-            if (!a_intfc->WriteRecordData(uuid.c_str(), uuidLen)) {
-                SKSE::log::error("Failed to write UUID");
-                continue;
-            }
-        }
-
-        SKSE::log::debug("Saved {} UUID cache entries", cacheSize);
-        
         // Save current save folder name
         if (!g_currentSaveFolder.empty()) {
             if (!a_intfc->OpenRecord(kSerializationTypeFolder, kSerializationVersion)) {
@@ -1559,58 +1274,6 @@ namespace {
             if (type == kSerializationTypeBooks) {
                 SkyrimNetDiaries::BookManager::GetSingleton()->Load(a_intfc, version);
             }
-            else if (type == kSerializationTypeCache) {
-                // Load UUID cache
-                std::uint32_t cacheSize;
-                if (!a_intfc->ReadRecordData(&cacheSize, sizeof(cacheSize))) {
-                    SKSE::log::error("Failed to read cache size");
-                    continue;
-                }
-
-                SKSE::log::debug("Loading {} UUID cache entries", cacheSize);
-                g_actorUuidCache.clear();
-
-                for (std::uint32_t i = 0; i < cacheSize; ++i) {
-                    // Read FormID and resolve it
-                    RE::FormID oldFormId;
-                    if (!a_intfc->ReadRecordData(&oldFormId, sizeof(oldFormId))) {
-                        SKSE::log::error("Failed to read cached FormID");
-                        break;
-                    }
-
-                    RE::FormID newFormId;
-                    if (!a_intfc->ResolveFormID(oldFormId, newFormId)) {
-                        SKSE::log::warn("Failed to resolve cached FormID 0x{:X}, skipping", oldFormId);
-                        // Still need to read UUID to advance the stream
-                        std::uint32_t uuidLen;
-                        if (a_intfc->ReadRecordData(&uuidLen, sizeof(uuidLen))) {
-                            std::string dummy;
-                            dummy.resize(uuidLen);
-                            a_intfc->ReadRecordData(dummy.data(), uuidLen);
-                        }
-                        continue;
-                    }
-
-                    // Read UUID
-                    std::uint32_t uuidLen;
-                    if (!a_intfc->ReadRecordData(&uuidLen, sizeof(uuidLen))) {
-                        SKSE::log::error("Failed to read UUID length");
-                        break;
-                    }
-
-                    std::string uuid;
-                    uuid.resize(uuidLen);
-                    if (!a_intfc->ReadRecordData(uuid.data(), uuidLen)) {
-                        SKSE::log::error("Failed to read UUID");
-                        break;
-                    }
-
-                    // Store with resolved FormID
-                    g_actorUuidCache[newFormId] = uuid;
-                }
-
-                SKSE::log::debug("Restored {} UUID cache entries", g_actorUuidCache.size());
-            }
             else if (type == kSerializationTypeFolder) {
                 // Load save folder name
                 std::uint32_t folderLen;
@@ -1634,7 +1297,6 @@ namespace {
     void RevertCallback([[maybe_unused]] SKSE::SerializationInterface* a_intfc) {
         // Called when starting a new game - clear all books and tracking
         SkyrimNetDiaries::BookManager::GetSingleton()->Revert();
-        g_actorUuidCache.clear();
         g_currentSaveFolder.clear();
         SKSE::log::info("Reverted all diary data and caches (new game)");
     }
@@ -1648,9 +1310,6 @@ namespace {
         switch (msg->type) {
         case SKSE::MessagingInterface::kDataLoaded: {
             try {
-                // Verify ESP setup now that forms are loaded
-                DiaryTheftHandler::VerifyESPSetup();
-
                 // Check for required dependency: Dynamic Persistent Forms
                 {
                     auto* dataHandler = RE::TESDataHandler::GetSingleton();
@@ -1709,18 +1368,6 @@ namespace {
 
                 // Now that GMSTs are loaded, read localized month/day names
                 SkyrimNetDiaries::Localization::GetSingleton()->ReadGMSTs();
-
-                // Register event sinks on game startup (don't load database yet)
-                auto scriptEventSource = RE::ScriptEventSourceHolder::GetSingleton();
-                if (scriptEventSource) {
-                    scriptEventSource->AddEventSink<RE::TESContainerChangedEvent>(ContainerChangedEventSink::GetSingleton());
-                    SKSE::log::debug("Registered TESContainerChangedEvent sink");
-                }
-
-                // BookMenu event sink removed — GFx CreateDisplayPage override is
-                // not viable (AS2 prototype methods are not shadowed by instance
-                // properties).  Cyrillic fix is applied in BookTextHook via Win-1251.
-
             } catch (const std::exception& e) {
                 SKSE::log::error("Exception in kDataLoaded: {}", e.what());
             } catch (...) {
@@ -1918,7 +1565,9 @@ namespace {
         }
 
         case SKSE::MessagingInterface::kPostLoadGame: {
-            
+            // First, and independent of SkyrimNet: DPF has restored its forms by now.
+            SkyrimNetDiaries::BookManager::SanitizeLoadedBookForms();
+
             if (!SkyrimNetDiaries::Database::InitializeAPI()) {
                 SKSE::log::warn("Failed to initialize API (SkyrimNet may not be loaded yet)");
                 break;
@@ -2144,7 +1793,7 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
     SkyrimNetDiaries::Localization::GetSingleton()->Initialize();
 
     // Install book text injection hook (replaces Dynamic Book Framework text delivery,
-    // works on both SSE and VR via RELOCATION_ID(50122, 51053)).
+    // covers SE, AE and VR — see BookTextHook.cpp).
     BookTextHook::Install();
 
     // Register Papyrus native functions

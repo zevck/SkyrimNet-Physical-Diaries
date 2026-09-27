@@ -2,20 +2,7 @@
 #include "BookManager.h"
 #include "Localization.h"
 
-#include "RE/B/BookMenu.h"
-#include "RE/B/BSString.h"
 #include <cstring>
-#include "RE/E/ExtraDataList.h"
-#include "RE/N/NiPoint3.h"
-#include "RE/N/NiMatrix3.h"
-#include "RE/T/TESObjectBOOK.h"
-#include "RE/T/TESObjectREFR.h"
-#include "REL/Relocation.h"
-#include "SKSE/SKSE.h"
-#include <string>
-#include <cstdint>
-#include <algorithm>
-#include <fstream>
 
 // ---------------------------------------------------------------------------
 // OpenBookMenu hook
@@ -27,9 +14,9 @@
 // text for a_description before handing off to the original function.
 //
 // This replaces Dynamic Book Framework's SetBookTextHook which performs the
-// same job but gates itself out on VR ("Unsupported Skyrim version").  By
-// using RELOCATION_ID(50122, 51053) — which has both the SSE and VR address
-// library entries — this hook works on both runtimes with no version check.
+// same job but gates itself out on VR ("Unsupported Skyrim version").
+// RELOCATION_ID(50122, 51053) is (SE id, AE id); VR reuses the SE id through
+// the VR Address Library, so one hook covers SE, AE and VR with no version check.
 // ---------------------------------------------------------------------------
 
 namespace
@@ -128,20 +115,6 @@ namespace
                     out += static_cast<char>(0xA3);
                 } else if (cp == 0x0458) {  // ј → 0xBC (Serbian, Macedonian)
                     out += static_cast<char>(0xBC);
-                } else if (cp == 0x2013) {  // en-dash → 0x96
-                    out += static_cast<char>(0x96);
-                } else if (cp == 0x2014) {  // em-dash → 0x97
-                    out += static_cast<char>(0x97);
-                } else if (cp == 0x201C) {  // left double quote → 0x93
-                    out += static_cast<char>(0x93);
-                } else if (cp == 0x201D) {  // right double quote → 0x94
-                    out += static_cast<char>(0x94);
-                } else if (cp == 0x201E) {  // bottom double quote → 0x84
-                    out += static_cast<char>(0x84);
-                } else if (cp == 0x2026) {  // ellipsis → 0x85
-                    out += static_cast<char>(0x85);
-                } else if (cp == 0x2116) {  // № → 0xB9
-                    out += static_cast<char>(0xB9);
                 } else if (cp == 0x00AB) {  // « → 0xAB
                     out += static_cast<char>(0xAB);
                 } else if (cp == 0x00BB) {  // » → 0xBB
@@ -259,9 +232,15 @@ namespace
             // kCantTake so they lose nothing.  The only cost is that vanilla books
             // opened from the world lose their "take" association on VR — an
             // acceptable trade against a guaranteed crash.  SSE is untouched.
+            //
+            // Also force useDefaultPos: without the ref, VR places the 3D book off-screen.
+            // Null ref + default position is the working inventory-open path
+            // (see docs/BOOK_TEXT.md).
             RE::TESObjectREFR* safeRef = a_ref;
+            bool safeUseDefaultPos = a_useDefaultPos;
             if (a_ref && REL::Module::IsVR()) {
                 safeRef = nullptr;
+                safeUseDefaultPos = true;
             }
 
             if (a_book) {
@@ -298,7 +277,7 @@ namespace
                         RE::BSString injectedText{ textToInject.c_str() };
 
                         if (!CallOriginalGuarded(injectedText, a_extra, safeRef, a_book,
-                                                 a_pos, a_rot, a_scale, a_useDefaultPos)) {
+                                                 a_pos, a_rot, a_scale, safeUseDefaultPos)) {
                             SKSE::log::warn("[BookTextHook] OpenBookMenu faulted (caught) for diary "
                                             "formId=0x{:X} — book not opened, game continues",
                                             a_book->GetFormID());
@@ -309,7 +288,7 @@ namespace
             }
 
             if (!CallOriginalGuarded(a_desc, a_extra, safeRef, a_book,
-                                     a_pos, a_rot, a_scale, a_useDefaultPos)) {
+                                     a_pos, a_rot, a_scale, safeUseDefaultPos)) {
                 SKSE::log::warn("[BookTextHook] OpenBookMenu faulted (caught) — book not opened, "
                                 "game continues (likely a dead reference handle from a VR/HIGGS grab)");
             }
@@ -317,7 +296,7 @@ namespace
 
         static void Install()
         {
-            // SSE id: 50122  |  VR id: 51053
+            // SE id 50122 (also used by VR) | AE id 51053
             REL::Relocation<std::uintptr_t> target{ RELOCATION_ID(50122, 51053) };
             auto& trampoline = SKSE::GetTrampoline();
 

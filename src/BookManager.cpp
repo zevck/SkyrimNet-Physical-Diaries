@@ -1,6 +1,5 @@
 #include "BookManager.h"
 #include "Database.h"
-#include "DPF_API.h"
 #include "DiaryDB.h"
 #include "Localization.h"
 #include <fstream>
@@ -74,6 +73,20 @@ namespace SkyrimNetDiaries {
     static std::mutex g_claimedFormIdMutex;
     static std::unordered_map<RE::FormID, std::string> g_claimedFormIds;  // FormID → owning UUID
     static constexpr int kMaxCreateRetries = 16;
+
+    // DPF clones on VR have been seen with sourceFiles.array == 0x1, which crashes
+    // TESForm::GetFile for anything that reads the description (item cards,
+    // Description Framework, save serialization).  A value inside the first 64 KB
+    // can never be a real pointer; nullptr is the state SE/AE clones already have
+    // and GetFile null-checks.  Valid pointers are untouched, so SE/AE behaviour
+    // does not change.  See docs/BOOK_FORMS.md.
+    static bool ClearBogusSourceFiles(RE::TESForm* form) {
+        const auto value = reinterpret_cast<std::uintptr_t>(form->sourceFiles.array);
+        if (value == 0 || value >= 0x10000) return false;
+        SKSE::log::debug("[DPF] Cleared invalid sourceFiles.array 0x{:X} on form 0x{:X}", value, form->GetFormID());
+        form->sourceFiles.array = nullptr;
+        return true;
+    }
 
     static void PumpDiaryCreateQueue();  // defined after DPFCreateCallback
 
@@ -187,7 +200,6 @@ namespace SkyrimNetDiaries {
                 }
                 
                 // Get template to copy properties
-                auto dataHandler = RE::TESDataHandler::GetSingleton();
                 auto templateBook = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>(journalTemplate.c_str());
                 
                 if (templateBook) {
@@ -197,6 +209,8 @@ namespace SkyrimNetDiaries {
                     newBook->itemCardDescription = templateBook->itemCardDescription;
                     newBook->weight = 0.5f;
                     newBook->value = 0;
+
+                    ClearBogusSourceFiles(newBook);
 
                     // Log the book type so we can verify it's a tome (0) not a scroll (0xFF).
                     // kNoteScroll books ignore [pagebreak] and render all text on one page,
@@ -296,14 +310,12 @@ namespace SkyrimNetDiaries {
                             SKSE::log::debug("Attempting to add book to actor 0x{:X} ({})...", targetFormID, name);
                             
                             SKSE::GetTaskInterface()->AddTask([uuid, targetFormID, newBook, bookName, name = std::string(name), bioTemplate]() {
-                                // Use FindActorForBook for the unified UUID-first lookup.
-                                // FindActorForBook handles player special-case, cache hits, and the
-                                // 3-tier resolution (UUID → stored FormID → legacy name+hex fallback).
+                                // FindActorForBook: player special-case, UUID-keyed cache, then
+                                // UUID → live FormID, then stored FormID with a UUID back-check.
                                 RE::Actor* targetActor = FindActorForBook(targetFormID, name, bioTemplate, uuid);
 
                                 if (targetActor) {
                                     // Actor found - add book to inventory
-                                    // If found in ProcessLists, they're loaded enough to manipulate inventory
                                     targetActor->AddObjectToContainer(newBook, nullptr, 1, nullptr);
                                     SKSE::log::info("✓ Added '{}' to {}'s inventory (actor 0x{:X}, kCantTake flag active)", bookName, name, targetFormID);
                                     
@@ -418,18 +430,8 @@ namespace SkyrimNetDiaries {
             return selectedTemplate;
         }
         
-        // Randomly select from available variants
-        auto* rng = RE::BGSDefaultObjectManager::GetSingleton();
-        if (rng) {
-            // Use actor UUID as seed for deterministic "randomness" (consistent across reloads)
-            std::hash<std::string> hasher;
-            size_t seed = hasher(actorUuid);
-            size_t index = seed % journalTemplates_.size();
-            selectedTemplate = journalTemplates_[index];
-        } else {
-            // Fallback: just use first variant
-            selectedTemplate = journalTemplates_[0];
-        }
+        // Pick a variant from the actor's UUID so the choice is stable across reloads.
+        selectedTemplate = journalTemplates_[std::hash<std::string>{}(actorUuid) % journalTemplates_.size()];
         
         SKSE::log::debug("Selected journal template for {}: {}", actorName, selectedTemplate);
         actorTemplates_[actorUuid] = selectedTemplate;
@@ -449,31 +451,11 @@ namespace SkyrimNetDiaries {
             return nullptr;
         }
 
-        // Get template book by Editor ID
-        auto dataHandler = RE::TESDataHandler::GetSingleton();
-        if (!dataHandler) {
-            SKSE::log::error("Failed to get TESDataHandler");
-            return nullptr;
-        }
+        // Look the template up by EditorID.  This works with powerofthree's Tweaks or
+        // Native EditorID Fix.  Don't scan books comparing GetFormEditorID(): that
+        // vfunc returns "" for books unless Native EditorID Fix is installed.
+        auto* templateBook = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>(templateToUse);
 
-        SKSE::log::debug("Looking for template book with Editor ID: {}", templateToUse);
-        
-        // Find book by Editor ID - need to iterate since there's no direct lookup
-        RE::TESObjectBOOK* templateBook = nullptr;
-        auto& books = dataHandler->GetFormArray<RE::TESObjectBOOK>();
-        for (auto book : books) {
-            if (book && book->GetFormEditorID()) {
-                std::string editorId = book->GetFormEditorID();
-                if (editorId == templateToUse) {
-                    templateBook = book;
-                    SKSE::log::debug("Found template book: {} (FormID: 0x{:X})", 
-                        book->GetName(), 
-                        book->GetFormID());
-                    break;
-                }
-            }
-        }
-        
         if (!templateBook) {
             SKSE::log::error("Template book not found with Editor ID: {}", templateToUse);
             return nullptr;
@@ -558,48 +540,6 @@ namespace SkyrimNetDiaries {
         }
     }
 
-    bool BookManager::UpdateBookText(RE::TESObjectBOOK* book, const std::string& actorUuid,
-                                     double startTime, double endTime) {
-        // TODO: Get database path from somewhere global
-        // For now, just set placeholder text
-        std::string bookText = "<font face='$HandwrittenFont' size='18'>";
-        bookText += "Diary of " + actorUuid + "\n\n";
-        bookText += "Entries from time " + std::to_string(startTime);
-        bookText += " to " + (endTime == 0.0 ? "present" : std::to_string(endTime));
-        bookText += "\n\n[Diary entries will be loaded from database]";
-        bookText += "</font>";
-
-        // For now, we'll need to use the item card description (CNAM field)
-        // The actual book text rendering happens in the BookMenu but we can't directly set it
-        // We'll store the text in the description for now as a placeholder
-        // TODO: Investigate hooking into the BookMenu directly to inject text
-        SKSE::log::warn("UpdateBookText called - book text rendering not fully implemented yet");
-        SKSE::log::debug("Would set text: {}", bookText);
-        
-        return true;
-    }
-
-    void BookManager::SetBookText(RE::TESObjectBOOK* book, const std::string& text) {
-        if (!book) {
-            SKSE::log::error("SetBookText: null book");
-            return;
-        }
-
-        // Directly write the book description text
-        // This is the text that BookMenu displays
-        // We use a memory write since BGSLocalizedStringDL is just an ID
-        book->descriptionText.id = 0;  // Clear localization ID
-        
-        // The actual text is stored in a string table, but we can temporarily
-        // override it by setting a custom string. Unfortunately CommonLibSSE
-        // doesn't expose direct text setting for localized strings.
-        // We need to use the itemCardDescription instead
-        book->itemCardDescription.descriptionText.id = 0;
-        
-        SKSE::log::debug("Set book text ({} characters) for book 0x{:X}", text.length(), book->GetFormID());
-        SKSE::log::warn("Note: Book text injection via memory is limited - text may not display");
-    }
-
     DiaryBookData* BookManager::GetBookForActor(const std::string& actorUuid) {
         auto it = books_.find(actorUuid);
         if (it == books_.end() || it->second.empty()) {
@@ -627,29 +567,6 @@ namespace SkyrimNetDiaries {
             }
         }
         return nullptr;
-    }
-
-    std::optional<DiaryBookData> BookManager::GetBookByFormID(RE::FormID formId) {
-        // Search all actors' volumes for matching FormID and return a copy
-        for (const auto& [uuid, volumes] : books_) {
-            for (const auto& book : volumes) {
-                if (book.bookFormId == formId) {
-                    return book;  // Return copy
-                }
-            }
-        }
-        return std::nullopt;
-    }
-
-    std::vector<std::string> BookManager::GetAllTrackedActorUUIDs() const {
-        std::vector<std::string> uuids;
-        uuids.reserve(books_.size());
-        for (const auto& [uuid, volumes] : books_) {
-            if (!volumes.empty()) {
-                uuids.push_back(uuid);
-            }
-        }
-        return uuids;
     }
 
     void BookManager::RegisterBook(const std::string& actorUuid, const std::string& actorName,
@@ -733,48 +650,6 @@ namespace SkyrimNetDiaries {
             books_.erase(it);
         }
         DiaryDB::GetSingleton()->DeleteActor(actorUuid);
-    }
-
-    int BookManager::RemoveBookByFormID(RE::FormID formId) {
-        // Search all actors' books for this FormID
-        for (auto& [uuid, volumes] : books_) {
-            for (auto it = volumes.begin(); it != volumes.end(); ++it) {
-                if (it->bookFormId == formId) {
-                    int volumeNum = it->volumeNumber;
-                    std::string actorName = it->actorName;
-                    
-                    // Check if this is the latest volume before removing
-                    int maxVolume = 0;
-                    for (const auto& vol : volumes) {
-                        if (vol.volumeNumber > maxVolume) {
-                            maxVolume = vol.volumeNumber;
-                        }
-                    }
-                    bool isLatestVolume = (volumeNum == maxVolume);
-                    
-                    volumes.erase(it);
-                    SKSE::log::debug("Removed volume {} for {} (FormID 0x{:X}) - player returned book",
-                                  volumeNum, actorName, formId);
-                    DiaryDB::GetSingleton()->DeleteVolume(uuid, volumeNum);
-
-                    // If this was the only volume, remove the UUID entry entirely
-                    if (volumes.empty()) {
-                        books_.erase(uuid);
-                        SKSE::log::debug("Removed last volume for {} - cleared all tracking", actorName);
-                        return 2; // Was the latest (and only) volume
-                    }
-                    
-                    if (isLatestVolume) {
-                        SKSE::log::debug("Volume {} was the latest - NPC can get updates", volumeNum);
-                        return 2; // Was the latest volume, allow updates
-                    } else {
-                        SKSE::log::debug("Volume {} is old - newer volumes exist, this volume stays frozen", volumeNum);
-                        return 1; // Older volume, don't allow updates
-                    }
-                }
-            }
-        }
-        return 0; // Not found
     }
 
     void BookManager::RegenerateAllDiaryTexts() {
@@ -894,6 +769,25 @@ namespace SkyrimNetDiaries {
         }
         SKSE::log::debug("[BookManager] FlushToDB: wrote {} volumes, {} actor templates",
                         volumesFlushed, actorTemplates_.size());
+    }
+
+    void BookManager::SanitizeLoadedBookForms() {
+        // Every book, not only DiaryDB-tracked volumes: DPF also restores diaries whose
+        // rows are gone (orphaned by Reset or a rebuild, or when the DB failed to open).
+        const auto& [map, lock] = RE::TESForm::GetAllForms();
+        if (!map) return;
+        int cleared = 0;
+        {
+            const RE::BSReadLockGuard guard{ lock };
+            for (auto& [id, form] : *map) {
+                if (form && form->GetFormType() == RE::FormType::Book && ClearBogusSourceFiles(form)) {
+                    ++cleared;
+                }
+            }
+        }
+        if (cleared > 0) {
+            SKSE::log::info("[DPF] Cleared invalid sourceFiles on {} book form(s)", cleared);
+        }
     }
 
     void BookManager::ClearActorCache() {

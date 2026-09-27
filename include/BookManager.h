@@ -60,14 +60,6 @@ namespace SkyrimNetDiaries {
                                            double prevVolumeLastCreationTime = 0.0,
                                            int prevVolumeCountAtBoundary = 0);
 
-        // Update an existing book's text from database
-        bool UpdateBookText(RE::TESObjectBOOK* book, const std::string& actorUuid,
-                           double startTime, double endTime);
-
-        // Set book text directly (for runtime injection)
-        void SetBookText(RE::TESObjectBOOK* book, const std::string& text);
-
-        // Find book by actor UUID
         // Get latest volume for an actor by UUID
         DiaryBookData* GetBookForActor(const std::string& actorUuid);
 
@@ -76,15 +68,6 @@ namespace SkyrimNetDiaries {
 
         // Get book data by FormID (searches all actors)
         DiaryBookData* GetBookForFormID(RE::FormID formId);
-        
-        // Get book  data by FormID (returns copy for safe access)
-        std::optional<DiaryBookData> GetBookByFormID(RE::FormID formId);
-        
-        // Get all actor UUIDs that have tracked books
-        std::vector<std::string> GetAllTrackedActorUUIDs() const;
-
-        // Check if BookManager has any books
-        bool HasAnyBooks() const { return !books_.empty(); }
 
         // Get all books (for checking volume numbers)
         const std::unordered_map<std::string, std::vector<DiaryBookData>>& GetAllBooks() const { return books_; }
@@ -108,10 +91,6 @@ namespace SkyrimNetDiaries {
         // Unregister a book (when it becomes obsolete due to deletions)
         void UnregisterBook(const std::string& actorUuid);
 
-        // Remove a specific book by FormID (when player returns it to NPC)
-        // Returns: 0 = not found, 1 = removed but newer volumes exist, 2 = removed and was latest volume
-        int RemoveBookByFormID(RE::FormID formId);
-
         // Regenerate all diary texts from database (called on game load)
         void RegenerateAllDiaryTexts();
 
@@ -124,6 +103,11 @@ namespace SkyrimNetDiaries {
         // Clears the actor reference cache so the next inventory-add does a fresh
         // lookup.  Must be called on each kPostLoadGame to avoid stale pointers.
         static void ClearActorCache();
+
+        // Clears the invalid sourceFiles pointer DPF leaves on some clones (VR),
+        // across every loaded book form.  Call at kPostLoadGame, before anything
+        // reads book descriptions.
+        static void SanitizeLoadedBookForms();
 
         // For every volume currently in books_, queues a game-thread task that checks
         // whether the owning NPC has the book in their inventory and re-adds it if not.

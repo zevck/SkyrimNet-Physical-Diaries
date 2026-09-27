@@ -1,7 +1,6 @@
 ﻿#include "PapyrusAPI.h"
 #include "BookManager.h"
 #include "Config.h"
-#include "DiaryTheftHandler.h"
 #include "Database.h"
 #include "DiaryDB.h"
 #include <spdlog/spdlog.h>
@@ -9,66 +8,9 @@
 // Forward declarations from main.cpp (defined in global namespace)
 extern void UpdateDiaryForActorInternal(RE::FormID formId);
 extern int  ResetAllDiariesInternal();
-extern void CreateAllVolumesForActor(const std::string& uuid, const std::string& actorName,
-    RE::FormID formId, const std::string& bioTemplateName,
-    std::vector<SkyrimNetDiaries::DiaryEntry> allEntries, int startingVolumeNumber);
 
 namespace PapyrusAPI {
 
-    bool ApplyStolenDiaryEffect(RE::StaticFunctionTag*, RE::Actor* akActor) {
-        if (!akActor) {
-            SKSE::log::warn("ApplyStolenDiaryEffect called with null actor");
-            return false;
-        }
-
-        // Look up the ability spell that contains the SNPD_DiaryStolen magic effect
-        auto* spell = RE::TESForm::LookupByEditorID<RE::SpellItem>("SNPD_DiaryStorageSpell");
-        if (!spell) {
-            SKSE::log::error("Failed to find SNPD_DiaryStorageSpell - make sure it exists in the ESP");
-            return false;
-        }
-
-        // Check if actor already has this spell
-        if (akActor->HasSpell(spell)) {
-            SKSE::log::debug("{} already has SNPD_DiaryStorageSpell", akActor->GetName());
-            return true; // Not an error, just already applied
-        }
-
-        // Add the spell (ability) to the actor
-        akActor->AddSpell(spell);
-        
-        SKSE::log::debug("Applied SNPD_DiaryStorageSpell to {} (FormID: 0x{:X})", 
-                       akActor->GetName(), akActor->GetFormID());
-        return true;
-    }
-
-    bool RemoveStolenDiaryEffect(RE::StaticFunctionTag*, RE::Actor* akActor) {
-        if (!akActor) {
-            SKSE::log::warn("RemoveStolenDiaryEffect called with null actor");
-            return false;
-        }
-
-        // Look up the ability spell that contains the SNPD_DiaryStolen magic effect
-        auto* spell = RE::TESForm::LookupByEditorID<RE::SpellItem>("SNPD_DiaryStorageSpell");
-        if (!spell) {
-            SKSE::log::error("Failed to find SNPD_DiaryStorageSpell - make sure it exists in the ESP");
-            return false;
-        }
-
-        // Check if actor has this spell
-        if (!akActor->HasSpell(spell)) {
-            SKSE::log::debug("{} doesn't have SNPD_DiaryStorageSpell (already removed or never applied)", akActor->GetName());
-            return true; // Not an error, just not present
-        }
-
-        // Remove the spell (ability) from the actor
-        akActor->RemoveSpell(spell);
-        
-        SKSE::log::debug("Removed SNPD_DiaryStorageSpell from {} (FormID: 0x{:X}) - diary was returned", 
-                       akActor->GetName(), akActor->GetFormID());
-        return true;
-    }
-    
     void UpdateDiaryForActorWrapper(RE::StaticFunctionTag*, std::int32_t formId) {
         SKSE::log::debug("[PapyrusAPI] UpdateDiaryForActor called with FormID 0x{:X}", formId);
 
@@ -86,10 +28,6 @@ namespace PapyrusAPI {
         }
 
         ::UpdateDiaryForActorInternal(static_cast<RE::FormID>(formId));
-    }
-
-    RE::TESForm* GetStolenFaction(RE::StaticFunctionTag*) {
-        return RE::TESForm::LookupByEditorID<RE::TESFaction>("SNPD_DiaryStolenFaction");
     }
 
     RE::BSFixedString GetDiaryTheftStatus(RE::StaticFunctionTag*, RE::Actor* akActor) {
@@ -260,10 +198,7 @@ namespace PapyrusAPI {
             return false;
         }
 
-        a_vm->RegisterFunction("ApplyStolenDiaryEffect", "PhysicalDiaryAPI", ApplyStolenDiaryEffect);
-        a_vm->RegisterFunction("RemoveStolenDiaryEffect", "PhysicalDiaryAPI", RemoveStolenDiaryEffect);
         a_vm->RegisterFunction("UpdateDiaryForActor", "SkyrimNetDiaries_Native", UpdateDiaryForActorWrapper);
-        a_vm->RegisterFunction("GetStolenFaction",    "SkyrimNetDiaries_Native", GetStolenFaction);
         a_vm->RegisterFunction("GetDiaryTheftStatus", "SkyrimNetDiaries_API", GetDiaryTheftStatus);
         a_vm->RegisterFunction("IsDiaryStolen",       "SkyrimNetDiaries_API", IsDiaryStolen);
         a_vm->RegisterFunction("SetTheftCleared",     "SkyrimNetDiaries_API", SetTheftCleared);

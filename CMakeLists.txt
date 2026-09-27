@@ -35,7 +35,6 @@ set(sources
     src/Database.cpp
     src/BookManager.cpp
     src/DiaryDB.cpp
-    src/DPF_API.cpp
     src/DiaryTheftHandler.cpp
     src/BookTextHook.cpp
     src/PapyrusAPI.cpp

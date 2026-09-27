@@ -64,10 +64,6 @@ namespace SkyrimNetDiaries {
         bool UpdateEndTime(const std::string& actorUuid, int volumeNumber,
                            double endTime);
 
-        // Update only book_form_id (called after DPF recreates a lost form).
-        bool UpdateFormID(const std::string& actorUuid, int volumeNumber,
-                          std::uint32_t formId);
-
         // Delete a single volume row.
         bool DeleteVolume(const std::string& actorUuid, int volumeNumber);
 
@@ -76,10 +72,6 @@ namespace SkyrimNetDiaries {
 
         // Return all volume rows ordered by (actor_uuid, volume_number).
         std::vector<VolumeRow> LoadAllVolumes();
-
-        // Open an arbitrary DiaryDB file at the given path (read-only) and return
-        // all volume rows from it.  Does NOT affect the currently-open database.
-        static std::vector<VolumeRow> LoadAllVolumesFromPath(const std::string& dbPath);
 
         // Mark every volume as persisted (call from kPostSaveGame so that the
         // inventory-check on next load doesn't re-add legitimately taken books).

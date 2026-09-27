@@ -180,11 +180,6 @@ namespace SkyrimNetDiaries {
         return entries;
     }
 
-    std::vector<DiaryEntry> Database::GetAllDiaryEntries(int limit) {
-        // Use formId=0 to get entries from ALL actors
-        return GetDiaryEntries(0, limit, 0.0, 0.0);
-    }
-
     std::string Database::GetBioTemplateName(uint32_t formId) {
         if (!api_initialized_ && !InitializeAPI()) {
             return "";

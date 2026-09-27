@@ -36,9 +36,6 @@ namespace SkyrimNetDiaries {
                                                         double prevVolumeLastCreationTime = 0.0,
                                                         int prevVolumeCountAtBoundary = 0);
         
-        // Query ALL diary entries across all actors (using API with formId=0, used by discovery scan)
-        static std::vector<DiaryEntry> GetAllDiaryEntries(int limit = 10000);
-        
         // Get bio template name for an actor FormID
         static std::string GetBioTemplateName(uint32_t formId);
         

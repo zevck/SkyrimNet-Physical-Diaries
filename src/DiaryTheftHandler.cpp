@@ -447,10 +447,4 @@ namespace DiaryTheftHandler {
             SKSE::log::error("Failed to get UI singleton for menu tracking");
         }
     }
-    
-    void VerifyESPSetup() {
-        // Verify that required forms exist in the ESP
-        // This is just a diagnostic check - the decorator system doesn't need these
-        SKSE::log::info("[Physical Diaries] ESP verification: Using database-backed theft tracking");
-    }
 }

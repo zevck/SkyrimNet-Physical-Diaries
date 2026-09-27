@@ -1,6 +1,5 @@
 #include "Localization.h"
 #include "Config.h"
-#include "SKSE/SKSE.h"
 
 #include <algorithm>
 #include <fstream>
