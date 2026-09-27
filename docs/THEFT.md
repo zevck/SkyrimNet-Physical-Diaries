@@ -18,7 +18,7 @@ The menu sink tracks only whether the **Dialogue Menu**, **Console** and **Conta
 2. The NPC on the other side of the transfer must be alive (looting a corpse is not theft), and must **own** the volume: its live UUID (`GetUUIDFromFormID`) must equal the volume's UUID. If SkyrimNet doesn't know the NPC, or it's someone else's diary, nothing is recorded.
 
 **Player receives a diary:**
-- **Theft** = the instance in the player's inventory has `ExtraDataType::kOwnership`, the engine's stolen marker. Record it: `DiaryDB::AddStolenVolume(uuid, volume, gameTime)` and update `last_known_game_time`. Every volume counts, not only the latest.
+- **Theft** = the instance in the player's inventory has `ExtraDataType::kOwnership`, the engine's stolen marker. Record it: `DiaryDB::AddStolenVolume(uuid, volume, gameTime)`. Every volume counts, not only the latest.
 - No ownership data, but a legitimate trade is under way → send ModEvent **`PhysicalDiary_Shared`** (`strArg` = book name, `numArg` = the actor's FormID as a float, sender = the actor), so a SkyrimNet trigger can have the NPC react to the player taking their diary.
 - Neither → ignore (for example, console `additem`).
 
@@ -43,11 +43,11 @@ The menu sink tracks only whether the **Dialogue Menu**, **Console** and **Conta
 
 ## Save reverts
 
-`last_known_game_time` (per actor, in `actor_templates`) is stamped on theft, on return, on every diary event for that actor (`ClearStolenVolumes`), at every save, and at every load (`ReconcileAfterLoad` resets it to the loaded game time after the check below). Stamping an actor with no volumes yet creates an `actor_templates` row with an empty `template_name`, which template selection ignores. At `kPostLoadGame`, if the current game time is **earlier** than an actor's stamp, the player has loaded an earlier save and the theft may never have happened in this timeline, so that actor's stolen volumes are cleared.
+At `kPostLoadGame`, `ReconcileAfterLoad` deletes every theft record whose `stolen_at` is later than the loaded save's game time (`DiaryDB::RemoveStolenVolumesAfter`): that theft happened in a timeline the player has left. Thefts from before the save stand, so a save made while carrying a stolen diary still has it counted. Until 2026-09-27 this compared a per-actor `last_known_game_time` stamp instead and cleared **all** of an actor's thefts on any load of an earlier save.
 
 ## Related behaviour
 
 - A stolen volume is never updated again. When the NPC writes their next entry, `UpdateDiaryForActorInternal` sees they no longer hold their latest volume and starts a new one. See [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md).
 - `persisted_in_save` stops a stolen book being put back into the NPC's inventory on load. See [BOOK_FORMS.md](BOOK_FORMS.md#keeping-forms-valid-across-loads).
-- `GetDiaryTheftStatus` returns JSON: `{"stolen": true, "chronicled": false}` or `{"stolen": false}`. `chronicled` is always `false` (left over from an older design).
+- `GetDiaryTheftStatus` returns JSON: `{"stolen": true, "chronicled": false}` or `{"stolen": false}`, and `{"error": "null actor"}` when passed None. `chronicled` is always `false` (left over from an older design).
 - The ESP still has `SNPD_DiaryStolenFaction` from an earlier faction-based design. Nothing uses it. (An even earlier spell-based design looked up `SNPD_DiaryStorageSpell`, which is not in the ESP; its natives were removed on 2026-09-26.)

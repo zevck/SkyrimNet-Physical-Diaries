@@ -65,12 +65,11 @@ namespace SkyrimNetDiaries::TimelineGate {
         // True if SkyrimNet holds a diary entry dated after the current game time,
         // i.e. the loaded save is behind SkyrimNet's history.
         bool HasFutureDiaryEntries() {
-            auto* calendar = RE::Calendar::GetSingleton();
-            if (!calendar) return false;
             const double now = SkyrimNetDiaries::CurrentGameTimeSeconds();
-            // SkyrimNet returns entries newest first.
+            if (now <= 0.0) return false;
+            // A limit of 1 returns the newest entry.
             const auto newest = Database::GetDiaryEntries(0, 1, 0.0, 0.0);
-            return !newest.empty() && newest.front().entry_date > now + 1.0;
+            return !newest.empty() && DatedAfter(newest.front().entry_date, now);
         }
 
         // Passes the answer on to SkyrimNet's callback after noting which button it was.
@@ -190,7 +189,6 @@ namespace SkyrimNetDiaries::TimelineGate {
             // SkyrimNet's own test: it asks keep/clear exactly when the player's latest
             // event is later than the loaded save's game time.  Future diary entries
             // alone don't make it ask.
-            auto* calendar = RE::Calendar::GetSingleton();
             const double gameNow = SkyrimNetDiaries::CurrentGameTimeSeconds();
             const double lastEvent = Database::GetPlayerLastEventTime();
             g_promptExpected = lastEvent > gameNow;
@@ -224,8 +222,7 @@ namespace SkyrimNetDiaries::TimelineGate {
             }
             // The player's future events are gone without us seeing the prompt:
             // SkyrimNet has already cleared them.
-            if (auto* calendar = RE::Calendar::GetSingleton();
-                calendar && Database::GetPlayerLastEventTime() <= SkyrimNetDiaries::CurrentGameTimeSeconds()) {
+            if (Database::GetPlayerLastEventTime() <= SkyrimNetDiaries::CurrentGameTimeSeconds()) {
                 return true;
             }
             if (now - g_waitStart > kNoPromptTimeout) {

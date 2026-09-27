@@ -57,9 +57,28 @@ namespace {
         });
     }
 
-    // Bumped on every kPreLoadGame so a post-load setup still waiting from an
-    // earlier load gives up instead of running against the new one.
+    // Bumped whenever a session ends (a load or a new game) so a post-load setup
+    // still waiting from an earlier load gives up instead of running against the new one.
     std::atomic<std::uint32_t> g_loadGeneration{ 0 };
+
+    // Set at kDataLoaded: without DPF no book form can be created or restored.
+    bool g_dpfMissing = false;
+
+    // Ends the current session before a load or a new game.  Nothing from it may
+    // leak into the next: queued book creations, the actor cache and FormID claims,
+    // and the previous save's DiaryDB (reopened by the post-load sync, or by
+    // SaveCallback if a save happens first).  A new game gets no kPreLoadGame, so
+    // without this it would keep writing into the previous character's DiaryDB.
+    void EndSession() {
+        ++g_loadGeneration;
+        SkyrimNetDiaries::TimelineGate::Reset();
+        SkyrimNetDiaries::CancelPendingCreations();
+        SkyrimNetDiaries::BookManager::ClearActorCache();
+        SkyrimNetDiaries::DiaryDB::GetSingleton()->Close();
+        SkyrimNetDiaries::SaveFolder::Clear();
+        // Drops diary events still deferred from the previous session.
+        SkyrimNetDiaries::SetPostLoadSyncReady(false);
+    }
 
     // SkyrimNet readiness is polled every 100 ms for up to a minute.
     constexpr auto kSetupPollInterval = std::chrono::milliseconds(100);
@@ -82,6 +101,7 @@ namespace {
                     auto* dataHandler = RE::TESDataHandler::GetSingleton();
                     bool dpfInstalled = dataHandler && dataHandler->LookupModByName("Dynamic Persistent Forms.esp");
                     if (!dpfInstalled) {
+                        g_dpfMissing = true;
                         SKSE::log::error("kDataLoaded: 'Dynamic Persistent Forms.esp' is not installed — diary books cannot be created");
                         ShowWarning(SkyrimNetDiaries::Localization::GetSingleton()->GetDpfMissingText());
                     }
@@ -146,22 +166,13 @@ namespace {
         }
 
         case SKSE::MessagingInterface::kPreLoadGame: {
-            ++g_loadGeneration;
-            SkyrimNetDiaries::TimelineGate::Reset();
-            // Nothing from the previous load may leak into this one: queued book
-            // creations, the actor cache and FormID claims, and the previous save's
-            // DiaryDB (reopened for this save by the post-load sync; SaveCallback
-            // reopens it itself if a save happens first).
-            SkyrimNetDiaries::CancelPendingCreations();
-            SkyrimNetDiaries::BookManager::ClearActorCache();
-            SkyrimNetDiaries::DiaryDB::GetSingleton()->Close();
-            SkyrimNetDiaries::SaveFolder::Clear();
             // Diary events wait for this load's post-load sync (see SetPostLoadSyncReady).
-            SkyrimNetDiaries::SetPostLoadSyncReady(false);
+            EndSession();
             break;
         }
 
         case SKSE::MessagingInterface::kNewGame: {
+            EndSession();
             // No kPostLoadGame follows a new game, so nothing else would release diary events.
             SkyrimNetDiaries::SetPostLoadSyncReady(true);
             break;
@@ -201,8 +212,9 @@ namespace {
 
                 if (!SkyrimNetDiaries::Database::IsMemorySystemReady()) {
                     if (std::chrono::steady_clock::now() - start > kMemorySystemTimeout) {
-                        SKSE::log::error("kPostLoadGame: SkyrimNet memory system not ready after {}s — giving up",
-                                         kMemorySystemTimeout.count());
+                        SKSE::log::error("kPostLoadGame: SkyrimNet memory system not ready after {}s — diary books "
+                                         "are paused until the next load", kMemorySystemTimeout.count());
+                        SkyrimNetDiaries::PauseDiaryBooks();
                         SkyrimNetDiaries::SetPostLoadSyncReady(true);
                         return;
                     }
@@ -217,19 +229,25 @@ namespace {
                 const auto waited = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
                 SKSE::log::info("kPostLoadGame: SkyrimNet ready, starting post-load sync (waited {:.1f}s)", waited);
                 try {
+                    // SkyrimNet clears decorator registrations on every load.
+                    SkyrimNetDiaries::DiaryTheftHandler::RegisterStolenDecorator();
 
                     // Detect the save folder from SkyrimNet.log and open this save's DiaryDB.
-                    // Always re-detect on each load in case the player loaded a different save.
-                    SkyrimNetDiaries::SaveFolder::Clear();
                     SkyrimNetDiaries::SaveFolder::DetectFromLog();
+                    auto* db = SkyrimNetDiaries::DiaryDB::GetSingleton();
                     if (!SkyrimNetDiaries::SaveFolder::Get().empty()) {
-                        SkyrimNetDiaries::DiaryDB::GetSingleton()->Open(SkyrimNetDiaries::SaveFolder::Get());
-                    } else {
-                        SKSE::log::warn("kPostLoadGame: save folder still unknown — DiaryDB not opened");
+                        db->Open(SkyrimNetDiaries::SaveFolder::Get());
                     }
-
-                    // SkyrimNet clears decorator registrations on every load.
-                    DiaryTheftHandler::RegisterStolenDecorator();
+                    // Without this save's volumes every NPC would look new and get a
+                    // second set of books, so create nothing this session instead.
+                    if (g_dpfMissing || !db->IsOpen()) {
+                        SKSE::log::error("kPostLoadGame: {} — diary books are paused until the next load",
+                                         g_dpfMissing ? "Dynamic Persistent Forms is not installed"
+                                                      : "couldn't find or open this save's SkyrimNet folder");
+                        SkyrimNetDiaries::PauseDiaryBooks();
+                        SkyrimNetDiaries::SetPostLoadSyncReady(true);
+                        return;
+                    }
 
                     auto invalidActors = SkyrimNetDiaries::BookManager::GetSingleton()->LoadFromDB();
 
@@ -243,7 +261,7 @@ namespace {
 
                     // Clear stolen-volume records if this save is earlier in game time
                     // than the last session (the theft happened in an abandoned timeline).
-                    DiaryTheftHandler::ReconcileAfterLoad();
+                    SkyrimNetDiaries::DiaryTheftHandler::ReconcileAfterLoad();
 
                     // Diary events are handled again from here on; entries that arrived while
                     // we waited are picked up by the recovery and catch-up scans below.
@@ -344,26 +362,23 @@ SKSE_PLUGIN_LOAD(const SKSE::LoadInterface* a_skse)
     SKSE::log::debug("Registering for SKSE serialization...");
     SkyrimNetDiaries::Serialization::Register();
 
-    // Template book EditorIDs from the ESP (kJournalTemplates, kNightingaleTemplate).
-    SkyrimNetDiaries::BookManager::GetSingleton()->Initialize();
-
     // Register C++ event handler for diary theft/return detection
     SKSE::log::debug("Registering diary theft/return event handler...");
-    DiaryTheftHandler::Register();
+    SkyrimNetDiaries::DiaryTheftHandler::Register();
 
     // Detect game language and initialize localization (must happen before BookTextHook).
     SkyrimNetDiaries::Localization::GetSingleton()->Initialize();
 
     // Install book text injection hook (replaces Dynamic Book Framework text delivery,
     // covers SE, AE and VR — see BookTextHook.cpp).
-    BookTextHook::Install();
+    SkyrimNetDiaries::BookTextHook::Install();
 
     // Watch for SkyrimNet's keep/clear timeline prompt (see TimelineGate.h).
     SkyrimNetDiaries::TimelineGate::Install();
 
     // Register Papyrus native functions
     SKSE::log::debug("Registering Papyrus native functions...");
-    PapyrusAPI::Register();
+    SkyrimNetDiaries::PapyrusAPI::Register();
 
     SKSE::log::info("SkyrimNetPhysicalDiaries loaded successfully!");
 

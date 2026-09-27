@@ -38,7 +38,7 @@ namespace SkyrimNetDiaries {
         int lastKnownEntryCount = 0;   // Track expected entry count for deletion detection
 
         // The creation_time of the last entry in the previous volume.  Used by
-        // GetDiaryEntries to exclude boundary entries that share an entry_date with
+        // GetVolumeEntries to exclude boundary entries that share an entry_date with
         // this volume's first entry but logically belong to the previous volume.
         double prevVolumeLastCreationTime = 0.0;
         int prevVolumeCountAtBoundary = 0;   // how many prev-vol entries share the boundary date/CT
@@ -70,10 +70,6 @@ namespace SkyrimNetDiaries {
     public:
         static BookManager* GetSingleton();
 
-        // Initialize with template book Editor IDs from ESP
-        // baseTemplate is the default, others are for variety (pass empty strings to disable variety)
-        void Initialize();
-
         // Queues creation of one volume's book (async: DPF creates the form, then the
         // volume is registered and the book added to the NPC).  `entries` are the
         // volume's entries, oldest first.  Defined in BookCreation.cpp.
@@ -95,24 +91,21 @@ namespace SkyrimNetDiaries {
         const std::unordered_map<std::string, std::vector<DiaryBookData>>& GetAllBooks() const { return books_; }
         std::unordered_map<std::string, std::vector<DiaryBookData>>& GetAllBooksRef() { return books_; }
 
-        // Track a book creation
-        void RegisterBook(const std::string& actorUuid, const std::string& actorName,
-                         RE::FormID bookFormId, double startTime, double endTime, int volumeNumber,
-                         const std::string& journalTemplate = "",
-                         const std::string& bioTemplateName = "",
-                         double prevVolumeLastCreationTime = 0.0,
-                         int prevVolumeCountAtBoundary = 0,
-                         RE::FormID actorFormId = 0);
+        // Tracks a newly created volume (memory and DiaryDB).  Returns it as stored.
+        DiaryBookData& RegisterBook(DiaryBookData data);
 
         // Update a volume's endTime (after an update, a seal or a deletion), in memory and DiaryDB
         void UpdateBookEndTime(const std::string& actorUuid, int volumeNumber, double endTime);
 
-        // Renders `entries` into the volume (bounded by its startTime/endTime), writes the
+        // SkyrimNet's entries for `vol`, oldest first, up to `endTime` (0 = open-ended).
+        // The next volume's boundary data decides who owns entries on a date both share.
+        // `ok` is false when the query failed (as opposed to returning no entries).
+        std::vector<DiaryEntry> GetLiveEntries(const DiaryBookData& vol, RE::FormID actorFormId,
+                                               double endTime, bool* ok);
+
+        // Renders `entries` (exactly these) into the volume, writes the
         // text and entry count to DiaryDB, and updates cachedBookText / lastKnownEntryCount.
         void SetVolumeText(DiaryBookData& vol, const std::vector<DiaryEntry>& entries);
-
-        // Unregister a book (when it becomes obsolete due to deletions)
-        void UnregisterBook(const std::string& actorUuid);
 
         // Drops the actor's volumes numbered fromVolume and up (memory and DiaryDB).
         void UnregisterVolumesFrom(const std::string& actorUuid, int fromVolume);
@@ -126,8 +119,8 @@ namespace SkyrimNetDiaries {
         // actors whose latest volume was invalid (useful for logging).
         std::vector<std::string> LoadFromDB();
 
-        // Clears the actor reference cache so the next inventory-add does a fresh
-        // lookup.  Must be called on each kPostLoadGame to avoid stale pointers.
+        // Clears the actor FormID cache and the FormID claim table.  Called when a
+        // session ends (kPreLoadGame, kNewGame).
         static void ClearActorCache();
 
         // Clears the invalid sourceFiles pointer DPF leaves on some clones (VR),
@@ -166,8 +159,6 @@ namespace SkyrimNetDiaries {
         std::string SelectJournalTemplate(const std::string& actorUuid, const std::string& actorName,
                                           RE::FormID actorFormId);
 
-        std::vector<std::string> journalTemplates_;  // variants picked from by UUID hash
-        std::string nightingaleTemplate_;            // Karliah, Gallus, Mercer Frey
         std::unordered_map<std::string, std::string> actorTemplates_;  // UUID → template choice (persists across volumes)
         std::unordered_map<std::string, std::vector<DiaryBookData>> books_; // UUID → all volumes
     };

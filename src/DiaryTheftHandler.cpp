@@ -24,7 +24,7 @@
 #include "DiaryDB.h"
 #include <mutex>
 
-namespace DiaryTheftHandler {
+namespace SkyrimNetDiaries::DiaryTheftHandler {
 
     namespace {
 
@@ -36,13 +36,6 @@ namespace DiaryTheftHandler {
         bool g_consoleIsOpen = false;
         bool g_legitimateTradeActive = false;
         std::mutex g_menuMutex;
-
-        double GameTimeSeconds() { return SkyrimNetDiaries::CurrentGameTimeSeconds(); }
-
-        // SkyrimNet UUID of a live actor, or "" when SkyrimNet doesn't know it.
-        std::string UuidOf(const RE::Actor* actor) {
-            return SkyrimNetDiaries::Database::GetUUIDFromFormID(actor->GetFormID());
-        }
 
         // True if the player's copy of `book` carries ownership data, i.e. the engine
         // flagged it as stolen (pickpocketed or taken).  An unflagged copy came from a
@@ -87,19 +80,15 @@ namespace DiaryTheftHandler {
 
         void RecordTheft(const std::string& actorUuid, const std::string& actorName,
                          const std::string& bookName, int volumeNumber) {
-            const double gameTime = GameTimeSeconds();
-            auto* diaryDB = SkyrimNetDiaries::DiaryDB::GetSingleton();
-            diaryDB->AddStolenVolume(actorUuid, volumeNumber, gameTime);
-            // Stamp the time so a later load of an earlier save sees the travel back.
-            diaryDB->UpdateLastKnownGameTime(actorUuid, gameTime);
+            // stolen_at lets a later load of an earlier save drop the theft (ReconcileAfterLoad).
+            SkyrimNetDiaries::DiaryDB::GetSingleton()->AddStolenVolume(
+                actorUuid, volumeNumber, SkyrimNetDiaries::CurrentGameTimeSeconds());
             SKSE::log::info("[Physical Diaries] Player stole '{}' (vol {}) from {}", bookName, volumeNumber, actorName);
         }
 
         void RecordReturn(const std::string& actorUuid, const std::string& actorName,
                           const std::string& bookName, int volumeNumber) {
-            auto* diaryDB = SkyrimNetDiaries::DiaryDB::GetSingleton();
-            diaryDB->RemoveStolenVolume(actorUuid, volumeNumber);
-            diaryDB->UpdateLastKnownGameTime(actorUuid, GameTimeSeconds());
+            SkyrimNetDiaries::DiaryDB::GetSingleton()->RemoveStolenVolume(actorUuid, volumeNumber);
             SKSE::log::info("[Physical Diaries] '{}' (vol {}) returned to {} - removed from stolen list",
                             bookName, volumeNumber, actorName);
         }
@@ -151,7 +140,7 @@ namespace DiaryTheftHandler {
 
                     // Only the diary's owner counts: taking or giving someone else's
                     // diary changes nobody's theft state.
-                    const std::string otherUuid = UuidOf(other);
+                    const std::string otherUuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(other->GetFormID());
                     if (otherUuid.empty() || otherUuid != vol->actorUuid) {
                         SKSE::log::debug("[Physical Diaries] '{}' (vol {}) moved to/from {}, who doesn't own it — ignored",
                                          vol->actorName, vol->volumeNumber, other->GetName());
@@ -208,9 +197,7 @@ namespace DiaryTheftHandler {
     }
 
     void ClearStolenVolumes(const std::string& actorUuid) {
-        auto* diaryDB = SkyrimNetDiaries::DiaryDB::GetSingleton();
-        diaryDB->ClearAllStolenVolumes(actorUuid);
-        diaryDB->UpdateLastKnownGameTime(actorUuid, GameTimeSeconds());
+        SkyrimNetDiaries::DiaryDB::GetSingleton()->ClearAllStolenVolumes(actorUuid);
     }
 
     void RegisterStolenDecorator() {
@@ -219,14 +206,13 @@ namespace DiaryTheftHandler {
             // OnInit that also registers it only runs on a new game.
             auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
             if (vm) {
-                auto* args = RE::MakeFunctionArguments(
+                std::unique_ptr<RE::BSScript::IFunctionArguments> args(RE::MakeFunctionArguments(
                     RE::BSFixedString("snpd_diary_stolen"),
                     RE::BSFixedString("SkyrimNetDiaries_Decorators"),
-                    RE::BSFixedString("IsDiaryStolen"));
+                    RE::BSFixedString("IsDiaryStolen")));
                 RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> nullCb;
                 bool ok = vm->DispatchStaticCall(
-                    "SkyrimNetApi", "RegisterDecorator", args, nullCb);
-                delete args;
+                    "SkyrimNetApi", "RegisterDecorator", args.get(), nullCb);
                 SKSE::log::info("kPostLoadGame: registered snpd_diary_stolen decorator via Papyrus VM ({})",
                                 ok ? "dispatched" : "FAILED");
             } else {
@@ -241,37 +227,13 @@ namespace DiaryTheftHandler {
 
     void ReconcileAfterLoad() {
         try {
-            // Detect backwards time travel and clear stolen volumes if detected
-            auto calendar = RE::Calendar::GetSingleton();
-            if (calendar) {
-                double currentTime = SkyrimNetDiaries::CurrentGameTimeSeconds();
-                auto* diaryDB = SkyrimNetDiaries::DiaryDB::GetSingleton();
-                auto actorTemplates = diaryDB->LoadActorTemplates();
-
-                SKSE::log::debug("[Theft Reconciliation] Checking {} actors for backwards time travel (current time: {:.2f} seconds)",
-                               actorTemplates.size(), currentTime);
-
-                int clearedCount = 0;
-                for (const auto& [uuid, templateName] : actorTemplates) {
-                    double lastKnownTime = diaryDB->GetLastKnownGameTime(uuid);
-
-                    // Detect backwards time travel - clear all stolen volumes if save is from earlier in time
-                    if (currentTime < lastKnownTime) {
-                        SKSE::log::debug("[Theft Reconciliation] {} went back in time: loaded {:.2f}, last session {:.2f} — clearing stolen volumes",
-                                         SkyrimNetDiaries::Database::GetActorName(uuid), currentTime, lastKnownTime);
-                        diaryDB->ClearAllStolenVolumes(uuid);
-                        clearedCount++;
-                    }
-
-                    // Update last known game time for all actors
-                    diaryDB->UpdateLastKnownGameTime(uuid, currentTime);
-                }
-
-                if (clearedCount > 0) {
-                    SKSE::log::info("[Theft Reconciliation] Cleared stolen volumes for {} actors due to backwards time travel", clearedCount);
-                } else {
-                    SKSE::log::debug("[Theft Reconciliation] No backwards time travel detected - all actors up to date");
-                }
+            // Thefts recorded after the loaded save's game time happened in a timeline
+            // the player has left; earlier ones stand.
+            const double now = SkyrimNetDiaries::CurrentGameTimeSeconds();
+            if (now <= 0.0) return;
+            const int removed = SkyrimNetDiaries::DiaryDB::GetSingleton()->RemoveStolenVolumesAfter(now);
+            if (removed > 0) {
+                SKSE::log::info("[Theft Reconciliation] Dropped {} theft record(s) made after this save's game time", removed);
             }
         } catch (const std::exception& e) {
             SKSE::log::error("[DiaryTheftHandler] ReconcileAfterLoad exception: {}", e.what());
@@ -279,4 +241,4 @@ namespace DiaryTheftHandler {
             SKSE::log::error("[DiaryTheftHandler] ReconcileAfterLoad: unknown exception");
         }
     }
-}
+} // namespace SkyrimNetDiaries::DiaryTheftHandler

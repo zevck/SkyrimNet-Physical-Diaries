@@ -10,7 +10,7 @@ Code: `src/DiaryDB.cpp`, `include/DiaryDB.h` (singleton `SkyrimNetDiaries::Diary
 
 `<game>/Data/SKSE/Plugins/SkyrimNetPhysicalDiaries/<saveFolder>/diary.db` (MO2: under `overwrite/`). `<saveFolder>` is SkyrimNet's save folder, `SkyrimNet-<id>`, found by `DetectSaveFolderFromLog` (see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#which-save-am-i-in)).
 
-- Closed at `kPreLoadGame`, so nothing written during a load lands in the previous save's DB. Opened by the post-load sync, or in `SaveCallback` if a save happens before it (a new game that has had no load, or a save during the load wait). The folder name must be `SkyrimNet-` followed by digits and dashes; anything else is refused. `Open()` with the folder that is already open does nothing; a different folder closes the old one first.
+- Closed at `kPreLoadGame` and `kNewGame`, so nothing written during a load or a new game lands in the previous save's DB. Opened by the post-load sync, or in `SaveCallback` on a new game's first save. `SaveCallback` doesn't open it during a load's post-load wait, when `SkyrimNet.log` may still name the previous save; if the sync can't open it, diary books are paused for that session (see [ARCHITECTURE.md](ARCHITECTURE.md#startup-and-load-sequence)). The folder name must be `SkyrimNet-` followed by digits and dashes; anything else is refused. `Open()` with the folder that is already open does nothing; a different folder closes the old one first.
 - WAL journal, `synchronous=NORMAL`.
 - **Keyed to the SkyrimNet save folder, not the `.ess`.** Loading an older save of the same character reopens the same DB, which has not been rolled back. That is deliberate: SNPD reconciles against SkyrimNet instead of reverting with the save. See [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#save-reverts-the-keep--clear-fork).
 - `RevertCallback` (new game or load) clears memory only. The file stays.
@@ -32,7 +32,7 @@ Created in `EnsureSchema()`.
 | `book_text` | Rendered text. A cache: it can always be rebuilt from SkyrimNet. `UpsertVolume` with empty text keeps the stored text. |
 | `persisted_in_save` | 1 once a save has included the volume (`MarkAllVolumesPersisted` at `kSaveGame`, and `UpsertVolume` from the in-memory flag, which never lowers it). The upsert path matters on a new game's first save, where the DB is only opened in `SaveCallback` after `kSaveGame` ran. |
 
-**`actor_templates`**: `actor_uuid` (PK), `template_name`, `last_known_game_time` (for detecting loads of earlier saves; see [THEFT.md](THEFT.md#save-reverts)).
+**`actor_templates`**: `actor_uuid` (PK), `template_name`. The `last_known_game_time` column is no longer read or written (theft reverts use `stolen_at`, see [THEFT.md](THEFT.md#save-reverts)); it stays so older databases open unchanged.
 
 **`stolen_volumes`**: `(actor_uuid, volume_number)` PK, `stolen_at` (game seconds).
 

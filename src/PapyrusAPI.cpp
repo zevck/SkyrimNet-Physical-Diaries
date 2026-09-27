@@ -26,7 +26,9 @@
 #include "VolumeSync.h"
 #include <spdlog/spdlog.h>
 
-namespace PapyrusAPI {
+namespace SkyrimNetDiaries::PapyrusAPI {
+
+    namespace {
 
     // Shared by both diary-event natives.
     void UpdateDiaryForFormID(RE::FormID formId) {
@@ -34,7 +36,7 @@ namespace PapyrusAPI {
             // During a load, wait for the post-load sync: until then DiaryDB may still be
             // the previous save's, so even the theft clear below must not run yet.
             if (!SkyrimNetDiaries::IsPostLoadSyncReady()) {
-                SKSE::log::info("[PapyrusAPI] Diary event for FormID 0x{:X} waits for the post-load sync", formId);
+                SKSE::log::debug("[PapyrusAPI] Diary event for FormID 0x{:X} waits for the post-load sync", formId);
                 SkyrimNetDiaries::DeferUntilSyncReady(formId, UpdateDiaryForFormID);
                 return;
             }
@@ -89,6 +91,8 @@ namespace PapyrusAPI {
             UpdateDiaryForFormID(formId);
         } catch (const std::exception& e) {
             SKSE::log::error("[PapyrusAPI] UpdateDiaryFromEvent exception: {}", e.what());
+        } catch (...) {
+            SKSE::log::error("[PapyrusAPI] UpdateDiaryFromEvent: unknown exception");
         }
     }
 
@@ -300,6 +304,8 @@ namespace PapyrusAPI {
         return true;
     }
 
+    } // namespace
+
     void Register() {
         auto papyrus = SKSE::GetPapyrusInterface();
         if (!papyrus) {
@@ -315,4 +321,4 @@ namespace PapyrusAPI {
         SKSE::log::info("Physical Diary Papyrus API registered successfully");
     }
 
-} // namespace PapyrusAPI
+} // namespace SkyrimNetDiaries::PapyrusAPI

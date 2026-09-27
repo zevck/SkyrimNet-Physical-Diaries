@@ -65,11 +65,6 @@ namespace SkyrimNetDiaries {
         if (!api_initialized_ && !InitializeAPI()) {
             return false;
         }
-
-        if (!PublicIsMemorySystemReady) {
-            return false;
-        }
-
         return PublicIsMemorySystemReady();
     }
 
@@ -118,19 +113,6 @@ namespace SkyrimNetDiaries {
                     entry.creation_time = item["creation_time"].get<double>();
                 }
 
-                // Optional fields
-                if (item.contains("location") && item["location"].is_string()) {
-                    entry.location = item["location"].get<std::string>();
-                }
-
-                if (item.contains("emotion") && item["emotion"].is_string()) {
-                    entry.emotion = item["emotion"].get<std::string>();
-                }
-
-                if (item.contains("importance_score") && item["importance_score"].is_number()) {
-                    entry.importance_score = item["importance_score"].get<double>();
-                }
-
                 entries.push_back(entry);
             }
 
@@ -145,16 +127,11 @@ namespace SkyrimNetDiaries {
         return entries;
     }
 
-    std::vector<DiaryEntry> Database::GetDiaryEntries(uint32_t formId, int limit, double startTime, double endTime, double prevVolumeLastCreationTime, int prevVolumeCountAtBoundary, bool* ok) {
+    std::vector<DiaryEntry> Database::GetDiaryEntries(uint32_t formId, int limit, double startTime, double endTime, bool* ok) {
         if (ok) *ok = false;  // until the query has succeeded
         try {
             if (!api_initialized_ && !InitializeAPI()) {
                 SKSE::log::error("API not initialized - cannot get diary entries");
-                return {};
-            }
-
-            if (!PublicGetDiaryEntries) {
-                SKSE::log::error("PublicGetDiaryEntries not available");
                 return {};
             }
 
@@ -169,25 +146,6 @@ namespace SkyrimNetDiaries {
 
             // Oldest first, matching the volume-splitting order in CreateAllVolumesForActor.
             std::sort(entries.begin(), entries.end(), EntryOlder);
-
-            // Exclude entries belonging to the previous volume.  When two consecutive volumes share
-            // the same entry_date at their boundary, the previous volume's last entry(ies) would
-            // otherwise pass the startTime filter and appear in this volume too.
-            // We remove exactly prevVolumeCountAtBoundary entries that satisfy the boundary condition
-            // (entry_date <= startTime AND creation_time <= prevVolumeLastCreationTime), processing
-            // them in sorted order so we never over-remove when two entries are truly identical.
-            if (prevVolumeLastCreationTime > 0.0 && prevVolumeCountAtBoundary > 0) {
-                int toRemove = prevVolumeCountAtBoundary;
-                auto it = entries.begin();
-                while (it != entries.end() && toRemove > 0) {
-                    if (it->entry_date <= startTime && it->creation_time <= prevVolumeLastCreationTime) {
-                        it = entries.erase(it);
-                        --toRemove;
-                    } else {
-                        ++it;
-                    }
-                }
-            }
 
             // Client-side enforcement of time bounds.
             if (startTime > 0.0) {
@@ -210,15 +168,43 @@ namespace SkyrimNetDiaries {
         return {};
     }
 
-    std::vector<DiaryEntry> Database::GetVolumeEntries(uint32_t formId, double startTime, double endTime,
-                                                       double prevVolumeLastCreationTime,
-                                                       int prevVolumeCountAtBoundary, int maxEntries, bool* ok) {
+    std::vector<DiaryEntry> Database::GetVolumeEntries(uint32_t formId, const VolumeBounds& bounds, bool* ok) {
         // Fetch the whole range: SkyrimNet's limit keeps the newest entries, which would
         // drop the volume's oldest ones.
-        auto entries = GetDiaryEntries(formId, kFetchAllEntries, startTime, endTime,
-                                       prevVolumeLastCreationTime, prevVolumeCountAtBoundary, ok);
-        if (maxEntries > 0 && static_cast<int>(entries.size()) > maxEntries) {
-            entries.resize(maxEntries);
+        auto entries = GetDiaryEntries(formId, kFetchAllEntries, bounds.startTime, bounds.endTime, ok);
+
+        // Exclude the previous volume's entries on a shared boundary date: exactly
+        // prevCountAtBoundary of them (entry_date <= startTime and creation_time <=
+        // prevLastCreationTime), in sorted order, so two identical entries are never
+        // both removed.
+        if (bounds.prevLastCreationTime > 0.0 && bounds.prevCountAtBoundary > 0) {
+            int toRemove = bounds.prevCountAtBoundary;
+            auto it = entries.begin();
+            while (it != entries.end() && toRemove > 0) {
+                if (it->entry_date <= bounds.startTime && it->creation_time <= bounds.prevLastCreationTime) {
+                    it = entries.erase(it);
+                    --toRemove;
+                } else {
+                    ++it;
+                }
+            }
+        }
+
+        // The mirror of the removal above: on the date the
+        // next volume starts, keep only the nextPrevCountAtBoundary entries it recorded
+        // as belonging here; the rest are the next volume's.
+        if (bounds.endTime > 0.0 && bounds.nextPrevCountAtBoundary > 0) {
+            int keep = bounds.nextPrevCountAtBoundary;
+            for (auto it = entries.begin(); it != entries.end();) {
+                if (it->entry_date < bounds.nextStartTime) {
+                    ++it;
+                } else if (keep > 0 && it->creation_time <= bounds.nextPrevLastCreationTime) {
+                    --keep;
+                    ++it;
+                } else {
+                    it = entries.erase(it);
+                }
+            }
         }
         return entries;
     }
@@ -242,10 +228,6 @@ namespace SkyrimNetDiaries {
     std::string Database::GetBioTemplateName(uint32_t formId) {
         try {
             if (!api_initialized_ && !InitializeAPI()) {
-                return "";
-            }
-
-            if (!PublicGetBioTemplateName) {
                 return "";
             }
 

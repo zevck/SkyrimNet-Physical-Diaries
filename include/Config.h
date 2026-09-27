@@ -159,10 +159,7 @@ namespace SkyrimNetDiaries {
                 SKSE::log::error("Config::Save() called before Load() - iniPath unknown");
                 return false;
             }
-            return SaveToPath(iniPath_);
-        }
-
-        bool SaveToPath(const std::filesystem::path& path) const {
+            const auto& path = iniPath_;
             try {
                 // Build the whole file first, so a failure can't leave it half-written.
                 std::ostringstream out;

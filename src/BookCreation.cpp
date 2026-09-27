@@ -123,11 +123,13 @@ namespace SkyrimNetDiaries {
             return generation == g_createGeneration;
         }
 
+        // kCantTake stays on this long: taking the book and saving straight after
+        // creation crashed before DPF had finished registering the form.
+        constexpr auto kCantTakeDuration = std::chrono::seconds(5);
+
         void ClearCantTakeLater(RE::FormID bookId, std::string bookName) {
-            // kCantTake stays on for 5 seconds: taking the book and saving straight
-            // after creation crashed before DPF had finished registering the form.
             std::thread([bookId, bookName = std::move(bookName)]() {
-                std::this_thread::sleep_for(std::chrono::seconds(5));
+                std::this_thread::sleep_for(kCantTakeDuration);
                 SKSE::GetTaskInterface()->AddTask([bookId, bookName]() {
                     if (auto* book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(bookId)) {
                         book->data.flags.reset(RE::OBJ_BOOK::Flag::kCantTake);
@@ -160,13 +162,20 @@ namespace SkyrimNetDiaries {
                              req.journalTemplate, static_cast<unsigned>(newBook->data.type.underlying()));
 
             auto* bookManager = BookManager::GetSingleton();
-            bookManager->RegisterBook(req.actorUuid, req.actorName, bookId, req.startTime,
-                                      req.entries.back().entry_date, req.volumeNumber, req.journalTemplate,
-                                      req.bioTemplateName, req.prevVolumeLastCreationTime,
-                                      req.prevVolumeCountAtBoundary, req.targetActorFormID);
-            if (auto* registeredVol = bookManager->GetBookForFormID(bookId)) {
-                bookManager->SetVolumeText(*registeredVol, req.entries);
-            }
+            DiaryBookData data;
+            data.actorUuid = req.actorUuid;
+            data.actorName = req.actorName;
+            data.bookFormId = bookId;
+            data.startTime = req.startTime;
+            data.endTime = req.entries.back().entry_date;
+            data.volumeNumber = req.volumeNumber;
+            data.journalTemplate = req.journalTemplate;
+            data.bioTemplateName = req.bioTemplateName;
+            data.prevVolumeLastCreationTime = req.prevVolumeLastCreationTime;
+            data.prevVolumeCountAtBoundary = req.prevVolumeCountAtBoundary;
+            data.actorFormId = req.targetActorFormID;
+            auto& registered = bookManager->RegisterBook(std::move(data));
+            bookManager->SetVolumeText(registered, req.entries);
             FinishPending(req);
 
             // FindActorForBook: player special-case, UUID-keyed cache, then
@@ -204,15 +213,15 @@ namespace SkyrimNetDiaries {
                 const bool valid = form && form->GetFormType() == RE::FormType::Book;
                 const RE::FormID newFormId = valid ? form->GetFormID() : 0;
 
-                // FormID collision check.  If DPF handed back a FormID another actor
-                // already owns (a recycled duplicate record), registering it would
-                // cross-link two actors' diaries: retry instead.
+                // FormID collision check.  If DPF handed back a FormID that any volume
+                // already owns (a recycled duplicate record), registering it would make
+                // two volumes share one form, even for the same actor: retry instead.
                 bool collision = false;
                 std::string owner;
                 if (valid) {
                     std::lock_guard<std::mutex> lock(g_claimedFormIdMutex);
                     auto it = g_claimedFormIds.find(newFormId);
-                    if (it != g_claimedFormIds.end() && it->second != req_.actorUuid) {
+                    if (it != g_claimedFormIds.end()) {
                         collision = true;
                         owner = it->second;
                     } else {
@@ -258,6 +267,9 @@ namespace SkyrimNetDiaries {
                         CompleteCreation(req, newFormId);
                     } catch (const std::exception& e) {
                         SKSE::log::error("[DPF] CompleteCreation exception for {}: {}", req.actorName, e.what());
+                        FinishPending(req);
+                    } catch (...) {
+                        SKSE::log::error("[DPF] CompleteCreation: unknown exception for {}", req.actorName);
                         FinishPending(req);
                     }
                 });

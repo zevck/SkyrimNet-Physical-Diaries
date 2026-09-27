@@ -40,17 +40,11 @@
 
 namespace
 {
-    // ── UTF-8 → Windows-1251 conversion ──────────────────────────────
-    // Scaleform GFx 4 (Skyrim's Flash engine) treats string bytes as character
-    // indices in replaceText/getLineOffset/length. For UTF-8 multibyte text
-    // (like Cyrillic, 2 bytes per char), this causes a byte/char index mismatch
-    // in the BookMenu pagination code, resulting in progressive text overlap.
-    //
-    // Vanilla Russian Skyrim uses Windows-1251 (single-byte Cyrillic encoding)
-    // where byte == char, so pagination works correctly. This function converts
-    // UTF-8 Cyrillic to Win-1251 so Scaleform can paginate properly.
-    //
-    // Characters outside Win-1251 Cyrillic are left as UTF-8 (best effort).
+    // ── UTF-8 → Windows-1251 for Cyrillic ────────────────────────────
+    // Scaleform's book pagination mixes byte and character offsets, so 2-byte
+    // UTF-8 Cyrillic overlaps progressively; Win-1251 is one byte per character.
+    // See docs/BOOK_TEXT.md.
+
     // True if the text contains Cyrillic letters (U+0400–U+04FF: UTF-8 lead bytes
     // 0xD0–0xD3).  Only such text is converted to Win-1251; converting other text
     // turned French guillemets into bytes that aren't valid UTF-8.
@@ -62,6 +56,8 @@ namespace
         return false;
     }
 
+    // Converts Cyrillic and the Win-1251 punctuation to Win-1251; anything else
+    // stays UTF-8 (best effort).
     static std::string Utf8ToWin1251(const std::string& utf8) {
         std::string out;
         out.reserve(utf8.size());  // Will be smaller (2-byte → 1-byte)
@@ -79,76 +75,50 @@ namespace
                             | static_cast<uint32_t>(*(p+1) & 0x3F);
                 p += 2;
 
-                // Cyrillic block: А-п U+0410-U+043F → 0xC0-0xEF
-                //                 р-я U+0440-U+044F → 0xF0-0xFF
+                // А-я (U+0410-U+044F) are contiguous in Win-1251 (0xC0-0xFF); the rest
+                // are Ё/ё, Ukrainian, Belarusian, Serbian and Macedonian letters and « ».
+                char mapped = 0;
                 if (cp >= 0x0410 && cp <= 0x044F) {
-                    out += static_cast<char>(cp - 0x0410 + 0xC0);
-                } else if (cp == 0x0401) {  // Ё → 0xA8
-                    out += static_cast<char>(0xA8);
-                } else if (cp == 0x0451) {  // ё → 0xB8
-                    out += static_cast<char>(0xB8);
-                // Ukrainian / Belarusian Cyrillic in Win-1251
-                } else if (cp == 0x0404) {  // Є → 0xAA
-                    out += static_cast<char>(0xAA);
-                } else if (cp == 0x0406) {  // І → 0xB2
-                    out += static_cast<char>(0xB2);
-                } else if (cp == 0x0407) {  // Ї → 0xAF
-                    out += static_cast<char>(0xAF);
-                } else if (cp == 0x0454) {  // є → 0xBA
-                    out += static_cast<char>(0xBA);
-                } else if (cp == 0x0456) {  // і → 0xB3
-                    out += static_cast<char>(0xB3);
-                } else if (cp == 0x0457) {  // ї → 0xBF
-                    out += static_cast<char>(0xBF);
-                } else if (cp == 0x0490) {  // Ґ → 0xA5
-                    out += static_cast<char>(0xA5);
-                } else if (cp == 0x0491) {  // ґ → 0xB4
-                    out += static_cast<char>(0xB4);
-                } else if (cp == 0x040E) {  // Ў → 0xA1 (Belarusian)
-                    out += static_cast<char>(0xA1);
-                } else if (cp == 0x045E) {  // ў → 0xA2 (Belarusian)
-                    out += static_cast<char>(0xA2);
-                // Serbian / Macedonian / Bosnian Cyrillic in Win-1251
-                } else if (cp == 0x0402) {  // Ђ → 0x80 (Serbian)
-                    out += static_cast<char>(0x80);
-                } else if (cp == 0x0452) {  // ђ → 0x90 (Serbian)
-                    out += static_cast<char>(0x90);
-                } else if (cp == 0x0409) {  // Љ → 0x8A (Serbian, Macedonian)
-                    out += static_cast<char>(0x8A);
-                } else if (cp == 0x0459) {  // љ → 0x9A (Serbian, Macedonian)
-                    out += static_cast<char>(0x9A);
-                } else if (cp == 0x040A) {  // Њ → 0x8C (Serbian, Macedonian)
-                    out += static_cast<char>(0x8C);
-                } else if (cp == 0x045A) {  // њ → 0x9C (Serbian, Macedonian)
-                    out += static_cast<char>(0x9C);
-                } else if (cp == 0x040B) {  // Ћ → 0x8D (Serbian)
-                    out += static_cast<char>(0x8D);
-                } else if (cp == 0x045B) {  // ћ → 0x9D (Serbian)
-                    out += static_cast<char>(0x9D);
-                } else if (cp == 0x040F) {  // Џ → 0x8F (Serbian, Macedonian)
-                    out += static_cast<char>(0x8F);
-                } else if (cp == 0x045F) {  // џ → 0x9F (Serbian, Macedonian)
-                    out += static_cast<char>(0x9F);
-                } else if (cp == 0x0403) {  // Ѓ → 0x81 (Macedonian)
-                    out += static_cast<char>(0x81);
-                } else if (cp == 0x0453) {  // ѓ → 0x83 (Macedonian)
-                    out += static_cast<char>(0x83);
-                } else if (cp == 0x040C) {  // Ќ → 0x8E (Macedonian)
-                    out += static_cast<char>(0x8E);
-                } else if (cp == 0x045C) {  // ќ → 0x9E (Macedonian)
-                    out += static_cast<char>(0x9E);
-                } else if (cp == 0x0405) {  // Ѕ → 0xBD (Macedonian)
-                    out += static_cast<char>(0xBD);
-                } else if (cp == 0x0455) {  // ѕ → 0xBE (Macedonian)
-                    out += static_cast<char>(0xBE);
-                } else if (cp == 0x0408) {  // Ј → 0xA3 (Serbian, Macedonian)
-                    out += static_cast<char>(0xA3);
-                } else if (cp == 0x0458) {  // ј → 0xBC (Serbian, Macedonian)
-                    out += static_cast<char>(0xBC);
-                } else if (cp == 0x00AB) {  // « → 0xAB
-                    out += static_cast<char>(0xAB);
-                } else if (cp == 0x00BB) {  // » → 0xBB
-                    out += static_cast<char>(0xBB);
+                    mapped = static_cast<char>(cp - 0x0410 + 0xC0);
+                } else {
+                    switch (cp) {
+                    case 0x0401: mapped = static_cast<char>(0xA8); break;  // Ё
+                    case 0x0451: mapped = static_cast<char>(0xB8); break;  // ё
+                    case 0x0404: mapped = static_cast<char>(0xAA); break;  // Є
+                    case 0x0406: mapped = static_cast<char>(0xB2); break;  // І
+                    case 0x0407: mapped = static_cast<char>(0xAF); break;  // Ї
+                    case 0x0454: mapped = static_cast<char>(0xBA); break;  // є
+                    case 0x0456: mapped = static_cast<char>(0xB3); break;  // і
+                    case 0x0457: mapped = static_cast<char>(0xBF); break;  // ї
+                    case 0x0490: mapped = static_cast<char>(0xA5); break;  // Ґ
+                    case 0x0491: mapped = static_cast<char>(0xB4); break;  // ґ
+                    case 0x040E: mapped = static_cast<char>(0xA1); break;  // Ў (Belarusian)
+                    case 0x045E: mapped = static_cast<char>(0xA2); break;  // ў (Belarusian)
+                    case 0x0402: mapped = static_cast<char>(0x80); break;  // Ђ (Serbian)
+                    case 0x0452: mapped = static_cast<char>(0x90); break;  // ђ (Serbian)
+                    case 0x0409: mapped = static_cast<char>(0x8A); break;  // Љ (Serbian, Macedonian)
+                    case 0x0459: mapped = static_cast<char>(0x9A); break;  // љ (Serbian, Macedonian)
+                    case 0x040A: mapped = static_cast<char>(0x8C); break;  // Њ (Serbian, Macedonian)
+                    case 0x045A: mapped = static_cast<char>(0x9C); break;  // њ (Serbian, Macedonian)
+                    case 0x040B: mapped = static_cast<char>(0x8D); break;  // Ћ (Serbian)
+                    case 0x045B: mapped = static_cast<char>(0x9D); break;  // ћ (Serbian)
+                    case 0x040F: mapped = static_cast<char>(0x8F); break;  // Џ (Serbian, Macedonian)
+                    case 0x045F: mapped = static_cast<char>(0x9F); break;  // џ (Serbian, Macedonian)
+                    case 0x0403: mapped = static_cast<char>(0x81); break;  // Ѓ (Macedonian)
+                    case 0x0453: mapped = static_cast<char>(0x83); break;  // ѓ (Macedonian)
+                    case 0x040C: mapped = static_cast<char>(0x8E); break;  // Ќ (Macedonian)
+                    case 0x045C: mapped = static_cast<char>(0x9E); break;  // ќ (Macedonian)
+                    case 0x0405: mapped = static_cast<char>(0xBD); break;  // Ѕ (Macedonian)
+                    case 0x0455: mapped = static_cast<char>(0xBE); break;  // ѕ (Macedonian)
+                    case 0x0408: mapped = static_cast<char>(0xA3); break;  // Ј (Serbian, Macedonian)
+                    case 0x0458: mapped = static_cast<char>(0xBC); break;  // ј (Serbian, Macedonian)
+                    case 0x00AB: mapped = static_cast<char>(0xAB); break;  // «
+                    case 0x00BB: mapped = static_cast<char>(0xBB); break;  // »
+                    default: break;
+                    }
+                }
+                if (mapped) {
+                    out += mapped;
                 } else {
                     // Unmapped 2-byte char: pass through as UTF-8 bytes
                     out += static_cast<char>(*(p-2));
@@ -306,13 +276,7 @@ namespace
                             SKSE::log::info("[BookTextHook] Opening diary: formId=0x{:X} actor='{}' vol={} textLen={}",
                                 a_book->GetFormID(), vol->actorName, vol->volumeNumber, vol->cachedBookText.size());
 
-                            // Win-1251 for Cyrillic text.  Scaleform GFx's replaceText()
-                            // uses BYTE offsets but getLineOffset() returns CHARACTER
-                            // indices; for 2-byte UTF-8 Cyrillic this makes text overlap
-                            // progressively.  Win-1251 is single-byte, so byte == char.
-                            // Only converted when the text has Cyrillic (Russian,
-                            // Ukrainian, Belarusian, or a Cyrillic font mod); other text
-                            // stays UTF-8.
+                            // Win-1251 only for Cyrillic text (see Utf8ToWin1251).
                             textToInject = HasCyrillic(vol->cachedBookText)
                                                ? Utf8ToWin1251(vol->cachedBookText)
                                                : vol->cachedBookText;
@@ -491,7 +455,7 @@ namespace
 
 } // anonymous namespace
 
-void BookTextHook::Install()
+void SkyrimNetDiaries::BookTextHook::Install()
 {
     SKSE::log::info("[BookTextHook] Game language: '{}'",
                     SkyrimNetDiaries::Localization::GetSingleton()->GetLanguageString());

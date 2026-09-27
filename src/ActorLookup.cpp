@@ -125,4 +125,11 @@ namespace SkyrimNetDiaries {
         g_actorCacheByUuid.clear();
     }
 
+    std::int32_t CountInInventory(RE::TESObjectREFR* ref, const RE::TESBoundObject* item) {
+        if (!ref || !item) return 0;
+        auto inv = ref->GetInventory([item](RE::TESBoundObject& a_obj) { return &a_obj == item; });
+        const auto it = inv.find(const_cast<RE::TESBoundObject*>(item));
+        return it != inv.end() ? std::max(it->second.first, 0) : 0;
+    }
+
 } // namespace SkyrimNetDiaries

@@ -21,6 +21,7 @@
 #include "BookManager.h"
 #include "DiaryDB.h"
 #include "SaveFolder.h"
+#include "VolumeSync.h"
 
 namespace SkyrimNetDiaries::Serialization {
 
@@ -36,8 +37,10 @@ namespace SkyrimNetDiaries::Serialization {
                 // On a fresh/new game kPostLoadGame never fires, so the DB may not have been
                 // opened yet.  Detect the save folder now and flush all in-memory books so
                 // nothing is lost when the save is later reloaded.
+                // Not during a load's post-load wait: SkyrimNet.log may still name the
+                // previous save's folder then, and the sync opens the right DB itself.
                 auto* db = DiaryDB::GetSingleton();
-                if (!db->IsOpen()) {
+                if (!db->IsOpen() && IsPostLoadSyncReady()) {
                     if (SaveFolder::Get().empty()) {
                         SaveFolder::DetectFromLog();
                     }
@@ -47,20 +50,6 @@ namespace SkyrimNetDiaries::Serialization {
                 }
                 if (db->IsOpen()) {
                     BookManager::GetSingleton()->FlushToDB();
-
-                    // Update last_known_game_time for all actors to capture current game time
-                    // This is critical for backwards time travel detection when loading older saves
-                    auto calendar = RE::Calendar::GetSingleton();
-                    if (calendar) {
-                        double currentTime = SkyrimNetDiaries::CurrentGameTimeSeconds();
-                        auto actorTemplates = db->LoadActorTemplates();
-                        int updatedCount = 0;
-                        for (const auto& [uuid, templateName] : actorTemplates) {
-                            db->UpdateLastKnownGameTime(uuid, currentTime);
-                            updatedCount++;
-                        }
-                        SKSE::log::debug("[SaveCallback] Updated last_known_game_time to {:.2f} for {} actors", currentTime, updatedCount);
-                    }
                 }
 
                 // Save book data
@@ -99,8 +88,6 @@ namespace SkyrimNetDiaries::Serialization {
         void LoadCallback(SKSE::SerializationInterface* a_intfc) {
             try {
                 // The save folder is detected from SkyrimNet.log by the post-load sync.
-                SaveFolder::Clear();
-
                 std::uint32_t type;
                 std::uint32_t version;
                 std::uint32_t length;

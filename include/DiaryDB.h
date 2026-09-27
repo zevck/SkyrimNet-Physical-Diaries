@@ -37,8 +37,8 @@ namespace SkyrimNetDiaries {
     //
     // Schema (three tables):
     //   volumes         — one row per diary volume (metadata + rendered book_text)
-    //   actor_templates — one row per actor UUID: journal template choice and
-    //                     last_known_game_time
+    //   actor_templates — one row per actor UUID: journal template choice (its
+    //                     last_known_game_time column is no longer used)
     //   stolen_volumes  — one row per stolen volume
     // ---------------------------------------------------------------------------
 
@@ -109,8 +109,12 @@ namespace SkyrimNetDiaries {
         bool RemoveStolenVolume(const std::string& actorUuid, int volumeNumber);
         bool HasAnyStolenVolumes(const std::string& actorUuid);
         bool ClearAllStolenVolumes(const std::string& actorUuid);
-        double GetLastKnownGameTime(const std::string& actorUuid);
-        bool UpdateLastKnownGameTime(const std::string& actorUuid, double gameTime);
+        // Drops thefts recorded after `gameTime`: after loading an earlier save they
+        // happened in a timeline the player has left.  Returns how many were removed.
+        int RemoveStolenVolumesAfter(double gameTime);
+
+        // Lowers a volume's persisted_in_save flag (UpsertVolume never lowers it).
+        bool ClearPersisted(const std::string& actorUuid, int volumeNumber);
         bool UpsertActorTemplate(const std::string& uuid,
                                  const std::string& templateName);
 

@@ -19,20 +19,19 @@
 
 #pragma once
 
-namespace DiaryTheftHandler {
+namespace SkyrimNetDiaries::DiaryTheftHandler {
     // Register the event handler for diary theft detection
     void Register();
 
     // The NPC wrote about their missing diary (or a mod said so): clears every stolen
-    // volume and stamps the current game time.
+    // volume.
     void ClearStolenVolumes(const std::string& actorUuid);
 
     // Registers the snpd_diary_stolen decorator with SkyrimNet.  SkyrimNet clears
     // decorator registrations on every load, so call this on every kPostLoadGame.
     void RegisterStolenDecorator();
 
-    // kPostLoadGame: if this save is earlier in game time than the last session,
-    // clears each actor's stolen volumes (the theft belongs to an abandoned
-    // timeline), then records the current game time.  See docs/THEFT.md.
+    // kPostLoadGame: drops thefts recorded after the loaded save's game time (they
+    // belong to a timeline the player has left).  See docs/THEFT.md.
     void ReconcileAfterLoad();
-}
+} // namespace SkyrimNetDiaries::DiaryTheftHandler

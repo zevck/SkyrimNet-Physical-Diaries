@@ -30,7 +30,10 @@ namespace SkyrimNetDiaries {
     RE::Actor* FindActorForBook(RE::FormID targetFormID,
                                 const std::string& actorName,
                                 const std::string& bioTemplate,
-                                const std::string& actorUuid = "");
+                                const std::string& actorUuid);
+
+    // How many of `item` the reference holds (0 if none).
+    std::int32_t CountInInventory(RE::TESObjectREFR* ref, const RE::TESBoundObject* item);
 
     // Clears the UUID -> actor cache.  Called on each load.
     void ClearActorLookupCache();

@@ -87,25 +87,24 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 1. `InitializeLog()`, then `SKSE::Init`.
 2. `Config::Load()` followed at once by `Config::Save()`, so MO2 copies the INI into `overwrite/` and user settings survive mod updates. Debug level is applied from `[General] DebugLog`.
 3. Register `OnMessage`; `Serialization::Register()` registers the co-save callbacks under the unique ID `'SNDB'`.
-4. `BookManager::Initialize()` with the template EditorIDs from `BookManager.h`.
-5. `DiaryTheftHandler::Register()` (event sinks), `Localization::Initialize()`, `BookTextHook::Install()`, `TimelineGate::Install()`, `PapyrusAPI::Register()`.
+4. `DiaryTheftHandler::Register()` (event sinks), `Localization::Initialize()`, `BookTextHook::Install()`, `TimelineGate::Install()`, `PapyrusAPI::Register()`.
 
 **`kDataLoaded`**: warn with a message box if `Dynamic Persistent Forms.esp` is missing; verify all four templates resolve by EditorID and show a message box naming the likely causes if not; `TimelineGate::OnDataLoaded()` (finds SkyrimNet's prompt text); `Localization::ReadGMSTs()`.
 
-**`kPreLoadGame`**: bump the load generation (an older setup still waiting gives up), `TimelineGate::Reset()`, `CancelPendingCreations()`, `BookManager::ClearActorCache()` (actor cache and FormID claims), close DiaryDB and clear the save folder, and `SetPostLoadSyncReady(false)` so diary events wait for this load's sync. **`kNewGame`** sets it back to true, since no `kPostLoadGame` follows.
+**`kPreLoadGame`** and **`kNewGame`** both end the session (`EndSession` in `main.cpp`): bump the load generation (an older setup still waiting gives up), `TimelineGate::Reset()`, `CancelPendingCreations()`, `BookManager::ClearActorCache()` (actor cache and FormID claims), close DiaryDB and clear the save folder, and `SetPostLoadSyncReady(false)` so diary events wait for this load's sync and those deferred from the last session are dropped. `kNewGame` then sets it back to true, since no `kPostLoadGame` follows. A new game gets no `kPreLoadGame`, so before 2026-09-27 a New Game after loading a save kept writing into the previous character's DiaryDB.
 
 **`kPostLoadGame`**:
 1. `BookManager::SanitizeLoadedBookForms()`: clear the invalid `sourceFiles` pointer DPF leaves on some clones (VR). Runs first and does not depend on SkyrimNet.
 2. `Database::InitializeAPI()`. If SkyrimNet is not loaded, stop here.
-3. `BookManager::ClearActorCache()` (also clears the FormID claim table).
-4. The post-load sync polls every 100 ms (a sleeper thread re-queues a game-thread task) until `Database::IsMemorySystemReady()` (up to 60 s) **and** `TimelineGate::IsSettled()` (no limit while SkyrimNet's keep/clear prompt is open). Then:
-   - Detect the save folder from `SkyrimNet.log` and `DiaryDB::Open()` it.
+3. The post-load sync polls every 100 ms (a sleeper thread re-queues a game-thread task) until `Database::IsMemorySystemReady()` (up to 60 s) **and** `TimelineGate::IsSettled()` (no limit while SkyrimNet's keep/clear prompt is open). Then:
    - `DiaryTheftHandler::RegisterStolenDecorator()`: re-register the `snpd_diary_stolen` decorator through the Papyrus VM. SkyrimNet drops all decorator registrations on load, and the Papyrus `OnInit` that also registers it runs only on a new game.
+   - Detect the save folder from `SkyrimNet.log` and `DiaryDB::Open()` it.
+   - **If the DB didn't open, DPF isn't installed, or the memory system never became ready**, `PauseDiaryBooks()` and stop: with this save's volumes not loaded, every NPC would look new and get a second set of books. Diary events are ignored (logged at debug) until the next load or new game, and the error names the cause.
    - `LoadFromDB()`, then `ReconcileWithTimeline()` (volumes reaching past the loaded save are matched against the history SkyrimNet kept), then `QueueInventoryCheck()`.
-   - `DiaryTheftHandler::ReconcileAfterLoad()`: clear stolen volumes for any actor whose `last_known_game_time` is later than the current game time (the player loaded an earlier save).
+   - `DiaryTheftHandler::ReconcileAfterLoad()`: drop theft records made after the loaded save's game time (`stolen_at > now`).
    - `SetPostLoadSyncReady(true)`, then queue immediate recreation for actors whose book forms were invalid, then `QueueSealedVolumeRecovery()` and `QueueBatchCatchUpScan()`.
 
-**Save**: SKSE sends `kSaveGame` first, which marks every volume `persisted_in_save` (in DiaryDB and in memory). Then the co-save `SaveCallback` runs: it opens the DB if it isn't open (a new game that never got a `kPostLoadGame`, or a save during the post-load wait), runs `FlushToDB()` (which carries the in-memory persisted flag, so a DB opened only here still gets it), stamps `last_known_game_time`, and writes the `SNDB` sentinel and `SNDF` folder records. See [DATABASE.md](DATABASE.md#co-save-records).
+**Save**: SKSE sends `kSaveGame` first, which marks every volume `persisted_in_save` (in DiaryDB and in memory). Then the co-save `SaveCallback` runs: it opens the DB if it isn't open (a new game that never got a `kPostLoadGame`; not during a load's post-load wait, when `SkyrimNet.log` may still name the previous save), runs `FlushToDB()` (which carries the in-memory persisted flag, so a DB opened only here still gets it), and writes the `SNDB` sentinel and `SNDF` folder records. See [DATABASE.md](DATABASE.md#co-save-records).
 
 **New game or load**: `RevertCallback` clears in-memory state. `diary.db` on disk is kept on purpose.
 

@@ -34,7 +34,7 @@ These are the root causes of what used to show up as "DPF losing records" and cr
 | Bug | Symptom | Defence |
 |---|---|---|
 | DPF's FormID allocator is **not thread-safe** | Burst creation (the catch-up scan queues one task per actor, each making several volumes) handed concurrent callbacks the **same** FormID | The serial create queue. Only one `Create()` is ever in flight. |
-| DPF **recycles duplicate deleted records**. `Dispose()` puts a record in DPF's recycle pool, and over repeated reset/reload cycles the persisted pool gathers duplicates of the same FormID, which get handed out more than once. | A new volume received a FormID an existing diary already owned | The **FormID claim table** (`g_claimedFormIds`, FormID → owning UUID). The callback claims each FormID synchronously. If it is already claimed by a different UUID, the form is abandoned and the request re-queued, up to `kMaxCreateRetries` (16). DPF's next allocation consumes the duplicate slot. `LoadFromDB` seeds the table with every loaded volume; `ClearActorCache` clears it each load. |
+| DPF **recycles duplicate deleted records**. `Dispose()` puts a record in DPF's recycle pool, and over repeated reset/reload cycles the persisted pool gathers duplicates of the same FormID, which get handed out more than once. | A new volume received a FormID an existing diary already owned | The **FormID claim table** (`g_claimedFormIds`, FormID → owning UUID). The callback claims each FormID synchronously. If it is already claimed by any volume, even one of the same actor's (two volumes would share one form), the form is abandoned and the request re-queued, up to `kMaxCreateRetries` (16). DPF's next allocation consumes the duplicate slot. `LoadFromDB` seeds the table with every loaded volume; `ClearActorCache` clears it each load. |
 
 Because of the second bug, **MCM Reset deliberately does not call `DPF.Dispose()`** on the books it removes (see `ResetAllDiariesInternal` in `VolumeSync.cpp`). Don't add it back.
 
@@ -52,7 +52,7 @@ From the template: `data.type` (must be a book tome, `0x00`. A note scroll, `0xF
 
 ## Templates
 
-Four EditorIDs, declared once in `BookManager.h` (`kJournalTemplates`: `SkyrimNetDiaryTemplate`, `…2`, `…3`; `kNightingaleTemplate`: `SkyrimNetDiaryTemplateN`) and used by both `BookManager::Initialize` and the `kDataLoaded` check.
+Four EditorIDs, declared once in `BookManager.h` (`kJournalTemplates`: `SkyrimNetDiaryTemplate`, `…2`, `…3`; `kNightingaleTemplate`: `SkyrimNetDiaryTemplateN`) and used by both `SelectJournalTemplate` and the `kDataLoaded` check.
 
 `SelectJournalTemplate`: Karliah, Gallus and Mercer Frey get the Nightingale template. They are matched by the actor's base NPC (`Skyrim.esm` `0x1B07F`, `0x1BB5D`, `0x1B07C`), never by name, so it works in every language and doesn't catch same-named NPCs. Everyone else gets `variants[hash(uuid) % count]`, so the choice is stable across reloads. It is cached in `actorTemplates_` and stored in DiaryDB `actor_templates`, so every volume of an NPC looks the same.
 

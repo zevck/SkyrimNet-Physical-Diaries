@@ -37,6 +37,12 @@ namespace SkyrimNetDiaries {
     void SetPostLoadSyncReady(bool ready);
     bool IsPostLoadSyncReady();
 
+    // For the rest of this session, diary events create and update nothing.  Used
+    // when the post-load sync couldn't load this save's volumes (no save folder, no
+    // DPF, SkyrimNet never ready): with nothing loaded, every NPC would look new and
+    // get a second set of books.  Cleared when the session ends.
+    void PauseDiaryBooks();
+
     // Runs handler(formId) on the game thread once the post-load sync has run,
     // polling every 500 ms.  Dropped if another load starts first (that load's
     // recovery and catch-up scans pick the entry up).

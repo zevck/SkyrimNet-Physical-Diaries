@@ -28,15 +28,25 @@ namespace SkyrimNetDiaries {
         std::string actor_uuid;
         std::string actor_name;
         std::string content;
-        double entry_date;
-        double creation_time;
-        std::string location;
-        std::string emotion;
-        double importance_score;
+        double entry_date = 0.0;
+        double creation_time = 0.0;
     };
 
     // Chronological order: entry_date, then creation_time (real-world write time)
     // to break ties between entries dated the same in-game moment.
+    // Where a volume's entry range starts and ends (docs/VOLUMES_AND_SYNC.md#volume-boundaries).
+    // The prev* fields are the volume's own boundary data; the next* fields are the
+    // next volume's, when there is one.
+    struct VolumeBounds {
+        double startTime = 0.0;
+        double endTime = 0.0;                  // 0 = open-ended
+        double prevLastCreationTime = 0.0;
+        int    prevCountAtBoundary = 0;
+        double nextStartTime = 0.0;
+        double nextPrevLastCreationTime = 0.0;
+        int    nextPrevCountAtBoundary = 0;
+    };
+
     inline bool EntryOlder(const DiaryEntry& a, const DiaryEntry& b) {
         if (a.entry_date != b.entry_date) return a.entry_date < b.entry_date;
         return a.creation_time < b.creation_time;
@@ -44,9 +54,17 @@ namespace SkyrimNetDiaries {
 
     // Current game time in entry_date units (game seconds): what diary dates are
     // compared against.
+    inline constexpr double kSecondsPerGameDay = 86400.0;
+
     inline double CurrentGameTimeSeconds() {
         auto* calendar = RE::Calendar::GetSingleton();
-        return calendar ? calendar->GetCurrentGameTime() * 86400.0 : 0.0;
+        return calendar ? calendar->GetCurrentGameTime() * kSecondsPerGameDay : 0.0;
+    }
+
+    // True if `date` (entry_date units) is later than game time `now`, with one game
+    // second of slack for rounding: "written after the loaded save".
+    inline bool DatedAfter(double date, double now) {
+        return date > now + 1.0;
     }
 
     // Limit that means "every entry" for GetDiaryEntries.
@@ -70,25 +88,18 @@ namespace SkyrimNetDiaries {
         // returns the latest `limit` entries in the range, not the first.  Use
         // GetVolumeEntries whenever "the first N entries" matters.
         //
-        // prevVolumeLastCreationTime / prevVolumeCountAtBoundary remove the previous
-        // volume's entries that share this volume's first entry_date (see
-        // docs/VOLUMES_AND_SYNC.md#volume-boundaries).
-        //
         // An empty result can mean "no entries" or "the query failed"; pass `ok` to
         // tell them apart (false: SkyrimNet unavailable, an exception, bad JSON).
         static std::vector<DiaryEntry> GetDiaryEntries(uint32_t formId, int limit = kFetchAllEntries,
                                                         double startTime = 0.0, double endTime = 0.0,
-                                                        double prevVolumeLastCreationTime = 0.0,
-                                                        int prevVolumeCountAtBoundary = 0,
                                                         bool* ok = nullptr);
 
         // A volume's entries, oldest first: the whole [startTime, endTime] range minus
-        // the previous volume's boundary entries, then capped to the first maxEntries
-        // (0 = no cap).
-        static std::vector<DiaryEntry> GetVolumeEntries(uint32_t formId, double startTime, double endTime,
-                                                         double prevVolumeLastCreationTime,
-                                                         int prevVolumeCountAtBoundary,
-                                                         int maxEntries = 0, bool* ok = nullptr);
+        // the previous volume's boundary entries and, on a date shared with the next
+        // volume, the entries that volume owns.  Volume sizes come only from these
+        // stored boundaries, never from the current EntriesPerVolume setting.
+        static std::vector<DiaryEntry> GetVolumeEntries(uint32_t formId, const VolumeBounds& bounds,
+                                                         bool* ok = nullptr);
 
         // Game time of the player's most recent SkyrimNet event, in entry_date units
         // (0 when there is none).  SkyrimNet asks its keep/clear question on load

@@ -26,7 +26,24 @@ namespace SkyrimNetDiaries {
 
     namespace {
 
-        // Helper function to sanitize text for Skyrim's book renderer
+        // Drops the first line and the blank lines after it ("" if there is only one line).
+        void DropFirstLine(std::string& text) {
+            const std::size_t nl = text.find('\n');
+            if (nl == std::string::npos) {
+                text.clear();
+                return;
+            }
+            text.erase(0, nl + 1);
+            const std::size_t body = text.find_first_not_of("\r\n");
+            text.erase(0, body == std::string::npos ? text.size() : body);
+        }
+
+        void ReplaceAll(std::string& text, std::string_view from, std::string_view to) {
+            for (std::size_t pos = 0; (pos = text.find(from, pos)) != std::string::npos; pos += to.size()) {
+                text.replace(pos, from.size(), to);
+            }
+        }
+
         // LLM text goes into Scaleform's book HTML.  A "<" would start a tag and swallow
         // text ("<sigh>", "<3"), so escape the three markup characters.  The
         // inter-plugin API turns them back before handing text to other mods.
@@ -70,14 +87,7 @@ namespace SkyrimNetDiaries {
                     // Step 1: Strip any leading markdown heading line unconditionally.
                     // A line starting with '#' is always AI formatting noise regardless of language.
                     if (!result.empty() && result[0] == '#') {
-                        size_t firstNewline = result.find('\n');
-                        if (firstNewline != std::string::npos) {
-                            result = result.substr(firstNewline + 1);
-                            while (!result.empty() && (result[0] == '\n' || result[0] == '\r'))
-                                result = result.substr(1);
-                        } else {
-                            result.clear();
-                        }
+                        DropFirstLine(result);
                     }
 
                     // Step 1.5: Strip a leading line that is entirely bold markdown (**...**).
@@ -87,13 +97,7 @@ namespace SkyrimNetDiaries {
                         size_t lineEnd = (nl != std::string::npos) ? nl : result.size();
                         if (lineEnd >= 5 &&
                             result[lineEnd - 1] == '*' && result[lineEnd - 2] == '*') {
-                            if (nl != std::string::npos) {
-                                result = result.substr(nl + 1);
-                                while (!result.empty() && (result[0] == '\n' || result[0] == '\r'))
-                                    result = result.substr(1);
-                            } else {
-                                result.clear();
-                            }
+                            DropFirstLine(result);
                         }
                     }
 
@@ -122,9 +126,7 @@ namespace SkyrimNetDiaries {
                                 if (i == minStart + 2 && i < firstLine.size() && firstLine[i] == ' ') {
                                     ++i;
                                     if (firstLine.substr(i, 2) == "AM" || firstLine.substr(i, 2) == "PM") {
-                                        result = result.substr(lineEnd + 1);
-                                        while (!result.empty() && (result[0] == '\n' || result[0] == '\r'))
-                                            result = result.substr(1);
+                                        DropFirstLine(result);
                                     }
                                 }
                             }
@@ -195,12 +197,8 @@ namespace SkyrimNetDiaries {
                         bool isWholeLine = (firstNewline != std::string::npos && firstNewline < 120);
 
                         if (isWholeLine) {
-                            // The whole first line is a date header — strip the line and
-                            // any following blank lines.
-                            result = result.substr(firstNewline + 1);
-                            while (!result.empty() && (result[0] == '\n' || result[0] == '\r')) {
-                                result = result.substr(1);
-                            }
+                            // The whole first line is a date header.
+                            DropFirstLine(result);
                         } else {
                             // The date is a prefix embedded in prose ("Sundas, 17th Last Seed. Today...").
                             // Strip up to and including the first sentence-ending punctuation followed
@@ -228,51 +226,18 @@ namespace SkyrimNetDiaries {
                     }
                 }
 
-                // Replace em dashes (U+2014) with single hyphen
-                size_t pos = 0;
-                while ((pos = result.find("\xE2\x80\x94", pos)) != std::string::npos) {
-                    result.replace(pos, 3, "-");
-                    pos += 1;
-                }
-
-            // Replace en dashes (U+2013) with single hyphen
-            pos = 0;
-            while ((pos = result.find("\xE2\x80\x93", pos)) != std::string::npos) {
-                result.replace(pos, 3, "-");
-                pos += 1;
-            }
-
-            // Replace curly quotes with straight quotes
-            // Left double quote (U+201C)
-            pos = 0;
-            while ((pos = result.find("\xE2\x80\x9C", pos)) != std::string::npos) {
-                result.replace(pos, 3, "\"");
-                pos += 1;
-            }
-            // Right double quote (U+201D)
-            pos = 0;
-            while ((pos = result.find("\xE2\x80\x9D", pos)) != std::string::npos) {
-                result.replace(pos, 3, "\"");
-                pos += 1;
-            }
-            // Left single quote (U+2018)
-            pos = 0;
-            while ((pos = result.find("\xE2\x80\x98", pos)) != std::string::npos) {
-                result.replace(pos, 3, "'");
-                pos += 1;
-            }
-            // Right single quote (U+2019)
-            pos = 0;
-            while ((pos = result.find("\xE2\x80\x99", pos)) != std::string::npos) {
-                result.replace(pos, 3, "'");
-                pos += 1;
-            }
-
-            // Replace ellipsis (U+2026) with three periods
-            pos = 0;
-            while ((pos = result.find("\xE2\x80\xA6", pos)) != std::string::npos) {
-                result.replace(pos, 3, "...");
-                pos += 3;
+            // Typographic characters the handwriting fonts lack.
+            static constexpr std::pair<std::string_view, std::string_view> kPlainForms[] = {
+                { "\xE2\x80\x94", "-" },    // em dash
+                { "\xE2\x80\x93", "-" },    // en dash
+                { "\xE2\x80\x9C", "\"" },   // left double quote
+                { "\xE2\x80\x9D", "\"" },   // right double quote
+                { "\xE2\x80\x98", "'" },    // left single quote
+                { "\xE2\x80\x99", "'" },    // right single quote
+                { "\xE2\x80\xA6", "..." },  // ellipsis
+            };
+            for (const auto& [from, to] : kPlainForms) {
+                ReplaceAll(result, from, to);
             }
 
             // Strip Markdown formatting characters that pass through raw as asterisks/underscores.
@@ -320,7 +285,7 @@ namespace SkyrimNetDiaries {
         // leap years.
         GameDate ToGameDate(double gameTime) {
             static constexpr int kMonthDays[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
-            const int totalDays = static_cast<int>(std::floor(gameTime / 86400.0));
+            const int totalDays = static_cast<int>(std::floor(gameTime / kSecondsPerGameDay));
 
             GameDate date{ 17 + totalDays, 7, 201, ((totalDays % 7) + 7) % 7 };
             // Before the start date (only test entries): walk back month by month.
@@ -351,12 +316,8 @@ namespace SkyrimNetDiaries {
 
     } // namespace
 
-    // Format diary entries - accessible from BookManager
-    // maxEntries: Maximum number of entries to include in this book (default 10)
     std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& entries,
-                                   const std::string& actorName,
-                                   double startTime, double endTime,
-                                   int maxEntries) {
+                                   const std::string& actorName) {
         std::string bookText;
         auto config = SkyrimNetDiaries::Config::GetSingleton();
         int fontTitle = config->GetFontSizeTitle();
@@ -396,16 +357,8 @@ namespace SkyrimNetDiaries {
             // Page break — entries start on the next page
             bookText += std::string(kPageBreak);
 
-            int entriesIncluded = 0;
-
-            for (size_t i = 0; i < entries.size() && entriesIncluded < maxEntries; ++i) {
+            for (size_t i = 0; i < entries.size(); ++i) {
                 const auto& entry = entries[i];
-
-                // Filter by time range if specified
-                if (startTime > 0.0 && entry.entry_date < startTime) continue;
-                if (endTime > 0.0 && entry.entry_date > endTime) continue;
-
-                entriesIncluded++;
 
                 // Format the date string
                 std::string dateStr = FormatGameDate(entry.entry_date);

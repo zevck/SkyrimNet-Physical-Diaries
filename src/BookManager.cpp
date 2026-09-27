@@ -33,13 +33,6 @@ namespace SkyrimNetDiaries {
         return &singleton;
     }
 
-    void BookManager::Initialize() {
-        journalTemplates_.assign(std::begin(kJournalTemplates), std::end(kJournalTemplates));
-        nightingaleTemplate_ = kNightingaleTemplate;
-        SKSE::log::info("BookManager initialized with {} journal templates, Nightingale: {}",
-                        journalTemplates_.size(), nightingaleTemplate_);
-    }
-
     namespace {
         // In-memory volume <-> DiaryDB row.  Used by RegisterBook, FlushToDB and
         // LoadFromDB so the three can't drift apart.
@@ -102,7 +95,7 @@ namespace SkyrimNetDiaries {
     std::string BookManager::SelectJournalTemplate(const std::string& actorUuid, const std::string& actorName,
                                                    RE::FormID actorFormId) {
         // Check if we already selected a template for this actor
-        // An empty name (a row created by UpdateLastKnownGameTime before any volume) is no choice.
+        // An empty name (a legacy row that only held last_known_game_time) is no choice.
         auto it = actorTemplates_.find(actorUuid);
         if (it != actorTemplates_.end() && !it->second.empty()) {
             SKSE::log::debug("Using cached journal template for {}: {}", actorName, it->second);
@@ -112,10 +105,10 @@ namespace SkyrimNetDiaries {
         std::string selectedTemplate;
 
         if (IsNightingale(actorFormId)) {
-            selectedTemplate = nightingaleTemplate_;
+            selectedTemplate = kNightingaleTemplate;
         } else {
             // Pick a variant from the actor's UUID so the choice is stable across reloads.
-            selectedTemplate = journalTemplates_[std::hash<std::string>{}(actorUuid) % journalTemplates_.size()];
+            selectedTemplate = kJournalTemplates[std::hash<std::string>{}(actorUuid) % std::size(kJournalTemplates)];
         }
 
         SKSE::log::debug("Selected journal template for {}: {}", actorName, selectedTemplate);
@@ -153,36 +146,20 @@ namespace SkyrimNetDiaries {
         return nullptr;
     }
 
-    void BookManager::RegisterBook(const std::string& actorUuid, const std::string& actorName,
-                                   RE::FormID bookFormId, double startTime, double endTime, int volumeNumber,
-                                   const std::string& journalTemplate,
-                                   const std::string& bioTemplateName,
-                                   double prevVolumeLastCreationTime,
-                                   int prevVolumeCountAtBoundary,
-                                   RE::FormID actorFormId) {
-        DiaryBookData data;
-        data.actorUuid = actorUuid;
-        data.actorName = actorName;
-        data.bookFormId = bookFormId;
-        data.startTime = startTime;
-        data.endTime = endTime;
-        data.volumeNumber = volumeNumber;
-        data.journalTemplate = journalTemplate;
-        data.bioTemplateName = bioTemplateName;
-        data.prevVolumeLastCreationTime = prevVolumeLastCreationTime;
-        data.prevVolumeCountAtBoundary = prevVolumeCountAtBoundary;
-        data.actorFormId = actorFormId;
+    DiaryBookData& BookManager::RegisterBook(DiaryBookData data) {
         // Pre-warm the runtime cache so RefreshVolumeOnOpen never needs the UUID roundtrip.
-        if (actorFormId != 0) {
-            data.cachedActorFormId = actorFormId;
+        if (data.actorFormId != 0) {
+            data.cachedActorFormId = data.actorFormId;
         }
-
-        books_[actorUuid].push_back(data);
+        auto& volumes = books_[data.actorUuid];
+        auto& registered = volumes.emplace_back(std::move(data));
         SKSE::log::info("Registered book for actor {}: FormID 0x{:X}, Volume {} (template: {}, subfolder: {})",
-                       actorUuid, bookFormId, volumeNumber, journalTemplate, bioTemplateName);
+                       registered.actorUuid, registered.bookFormId, registered.volumeNumber,
+                       registered.journalTemplate, registered.bioTemplateName);
 
         // Persist the row (the caller writes the text next, via SetVolumeText).
-        DiaryDB::GetSingleton()->UpsertVolume(ToRow(data));
+        DiaryDB::GetSingleton()->UpsertVolume(ToRow(registered));
+        return registered;
     }
 
     void BookManager::UpdateBookEndTime(const std::string& actorUuid, int volumeNumber, double endTime) {
@@ -200,24 +177,35 @@ namespace SkyrimNetDiaries {
         }
     }
 
+    std::vector<DiaryEntry> BookManager::GetLiveEntries(const DiaryBookData& vol, RE::FormID actorFormId,
+                                                        double endTime, bool* ok) {
+        VolumeBounds bounds{
+            .startTime = vol.volumeNumber == 1 ? 0.0 : vol.startTime,
+            .endTime = endTime,
+            .prevLastCreationTime = vol.prevVolumeLastCreationTime,
+            .prevCountAtBoundary = vol.prevVolumeCountAtBoundary,
+        };
+        if (const auto* volumes = GetAllVolumesForActor(vol.actorUuid)) {
+            for (const auto& next : *volumes) {
+                if (next.volumeNumber == vol.volumeNumber + 1) {
+                    bounds.nextStartTime = next.startTime;
+                    bounds.nextPrevLastCreationTime = next.prevVolumeLastCreationTime;
+                    bounds.nextPrevCountAtBoundary = next.prevVolumeCountAtBoundary;
+                    break;
+                }
+            }
+        }
+        return Database::GetVolumeEntries(actorFormId, bounds, ok);
+    }
+
     void BookManager::SetVolumeText(DiaryBookData& vol, const std::vector<DiaryEntry>& entries) {
-        const int maxEntries = Config::GetSingleton()->GetEntriesPerVolume();
-        std::string text = FormatDiaryEntries(entries, vol.actorName, vol.startTime, vol.endTime, maxEntries);
+        std::string text = FormatDiaryEntries(entries, vol.actorName);
         const int count = static_cast<int>(entries.size());
         DiaryDB::GetSingleton()->UpdateBookText(vol.actorUuid, vol.volumeNumber, text, count);
         SKSE::log::debug("{} volume {}: text set from {} entries (was {})",
                          vol.actorName, vol.volumeNumber, count, vol.lastKnownEntryCount);
         vol.cachedBookText = std::move(text);
         vol.lastKnownEntryCount = count;
-    }
-
-    void BookManager::UnregisterBook(const std::string& actorUuid) {
-        auto it = books_.find(actorUuid);
-        if (it != books_.end()) {
-            SKSE::log::info("Unregistered {} volumes for {}", it->second.size(), actorUuid);
-            books_.erase(it);
-        }
-        DiaryDB::GetSingleton()->DeleteActor(actorUuid);
     }
 
     void BookManager::UnregisterVolumesFrom(const std::string& actorUuid, int fromVolume) {
@@ -251,23 +239,17 @@ namespace SkyrimNetDiaries {
                     // Keep cached FormID warm so the next open can skip the UUID lookup.
                     bookData.cachedActorFormId = actorFormId;
 
-                    const int MAX_ENTRIES_PER_VOLUME = SkyrimNetDiaries::Config::GetSingleton()->GetEntriesPerVolume();
-
-                    double queryStart = (bookData.volumeNumber == 1) ? 0.0 : bookData.startTime;
-                    double queryEnd = bookData.endTime; // 0.0 = no upper bound for latest volume
-
                     std::string bookTitle = Localization::GetSingleton()->FormatBookName(bookData.actorName, bookData.volumeNumber);
 
-                    SKSE::log::debug("[Regen] '{}' vol={} stored startTime={:.2f} endTime={:.2f} -> queryStart={:.2f} queryEnd={:.2f}",
-                                    bookTitle, bookData.volumeNumber,
-                                    bookData.startTime, bookData.endTime,
-                                    queryStart, queryEnd);
+                    SKSE::log::debug("[Regen] '{}' vol={} startTime={:.2f} endTime={:.2f}",
+                                    bookTitle, bookData.volumeNumber, bookData.startTime, bookData.endTime);
 
-                    // Sealed volumes never show more than MAX_ENTRIES_PER_VOLUME entries.
-                    auto volumeEntries = SkyrimNetDiaries::Database::GetVolumeEntries(
-                        actorFormId, queryStart, queryEnd, bookData.prevVolumeLastCreationTime,
-                        bookData.prevVolumeCountAtBoundary,
-                        bookData.endTime > 0.0 ? MAX_ENTRIES_PER_VOLUME : 0);
+                    bool queryOk = false;
+                    auto volumeEntries = GetLiveEntries(bookData, actorFormId, bookData.endTime, &queryOk);
+                    if (!queryOk) {
+                        SKSE::log::warn("[Regen] '{}': couldn't read entries from SkyrimNet — keeping its text", bookTitle);
+                        continue;
+                    }
 
                     SKSE::log::debug("[Regen] '{}' {} entries; first={:.2f} last={:.2f}",
                                     bookTitle, volumeEntries.size(),
@@ -284,6 +266,8 @@ namespace SkyrimNetDiaries {
 
         } catch (const std::exception& e) {
             SKSE::log::error("[BookManager] Exception regenerating diary texts: {}", e.what());
+        } catch (...) {
+            SKSE::log::error("[BookManager] Unknown exception regenerating diary texts");
         }
     }
 
@@ -336,15 +320,8 @@ namespace SkyrimNetDiaries {
         SKSE::log::debug("[BookManager] Actor cache + FormID claims cleared");
     }
 
-    // ---------------------------------------------------------------------------
-    // EnsureBookInInventory: if the NPC doesn't have the book, add it.
-    // Called after LoadFromDB for volumes whose DPF form exists but may not be
-    // in the NPC's inventory (e.g. after reload-without-save).
-    //
-    // actorUuid is REQUIRED to correctly route diaries for non-unique NPCs
-    // (guards, bandits, wolves) — passing it lets FindActorForBook resolve
-    // by UUID instead of falling back to name matching which can collide.
-    // ---------------------------------------------------------------------------
+    // Gives the NPC the book back if they don't hold it: a volume whose form is still
+    // in memory but not in the NPC's inventory (a reload without saving).
     static void EnsureBookInInventory(RE::FormID bookFormId, RE::FormID targetFormID,
                                       const std::string& actorName, const std::string& bioTemplate,
                                       const std::string& bookName, const std::string& actorUuid) {
@@ -360,9 +337,7 @@ namespace SkyrimNetDiaries {
             return;
         }
 
-        // Check inventory — avoid adding a duplicate.
-        auto inv = actor->GetInventory([book](RE::TESBoundObject& a_obj) { return &a_obj == book; });
-        if (auto it = inv.find(book); it != inv.end() && it->second.first > 0) {
+        if (CountInInventory(actor, book) > 0) {
             SKSE::log::debug("[EnsureInventory] '{}' already in {}'s inventory", bookName, actorName);
             return;
         }
@@ -503,9 +478,6 @@ namespace SkyrimNetDiaries {
         }
         if (vol->cachedActorFormId == 0) return;
 
-        const int MAX_ENTRIES = Config::GetSingleton()->GetEntriesPerVolume();
-        double queryStart = (vol->volumeNumber == 1) ? 0.0 : vol->startTime;
-
         // For the active (latest) volume use 0.0 so entries written after the
         // last update are visible even if UpdateDiaryForActorInternal hasn't run yet.
         // For sealed older volumes, respect vol->endTime as the upper-time cutoff.
@@ -519,12 +491,8 @@ namespace SkyrimNetDiaries {
             }
         }
 
-        // For sealed volumes, cap to MAX_ENTRIES so boundary tie-breaking is deterministic.
         bool queryOk = false;
-        auto liveEntries = Database::GetVolumeEntries(
-            vol->cachedActorFormId, queryStart, queryEnd,
-            vol->prevVolumeLastCreationTime, vol->prevVolumeCountAtBoundary,
-            vol->endTime > 0.0 ? MAX_ENTRIES : 0, &queryOk);
+        auto liveEntries = GetLiveEntries(*vol, vol->cachedActorFormId, queryEnd, &queryOk);
         if (!queryOk) {
             // Couldn't read SkyrimNet: keep what the book shows rather than treat the
             // failure as "every entry was deleted".

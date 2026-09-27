@@ -21,19 +21,8 @@
 
 #include "PCH.h"
 
-namespace PapyrusAPI {
-    // Register all native Papyrus functions
+// The Papyrus natives (diary events, theft queries, MCM).  See docs/PAPYRUS_AND_API.md.
+namespace SkyrimNetDiaries::PapyrusAPI {
+    // Registers every native with the Papyrus VM.
     void Register();
-    
-    // Get the theft status of an actor's diary as JSON string
-    // Returns JSON like: {"stolen": true, "chronicled": false} or {"stolen": false}
-    RE::BSFixedString GetDiaryTheftStatus(RE::StaticFunctionTag*, RE::Actor* akActor);
-    
-    // Check if an actor's diary is currently stolen (simple boolean check)
-    // Returns "true" if stolen and not yet resolved, "false" otherwise
-    RE::BSFixedString IsDiaryStolen(RE::StaticFunctionTag*, RE::Actor* akActor);
-    
-    // Record that an actor has chronicled their stolen diary (clears theft state)
-    // Call this when an NPC writes a diary entry
-    void SetTheftCleared(RE::StaticFunctionTag*, RE::Actor* akActor);
-}
+} // namespace SkyrimNetDiaries::PapyrusAPI

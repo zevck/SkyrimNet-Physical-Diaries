@@ -340,19 +340,17 @@ namespace SkyrimNetDiaries {
         return ok;
     }
 
-    double DiaryDB::GetLastKnownGameTime(const std::string& actorUuid) {
-        if (!db_) return 0.0;
-        Statement st(db_, "SELECT last_known_game_time FROM actor_templates WHERE actor_uuid=?1;", "GetLastKnownGameTime");
-        return st.Bind(1, actorUuid).Next() ? st.Double(0) : 0.0;
+    int DiaryDB::RemoveStolenVolumesAfter(double gameTime) {
+        if (!db_) return 0;
+        Statement st(db_, "DELETE FROM stolen_volumes WHERE stolen_at > ?1;", "RemoveStolenVolumesAfter");
+        return st.Bind(1, gameTime).Run() ? sqlite3_changes(db_) : 0;
     }
 
-    bool DiaryDB::UpdateLastKnownGameTime(const std::string& actorUuid, double gameTime) {
+    bool DiaryDB::ClearPersisted(const std::string& actorUuid, int volumeNumber) {
         if (!db_) return false;
-        Statement st(db_,
-            "INSERT INTO actor_templates (actor_uuid, last_known_game_time) VALUES (?1, ?2) "
-            "ON CONFLICT(actor_uuid) DO UPDATE SET last_known_game_time=?2;",
-            "UpdateLastKnownGameTime");
-        return st.Bind(1, actorUuid).Bind(2, gameTime).Run();
+        Statement st(db_, "UPDATE volumes SET persisted_in_save=0 WHERE actor_uuid=?1 AND volume_number=?2;",
+                     "ClearPersisted");
+        return st.Bind(1, actorUuid).Bind(2, volumeNumber).Run();
     }
 
     bool DiaryDB::UpsertActorTemplate(const std::string& uuid,

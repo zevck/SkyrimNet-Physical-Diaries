@@ -28,16 +28,10 @@ namespace SkyrimNetDiaries::SaveFolder {
     }
 
     const std::string& Get() { return g_currentSaveFolder; }
-    void Set(std::string folder) { g_currentSaveFolder = std::move(folder); }
     void Clear() { g_currentSaveFolder.clear(); }
 
-    // Parse SkyrimNet.log to detect the current save folder (more reliable than filesystem scan).
-    // Finds the most recent "Using save ID: " entry, verifies the .db file exists, and caches
-    // the result in g_currentSaveFolder. Returns "" on failure.
     std::string DetectFromLog() {
-        if (!g_currentSaveFolder.empty()) {
-            return g_currentSaveFolder;
-        }
+        g_currentSaveFolder.clear();
 
         try {
             auto logDir = SKSE::log::log_directory();
