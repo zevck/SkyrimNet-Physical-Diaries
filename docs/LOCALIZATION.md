@@ -1,0 +1,49 @@
+# Localization
+
+Book titles, dates and volume numbering follow the game language. Translators add a language by dropping in files; no rebuild is needed. The user-facing guide is the "Localization" section of [README.md](../README.md#localization).
+
+Code: `src/Localization.cpp`, `include/Localization.h` (singleton `SkyrimNetDiaries::Localization`).
+
+---
+
+## Choosing the language
+
+`Localization::Initialize()` runs in `SKSEPlugin_Load`, before `BookTextHook::Install()`:
+
+1. `[General] Language` in `SkyrimNetPhysicalDiaries.ini`, if set (lets an English game use, say, German books).
+2. Otherwise `sLanguage` from `Documents/My Games/Skyrim Special Edition/Skyrim.ini` (found with `SHGetFolderPath`).
+3. Otherwise `ENGLISH`.
+
+The name must match a locale file, e.g. `GERMAN` → `Locales/GERMAN.ini`.
+
+## Locale files
+
+`SKSE/Plugins/SkyrimNetPhysicalDiaries/Locales/<LANGUAGE>.ini`. Nine ship: CHINESE, ENGLISH, FRENCH, GERMAN, ITALIAN, JAPANESE, POLISH, RUSSIAN, SPANISH.
+
+The folder is located from **the DLL's own path** (`GetModuleHandleExA` on a function address), not `SKSE::log::log_directory()`, which points to Documents.
+
+| Section / key | Used for | Placeholders |
+|---|---|---|
+| `[Format] DateLong` | Entry date headers | `{Day}` weekday, `{d}` day, `{Month}`, `{y}` year |
+| `[Format] DateShort` | Title-page date range | `{d}`, `{Month}`, `{y}` |
+| `[Format] DiaryTitle` | Book title | `{Name}` |
+| `[Format] VolumeSuffix` | Appended from volume 2 on (default `, v{n}`) | `{n}` number, `{cn}` Chinese numeral |
+| `[Format] EmptyVolumeText` | Page shown when all of a volume's entries were deleted | |
+| `[Months]`, `[Days]` | Optional name overrides, keyed by the English name | |
+
+Anything missing falls back to English.
+
+## Month and day names
+
+Precedence: locale `[Months]`/`[Days]` → the game's GMSTs → English. `ReadGMSTs()` runs at `kDataLoaded`, since GMSTs are not loaded at plugin load. It reads `sMonthJanuary`… (which hold the Tamrielic names, Morning Star onward) and `sDaySunday`…. Mods such as Seasons of Skyrim change the month GMSTs, which is why locale files should include `[Months]` and `[Days]`.
+
+## MCM translations
+
+`Interface/Translations/SkyrimNet Physical Diaries_<LANGUAGE>.txt`, one per shipped locale. **Must be UTF-16 LE with BOM**; Skyrim ignores UTF-8 translation files. Keys are the `$SNPD_…` strings used in `SkyrimNetDiaries_MCM.psc`.
+
+## Rules
+
+- Don't hard-code user-visible, language-specific strings outside `Localization.cpp` and the locale files.
+- **Code that compares book names breaks in other languages.** `DiaryTheftHandler` currently filters on the English word "Diary" and so does nothing for 8 of the 9 shipped languages. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md). Identify books by FormID (`BookManager::GetBookForFormID`), never by name.
+- Cyrillic text is converted to Windows-1251 at injection time. See [BOOK_TEXT.md](BOOK_TEXT.md#utf-8--windows-1251).
+- The MCM font dropdown: `$StartGameFont` renders as boxes, and in vanilla `$HandwrittenBold` is the same as `$HandwrittenFont`. SkyUI's `OnOptionMenuOpen` must fill the list without checking the option ID, or the menu opens empty.
