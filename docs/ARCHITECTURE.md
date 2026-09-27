@@ -87,7 +87,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 1. `InitializeLog()`, then `SKSE::Init`.
 2. `Config::Load()` followed at once by `Config::Save()`, so MO2 copies the INI into `overwrite/` and user settings survive mod updates. Debug level is applied from `[General] DebugLog`.
 3. Register `OnMessage`; `Serialization::Register()` registers the co-save callbacks under the unique ID `'SNDB'`.
-4. `BookManager::Initialize(...)` with the four template EditorIDs.
+4. `BookManager::Initialize()` with the template EditorIDs from `BookManager.h`.
 5. `DiaryTheftHandler::Register()` (event sinks), `Localization::Initialize()`, `BookTextHook::Install()`, `TimelineGate::Install()`, `PapyrusAPI::Register()`.
 
 **`kDataLoaded`**: warn with a message box if `Dynamic Persistent Forms.esp` is missing; verify all four templates resolve by EditorID and show a message box naming the likely causes if not; `TimelineGate::OnDataLoaded()` (finds SkyrimNet's prompt text); `Localization::ReadGMSTs()`.
@@ -105,7 +105,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
    - `DiaryTheftHandler::ReconcileAfterLoad()`: clear stolen volumes for any actor whose `last_known_game_time` is later than the current game time (the player loaded an earlier save).
    - `SetPostLoadSyncReady(true)`, then queue immediate recreation for actors whose book forms were invalid, then `QueueSealedVolumeRecovery()` and `QueueBatchCatchUpScan()`.
 
-**Save**: the co-save `SaveCallback` opens the DB if a new game never got a `kPostLoadGame`, runs `FlushToDB()`, stamps `last_known_game_time`, and writes the `SNDB` sentinel and `SNDF` folder records. `kSaveGame` then marks every volume `persisted_in_save`. See [DATABASE.md](DATABASE.md#co-save-records).
+**Save**: SKSE sends `kSaveGame` first, which marks every volume `persisted_in_save` (in DiaryDB and in memory). Then the co-save `SaveCallback` runs: it opens the DB if it isn't open (a new game that never got a `kPostLoadGame`, or a save during the post-load wait), runs `FlushToDB()` (which carries the in-memory persisted flag, so a DB opened only here still gets it), stamps `last_known_game_time`, and writes the `SNDB` sentinel and `SNDF` folder records. See [DATABASE.md](DATABASE.md#co-save-records).
 
 **New game or load**: `RevertCallback` clears in-memory state. `diary.db` on disk is kept on purpose.
 
@@ -126,11 +126,12 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 
 | Context | What runs there |
 |---|---|
-| Game (main) thread | SKSE messages, every `AddTask` body, the book hook, event sinks |
-| Papyrus VM thread | Native functions, and the `DPF.Create()` callback (`DPFCreateCallback::operator()`) |
-| Detached `std::thread` | One per created book: sleeps 5 s, then queues the `kCantTake` clear |
+| Game (main) thread | SKSE messages, every `AddTask` body, the book hook, event sinks, the `TimelineGate` prompt callback, and **Papyrus natives**: they are registered with `callableFromTasklets = false` (CommonLib's default), so the VM defers each call to the game thread |
+| Papyrus VM thread | Only the `DPF.Create()` callback (`DPFCreateCallback::operator()`) |
+| Whichever thread queues a message box | The `QueueMessage` hook (`TimelineGate`): it only compares text and wraps a callback |
+| Detached `std::thread` | Sleepers that wait, then queue a game-thread task: the 5 s `kCantTake` clear per created book, the post-load readiness poll, `DeferUntilSyncReady` |
 
-Rules: anything touching forms, inventories or references must run on the game thread (`SKSE::GetTaskInterface()->AddTask`). The DPF callback does only the FormID claim itself and hands the rest to a task. The create queue, the claim table and the actor cache each have their own mutex. `books_` has none and is only touched from the game thread, so keep it that way.
+Rules: anything touching forms, inventories or references must run on the game thread (`SKSE::GetTaskInterface()->AddTask`). Don't register a native with `callableFromTasklets = true`: it would then run on a VM thread and race `books_`. The DPF callback does only the FormID claim itself and hands the rest to a task. The create queue, the claim table and the actor cache each have their own mutex. `books_` has none and is only touched from the game thread, so keep it that way.
 
 ---
 

@@ -32,7 +32,7 @@ namespace SkyrimNetDiaries {
         }
 
         SKSE::log::info("Initializing SkyrimNet Public API...");
-        
+
         if (!FindFunctions()) {
             SKSE::log::error("Failed to load SkyrimNet.dll - API not available");
             return false;
@@ -73,10 +73,15 @@ namespace SkyrimNetDiaries {
         return PublicIsMemorySystemReady();
     }
 
-    std::vector<DiaryEntry> Database::ParseDiaryJSON(const std::string& jsonResponse) {
+    std::vector<DiaryEntry> Database::ParseDiaryJSON(const std::string& jsonResponse, bool* ok) {
         std::vector<DiaryEntry> entries;
+        if (ok) *ok = true;
 
-        if (jsonResponse.empty() || jsonResponse == "[]") {
+        if (jsonResponse.empty()) {  // SkyrimNet always answers with a JSON array
+            if (ok) *ok = false;
+            return entries;
+        }
+        if (jsonResponse == "[]") {
             return entries;
         }
 
@@ -85,42 +90,43 @@ namespace SkyrimNetDiaries {
 
             if (!jsonArray.is_array()) {
                 SKSE::log::error("Expected JSON array from API, got: {}", jsonResponse.substr(0, 100));
+                if (ok) *ok = false;
                 return entries;
             }
 
             for (const auto& item : jsonArray) {
                 DiaryEntry entry;
-                
+
                 // Required fields
                 if (item.contains("actor_uuid") && item["actor_uuid"].is_number()) {
                     entry.actor_uuid = std::to_string(item["actor_uuid"].get<uint64_t>());
                 }
-                
+
                 if (item.contains("actor_name") && item["actor_name"].is_string()) {
                     entry.actor_name = item["actor_name"].get<std::string>();
                 }
-                
+
                 if (item.contains("content") && item["content"].is_string()) {
                     entry.content = item["content"].get<std::string>();
                 }
-                
+
                 if (item.contains("entry_date") && item["entry_date"].is_number()) {
                     entry.entry_date = item["entry_date"].get<double>();
                 }
-                
+
                 if (item.contains("creation_time") && item["creation_time"].is_number()) {
                     entry.creation_time = item["creation_time"].get<double>();
                 }
-                
+
                 // Optional fields
                 if (item.contains("location") && item["location"].is_string()) {
                     entry.location = item["location"].get<std::string>();
                 }
-                
+
                 if (item.contains("emotion") && item["emotion"].is_string()) {
                     entry.emotion = item["emotion"].get<std::string>();
                 }
-                
+
                 if (item.contains("importance_score") && item["importance_score"].is_number()) {
                     entry.importance_score = item["importance_score"].get<double>();
                 }
@@ -131,6 +137,7 @@ namespace SkyrimNetDiaries {
             SKSE::log::debug("Parsed {} diary entries from API JSON", entries.size());
 
         } catch (const json::exception& e) {
+            if (ok) *ok = false;
             SKSE::log::error("JSON parsing error: {}", e.what());
             SKSE::log::error("JSON response (first 500 chars): {}", jsonResponse.substr(0, 500));
         }
@@ -138,7 +145,8 @@ namespace SkyrimNetDiaries {
         return entries;
     }
 
-    std::vector<DiaryEntry> Database::GetDiaryEntries(uint32_t formId, int limit, double startTime, double endTime, double prevVolumeLastCreationTime, int prevVolumeCountAtBoundary) {
+    std::vector<DiaryEntry> Database::GetDiaryEntries(uint32_t formId, int limit, double startTime, double endTime, double prevVolumeLastCreationTime, int prevVolumeCountAtBoundary, bool* ok) {
+        if (ok) *ok = false;  // until the query has succeeded
         try {
             if (!api_initialized_ && !InitializeAPI()) {
                 SKSE::log::error("API not initialized - cannot get diary entries");
@@ -154,8 +162,10 @@ namespace SkyrimNetDiaries {
                             formId, limit, startTime, endTime);
 
             std::string jsonResponse = PublicGetDiaryEntries(formId, limit, startTime, endTime);
-        
-            auto entries = ParseDiaryJSON(jsonResponse);
+
+            bool parsed = true;
+            auto entries = ParseDiaryJSON(jsonResponse, &parsed);
+            if (ok) *ok = parsed;
 
             // Oldest first, matching the volume-splitting order in CreateAllVolumesForActor.
             std::sort(entries.begin(), entries.end(), EntryOlder);
@@ -190,7 +200,7 @@ namespace SkyrimNetDiaries {
             }
 
             SKSE::log::debug("Retrieved {} diary entries for FormID 0x{:X}", entries.size(), formId);
-        
+
             return entries;
         } catch (const std::exception& e) {
             SKSE::log::error("GetDiaryEntries exception: {}", e.what());
@@ -202,11 +212,11 @@ namespace SkyrimNetDiaries {
 
     std::vector<DiaryEntry> Database::GetVolumeEntries(uint32_t formId, double startTime, double endTime,
                                                        double prevVolumeLastCreationTime,
-                                                       int prevVolumeCountAtBoundary, int maxEntries) {
+                                                       int prevVolumeCountAtBoundary, int maxEntries, bool* ok) {
         // Fetch the whole range: SkyrimNet's limit keeps the newest entries, which would
         // drop the volume's oldest ones.
         auto entries = GetDiaryEntries(formId, kFetchAllEntries, startTime, endTime,
-                                       prevVolumeLastCreationTime, prevVolumeCountAtBoundary);
+                                       prevVolumeLastCreationTime, prevVolumeCountAtBoundary, ok);
         if (maxEntries > 0 && static_cast<int>(entries.size()) > maxEntries) {
             entries.resize(maxEntries);
         }
@@ -240,11 +250,11 @@ namespace SkyrimNetDiaries {
             }
 
             std::string templateName = PublicGetBioTemplateName(formId);
-        
+
             if (!templateName.empty()) {
                 SKSE::log::debug("Bio template for 0x{:X}: {}", formId, templateName);
             }
-        
+
             return templateName;
         } catch (const std::exception& e) {
             SKSE::log::error("GetBioTemplateName exception: {}", e.what());
@@ -265,8 +275,9 @@ namespace SkyrimNetDiaries {
                 return "";
             }
 
-            uint64_t uuid = PublicFormIDToUUID(formId);
-            return std::to_string(uuid);
+            // "" when SkyrimNet doesn't know the actor (it returns 0).
+            const uint64_t uuid = PublicFormIDToUUID(formId);
+            return uuid == 0 ? std::string{} : std::to_string(uuid);
         } catch (const std::exception& e) {
             SKSE::log::error("GetUUIDFromFormID exception: {}", e.what());
         } catch (...) {

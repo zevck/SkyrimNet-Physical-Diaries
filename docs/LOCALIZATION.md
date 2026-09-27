@@ -36,7 +36,7 @@ Anything missing falls back to English.
 
 ## Month and day names
 
-Precedence: locale `[Months]`/`[Days]` → the game's GMSTs → English. `ReadGMSTs()` runs at `kDataLoaded`, since GMSTs are not loaded at plugin load. It reads `sMonthJanuary`… (which hold the Tamrielic names, Morning Star onward) and `sDaySunday`…. Mods such as Seasons of Skyrim change the month GMSTs, which is why locale files should include `[Months]` and `[Days]`.
+Precedence: locale `[Months]`/`[Days]` → the game's GMSTs → English. It applies per **list**, not per name: a single `[Months]` key makes all twelve month names come from the locale file (English for any it leaves out) and skips the GMSTs; `[Days]` works the same way. So a locale file should list all of them, and never leave a value empty (an empty name would match every entry when stripping LLM-written dates). `ReadGMSTs()` runs at `kDataLoaded`, since GMSTs are not loaded at plugin load. It reads `sMonthJanuary`… (which hold the Tamrielic names, Morning Star onward) and `sDaySunday`…. Mods such as Seasons of Skyrim change the month GMSTs, which is why locale files should include `[Months]` and `[Days]`.
 
 ## MCM translations
 

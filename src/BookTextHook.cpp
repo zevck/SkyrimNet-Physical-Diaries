@@ -259,13 +259,11 @@ namespace
             // engine then faults (the VR/HIGGS dead-handle CTD), the crash log's
             // preceding lines show exactly which book/reference triggered it and
             // whether a_ref was present.  Helps root-cause setup-specific reports.
-            if (SkyrimNetDiaries::Config::GetSingleton()->GetDebugLog()) {
-                SKSE::log::info("[BookTextHook] thunk entry: book=0x{:X} ref={} refFormId=0x{:X} useDefaultPos={}",
-                    a_book ? a_book->GetFormID() : 0,
-                    a_ref ? "yes" : "null",
-                    a_ref ? a_ref->GetFormID() : 0,
-                    a_useDefaultPos);
-            }
+            SKSE::log::debug("[BookTextHook] thunk entry: book=0x{:X} ref={} refFormId=0x{:X} useDefaultPos={}",
+                a_book ? a_book->GetFormID() : 0,
+                a_ref ? "yes" : "null",
+                a_ref ? a_ref->GetFormID() : 0,
+                a_useDefaultPos);
 
             // VR world-open crash workaround.
             //

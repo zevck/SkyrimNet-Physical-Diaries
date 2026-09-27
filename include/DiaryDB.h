@@ -35,9 +35,11 @@ namespace SkyrimNetDiaries {
     // DB location:
     //   <cwd>/Data/SKSE/Plugins/SkyrimNetPhysicalDiaries/<saveFolder>/diary.db
     //
-    // Schema (two tables):
-    //   volumes       — one row per diary volume (metadata + rendered book_text)
-    //   actor_templates — one row per actor UUID recording journal template choice
+    // Schema (three tables):
+    //   volumes         — one row per diary volume (metadata + rendered book_text)
+    //   actor_templates — one row per actor UUID: journal template choice and
+    //                     last_known_game_time
+    //   stolen_volumes  — one row per stolen volume
     // ---------------------------------------------------------------------------
 
     class DiaryDB {
@@ -92,7 +94,7 @@ namespace SkyrimNetDiaries {
         // Return all volume rows ordered by (actor_uuid, volume_number).
         std::vector<VolumeRow> LoadAllVolumes();
 
-        // Mark every volume as persisted (call from kPostSaveGame so that the
+        // Mark every volume as persisted (call from kSaveGame so that the
         // inventory-check on next load doesn't re-add legitimately taken books).
         bool MarkAllVolumesPersisted();
 

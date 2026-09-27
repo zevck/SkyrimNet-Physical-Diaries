@@ -43,7 +43,7 @@ The menu sink tracks only whether the **Dialogue Menu**, **Console** and **Conta
 
 ## Save reverts
 
-`last_known_game_time` (per actor, in `actor_templates`) is stamped on theft, on return and at every save. At `kPostLoadGame`, if the current game time is **earlier** than an actor's stamp, the player has loaded an earlier save and the theft may never have happened in this timeline, so that actor's stolen volumes are cleared.
+`last_known_game_time` (per actor, in `actor_templates`) is stamped on theft, on return, on every diary event for that actor (`ClearStolenVolumes`), at every save, and at every load (`ReconcileAfterLoad` resets it to the loaded game time after the check below). Stamping an actor with no volumes yet creates an `actor_templates` row with an empty `template_name`, which template selection ignores. At `kPostLoadGame`, if the current game time is **earlier** than an actor's stamp, the player has loaded an earlier save and the theft may never have happened in this timeline, so that actor's stolen volumes are cleared.
 
 ## Related behaviour
 

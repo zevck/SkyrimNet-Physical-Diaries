@@ -135,19 +135,59 @@ namespace SkyrimNetDiaries {
 
     // ── Helpers ─────────────────────────────────────────────────────────────────
 
-    static bool StepAndFinalize(sqlite3* db, sqlite3_stmt* stmt, const char* tag) {
-        bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
-        if (!ok) SKSE::log::error("[DiaryDB] {} step: {}", tag, sqlite3_errmsg(db));
-        sqlite3_finalize(stmt);
-        return ok;
-    }
+    namespace {
+
+        // A prepared statement that finalizes itself.  Failed prepares and steps are
+        // logged with the statement's tag; a failed prepare makes every call a no-op.
+        class Statement {
+        public:
+            Statement(sqlite3* db, const char* sql, const char* tag) : db_(db), tag_(tag) {
+                if (sqlite3_prepare_v2(db, sql, -1, &stmt_, nullptr) != SQLITE_OK) {
+                    SKSE::log::error("[DiaryDB] {} prepare: {}", tag, sqlite3_errmsg(db));
+                    sqlite3_finalize(stmt_);
+                    stmt_ = nullptr;
+                }
+            }
+            ~Statement() { sqlite3_finalize(stmt_); }
+            Statement(const Statement&) = delete;
+            Statement& operator=(const Statement&) = delete;
+
+            explicit operator bool() const { return stmt_ != nullptr; }
+
+            Statement& Bind(int i, const std::string& v) { sqlite3_bind_text(stmt_, i, v.c_str(), -1, SQLITE_TRANSIENT); return *this; }
+            Statement& Bind(int i, int v)                { sqlite3_bind_int(stmt_, i, v); return *this; }
+            Statement& Bind(int i, double v)             { sqlite3_bind_double(stmt_, i, v); return *this; }
+
+            // For statements without result rows.
+            bool Run() {
+                if (!stmt_) return false;
+                const bool ok = sqlite3_step(stmt_) == SQLITE_DONE;
+                if (!ok) SKSE::log::error("[DiaryDB] {} step: {}", tag_, sqlite3_errmsg(db_));
+                return ok;
+            }
+            // Advances to the next result row.
+            bool Next() { return stmt_ && sqlite3_step(stmt_) == SQLITE_ROW; }
+
+            int Int(int col) const { return sqlite3_column_int(stmt_, col); }
+            double Double(int col) const { return sqlite3_column_double(stmt_, col); }
+            std::string Text(int col) const {
+                const auto* t = reinterpret_cast<const char*>(sqlite3_column_text(stmt_, col));
+                return t ? t : "";
+            }
+
+        private:
+            sqlite3* db_;
+            const char* tag_;
+            sqlite3_stmt* stmt_ = nullptr;
+        };
+
+    } // namespace
 
     // ── Volume operations ────────────────────────────────────────────────────────
 
     bool DiaryDB::UpsertVolume(const VolumeRow& r) {
         if (!db_) return false;
-
-        const char* sql =
+        Statement st(db_,
             "INSERT INTO volumes "
             "(actor_uuid, actor_name, actor_form_id, book_form_id, volume_number, start_time, end_time, "
             " journal_template, bio_template_name, last_known_entry_count, "
@@ -168,144 +208,77 @@ namespace SkyrimNetDiaries {
             " persisted_in_save=MAX(volumes.persisted_in_save, excluded.persisted_in_save), "
             // Preserve existing text when the caller passes an empty string.
             " book_text=CASE WHEN excluded.book_text='' THEN volumes.book_text "
-            "                ELSE excluded.book_text END;";
-
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            SKSE::log::error("[DiaryDB] UpsertVolume prepare: {}", sqlite3_errmsg(db_));
-            return false;
-        }
-
-        sqlite3_bind_text(stmt,  1, r.actorUuid.c_str(),          -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt,  2, r.actorName.c_str(),           -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int (stmt,  3, static_cast<int>(r.actorFormId));
-        sqlite3_bind_int (stmt,  4, static_cast<int>(r.bookFormId));
-        sqlite3_bind_int (stmt,  5, r.volumeNumber);
-        sqlite3_bind_double(stmt,6, r.startTime);
-        sqlite3_bind_double(stmt,7, r.endTime);
-        sqlite3_bind_text(stmt,  8, r.journalTemplate.c_str(),     -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt,  9, r.bioTemplateName.c_str(),     -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int (stmt, 10, r.lastKnownEntryCount);
-        sqlite3_bind_double(stmt,11, r.prevVolumeLastCreationTime);
-        sqlite3_bind_int (stmt, 12, r.prevVolumeCountAtBoundary);
-        sqlite3_bind_text(stmt, 13, r.bookText.c_str(),            -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int (stmt, 14, r.persistedInSave ? 1 : 0);
-
-        return StepAndFinalize(db_, stmt, "UpsertVolume");
+            "                ELSE excluded.book_text END;",
+            "UpsertVolume");
+        return st.Bind(1, r.actorUuid).Bind(2, r.actorName)
+                 .Bind(3, static_cast<int>(r.actorFormId)).Bind(4, static_cast<int>(r.bookFormId))
+                 .Bind(5, r.volumeNumber).Bind(6, r.startTime).Bind(7, r.endTime)
+                 .Bind(8, r.journalTemplate).Bind(9, r.bioTemplateName).Bind(10, r.lastKnownEntryCount)
+                 .Bind(11, r.prevVolumeLastCreationTime).Bind(12, r.prevVolumeCountAtBoundary)
+                 .Bind(13, r.bookText).Bind(14, r.persistedInSave ? 1 : 0)
+                 .Run();
     }
 
     bool DiaryDB::UpdateBookText(const std::string& actorUuid, int volumeNumber,
                                   const std::string& text, int entryCount) {
         if (!db_) return false;
-        const char* sql =
+        Statement st(db_,
             "UPDATE volumes SET book_text=?1, last_known_entry_count=?2 "
-            "WHERE actor_uuid=?3 AND volume_number=?4;";
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            SKSE::log::error("[DiaryDB] UpdateBookText prepare: {}", sqlite3_errmsg(db_));
-            return false;
-        }
-        sqlite3_bind_text  (stmt, 1, text.c_str(),       -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int   (stmt, 2, entryCount);
-        sqlite3_bind_text  (stmt, 3, actorUuid.c_str(),  -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int   (stmt, 4, volumeNumber);
-        return StepAndFinalize(db_, stmt, "UpdateBookText");
+            "WHERE actor_uuid=?3 AND volume_number=?4;",
+            "UpdateBookText");
+        return st.Bind(1, text).Bind(2, entryCount).Bind(3, actorUuid).Bind(4, volumeNumber).Run();
     }
 
     bool DiaryDB::UpdateEndTime(const std::string& actorUuid, int volumeNumber,
                                  double endTime) {
         if (!db_) return false;
-        const char* sql =
-            "UPDATE volumes SET end_time=?1 WHERE actor_uuid=?2 AND volume_number=?3;";
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            SKSE::log::error("[DiaryDB] UpdateEndTime prepare: {}", sqlite3_errmsg(db_));
-            return false;
-        }
-        sqlite3_bind_double(stmt, 1, endTime);
-        sqlite3_bind_text  (stmt, 2, actorUuid.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int   (stmt, 3, volumeNumber);
-        return StepAndFinalize(db_, stmt, "UpdateEndTime");
+        Statement st(db_, "UPDATE volumes SET end_time=?1 WHERE actor_uuid=?2 AND volume_number=?3;", "UpdateEndTime");
+        return st.Bind(1, endTime).Bind(2, actorUuid).Bind(3, volumeNumber).Run();
     }
 
     bool DiaryDB::DeleteVolume(const std::string& actorUuid, int volumeNumber) {
         if (!db_) return false;
-        const char* sql =
-            "DELETE FROM volumes WHERE actor_uuid=?1 AND volume_number=?2;";
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            SKSE::log::error("[DiaryDB] DeleteVolume prepare: {}", sqlite3_errmsg(db_));
-            return false;
-        }
-        sqlite3_bind_text(stmt, 1, actorUuid.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int (stmt, 2, volumeNumber);
-        return StepAndFinalize(db_, stmt, "DeleteVolume");
+        Statement st(db_, "DELETE FROM volumes WHERE actor_uuid=?1 AND volume_number=?2;", "DeleteVolume");
+        return st.Bind(1, actorUuid).Bind(2, volumeNumber).Run();
     }
 
     bool DiaryDB::DeleteActor(const std::string& actorUuid) {
         if (!db_) return false;
-        // Delete volumes
-        {
-            const char* sql = "DELETE FROM volumes WHERE actor_uuid=?1;";
-            sqlite3_stmt* stmt = nullptr;
-            if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-                SKSE::log::error("[DiaryDB] DeleteActor volumes prepare: {}", sqlite3_errmsg(db_));
-                return false;
-            }
-            sqlite3_bind_text(stmt, 1, actorUuid.c_str(), -1, SQLITE_TRANSIENT);
-            StepAndFinalize(db_, stmt, "DeleteActor volumes");
-        }
-        // Delete template
-        {
-            const char* sql = "DELETE FROM actor_templates WHERE actor_uuid=?1;";
-            sqlite3_stmt* stmt = nullptr;
-            if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
-            sqlite3_bind_text(stmt, 1, actorUuid.c_str(), -1, SQLITE_TRANSIENT);
-            StepAndFinalize(db_, stmt, "DeleteActor template");
-        }
-        return true;
+        Statement volumes(db_, "DELETE FROM volumes WHERE actor_uuid=?1;", "DeleteActor volumes");
+        if (!volumes.Bind(1, actorUuid).Run()) return false;
+        Statement templates(db_, "DELETE FROM actor_templates WHERE actor_uuid=?1;", "DeleteActor template");
+        return templates.Bind(1, actorUuid).Run();
     }
 
     std::vector<DiaryDB::VolumeRow> DiaryDB::LoadAllVolumes() {
         std::vector<VolumeRow> rows;
         if (!db_) return rows;
 
-        const char* sql =
+        Statement st(db_,
             "SELECT actor_uuid, actor_name, actor_form_id, book_form_id, volume_number, start_time, end_time, "
             "       journal_template, bio_template_name, last_known_entry_count, "
             "       prev_volume_last_creation_time, prev_volume_count_at_boundary, book_text, "
             "       persisted_in_save "
-            "FROM volumes ORDER BY actor_uuid, volume_number;";
-
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            SKSE::log::error("[DiaryDB] LoadAllVolumes prepare: {}", sqlite3_errmsg(db_));
-            return rows;
-        }
-
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            "FROM volumes ORDER BY actor_uuid, volume_number;",
+            "LoadAllVolumes");
+        while (st.Next()) {
             VolumeRow r;
-            auto col = [&](int i) -> std::string {
-                const char* t = reinterpret_cast<const char*>(sqlite3_column_text(stmt, i));
-                return t ? t : "";
-            };
-            r.actorUuid                   = col(0);
-            r.actorName                   = col(1);
-            r.actorFormId                 = static_cast<std::uint32_t>(sqlite3_column_int(stmt, 2));
-            r.bookFormId                  = static_cast<std::uint32_t>(sqlite3_column_int(stmt, 3));
-            r.volumeNumber                = sqlite3_column_int(stmt, 4);
-            r.startTime                   = sqlite3_column_double(stmt, 5);
-            r.endTime                     = sqlite3_column_double(stmt, 6);
-            r.journalTemplate             = col(7);
-            r.bioTemplateName             = col(8);
-            r.lastKnownEntryCount         = sqlite3_column_int(stmt, 9);
-            r.prevVolumeLastCreationTime  = sqlite3_column_double(stmt, 10);
-            r.prevVolumeCountAtBoundary   = sqlite3_column_int(stmt, 11);
-            r.bookText                    = col(12);
-            r.persistedInSave             = sqlite3_column_int(stmt, 13) != 0;
+            r.actorUuid                   = st.Text(0);
+            r.actorName                   = st.Text(1);
+            r.actorFormId                 = static_cast<std::uint32_t>(st.Int(2));
+            r.bookFormId                  = static_cast<std::uint32_t>(st.Int(3));
+            r.volumeNumber                = st.Int(4);
+            r.startTime                   = st.Double(5);
+            r.endTime                     = st.Double(6);
+            r.journalTemplate             = st.Text(7);
+            r.bioTemplateName             = st.Text(8);
+            r.lastKnownEntryCount         = st.Int(9);
+            r.prevVolumeLastCreationTime  = st.Double(10);
+            r.prevVolumeCountAtBoundary   = st.Int(11);
+            r.bookText                    = st.Text(12);
+            r.persistedInSave             = st.Int(13) != 0;
             rows.push_back(std::move(r));
         }
-        sqlite3_finalize(stmt);
         return rows;
     }
 
@@ -320,17 +293,11 @@ namespace SkyrimNetDiaries {
     std::unordered_map<std::string, std::string> DiaryDB::LoadActorTemplates() {
         std::unordered_map<std::string, std::string> result;
         if (!db_) return result;
-
-        const char* sql = "SELECT actor_uuid, template_name FROM actor_templates;";
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return result;
-
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
-            const char* uuid = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-            const char* name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-            if (uuid && name && *name) result[uuid] = name;  // skip rows with no template yet
+        Statement st(db_, "SELECT actor_uuid, template_name FROM actor_templates;", "LoadActorTemplates");
+        while (st.Next()) {
+            auto name = st.Text(1);
+            if (!name.empty()) result[st.Text(0)] = std::move(name);  // skip rows with no template yet
         }
-        sqlite3_finalize(stmt);
         return result;
     }
 
@@ -338,137 +305,64 @@ namespace SkyrimNetDiaries {
 
     bool DiaryDB::AddStolenVolume(const std::string& actorUuid, int volumeNumber, double gameTime) {
         if (!db_) return false;
-        const char* sql =
-            "INSERT OR REPLACE INTO stolen_volumes (actor_uuid, volume_number, stolen_at) "
-            "VALUES (?1, ?2, ?3);";
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            SKSE::log::error("[DiaryDB] AddStolenVolume prepare failed: {}", sqlite3_errmsg(db_));
-            return false;
-        }
-        sqlite3_bind_text(stmt, 1, actorUuid.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int(stmt, 2, volumeNumber);
-        sqlite3_bind_double(stmt, 3, gameTime);
-        bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
-        sqlite3_finalize(stmt);
-        
-        if (ok) {
-            SKSE::log::debug("[DiaryDB] Marked volume {} stolen for UUID: {}", volumeNumber, actorUuid);
-        }
+        Statement st(db_,
+            "INSERT OR REPLACE INTO stolen_volumes (actor_uuid, volume_number, stolen_at) VALUES (?1, ?2, ?3);",
+            "AddStolenVolume");
+        const bool ok = st.Bind(1, actorUuid).Bind(2, volumeNumber).Bind(3, gameTime).Run();
+        if (ok) SKSE::log::debug("[DiaryDB] Marked volume {} stolen for UUID: {}", volumeNumber, actorUuid);
         return ok;
     }
 
     bool DiaryDB::RemoveStolenVolume(const std::string& actorUuid, int volumeNumber) {
         if (!db_) return false;
-        const char* sql = "DELETE FROM stolen_volumes WHERE actor_uuid=?1 AND volume_number=?2;";
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
-        sqlite3_bind_text(stmt, 1, actorUuid.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int(stmt, 2, volumeNumber);
-        bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
-        sqlite3_finalize(stmt);
-        
-        if (ok) {
-            SKSE::log::debug("[DiaryDB] Removed stolen volume {} for UUID: {}", volumeNumber, actorUuid);
-        }
+        Statement st(db_, "DELETE FROM stolen_volumes WHERE actor_uuid=?1 AND volume_number=?2;", "RemoveStolenVolume");
+        const bool ok = st.Bind(1, actorUuid).Bind(2, volumeNumber).Run();
+        if (ok) SKSE::log::debug("[DiaryDB] Removed stolen volume {} for UUID: {}", volumeNumber, actorUuid);
         return ok;
     }
 
     bool DiaryDB::HasAnyStolenVolumes(const std::string& actorUuid) {
         if (!db_) return false;
-        const char* sql = "SELECT COUNT(*) FROM stolen_volumes WHERE actor_uuid=?1;";
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
-        sqlite3_bind_text(stmt, 1, actorUuid.c_str(), -1, SQLITE_TRANSIENT);
-        
-        bool hasStolen = false;
-        if (sqlite3_step(stmt) == SQLITE_ROW) {
-            int count = sqlite3_column_int(stmt, 0);
-            hasStolen = (count > 0);
-            
-            if (count > 0) {
-                // List which volumes are stolen for debugging
-                sqlite3_finalize(stmt);
-                const char* detailSql = "SELECT volume_number FROM stolen_volumes WHERE actor_uuid=?1 ORDER BY volume_number;";
-                if (sqlite3_prepare_v2(db_, detailSql, -1, &stmt, nullptr) == SQLITE_OK) {
-                    sqlite3_bind_text(stmt, 1, actorUuid.c_str(), -1, SQLITE_TRANSIENT);
-                    std::string volumes;
-                    while (sqlite3_step(stmt) == SQLITE_ROW) {
-                        int vol = sqlite3_column_int(stmt, 0);
-                        if (!volumes.empty()) volumes += ", ";
-                        volumes += std::to_string(vol);
-                    }
-                    SKSE::log::debug("[DiaryDB] UUID {} has {} stolen volumes: [{}]", actorUuid, count, volumes);
-                }
-            } else {
-                SKSE::log::debug("[DiaryDB] UUID {} has {} stolen volumes", actorUuid, count);
-            }
-        }
-        sqlite3_finalize(stmt);
+        Statement st(db_, "SELECT EXISTS(SELECT 1 FROM stolen_volumes WHERE actor_uuid=?1);", "HasAnyStolenVolumes");
+        const bool hasStolen = st.Bind(1, actorUuid).Next() && st.Int(0) != 0;
+        SKSE::log::debug("[DiaryDB] UUID {} has stolen volumes: {}", actorUuid, hasStolen);
         return hasStolen;
     }
 
     bool DiaryDB::ClearAllStolenVolumes(const std::string& actorUuid) {
         if (!db_) return false;
-        const char* sql = "DELETE FROM stolen_volumes WHERE actor_uuid=?1;";
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            SKSE::log::error("[DiaryDB] ClearAllStolenVolumes prepare failed: {}", sqlite3_errmsg(db_));
-            return false;
-        }
-        sqlite3_bind_text(stmt, 1, actorUuid.c_str(), -1, SQLITE_TRANSIENT);
-        bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
-        sqlite3_finalize(stmt);
-        
+        Statement st(db_, "DELETE FROM stolen_volumes WHERE actor_uuid=?1;", "ClearAllStolenVolumes");
+        const bool ok = st.Bind(1, actorUuid).Run();
         if (ok) {
-            int rowsAffected = sqlite3_changes(db_);
-            SKSE::log::debug("[DiaryDB] Cleared all stolen volumes for UUID: {} ({} rows deleted)", actorUuid, rowsAffected);
-        } else {
-            SKSE::log::error("[DiaryDB] ClearAllStolenVolumes DELETE failed: {}", sqlite3_errmsg(db_));
+            SKSE::log::debug("[DiaryDB] Cleared all stolen volumes for UUID: {} ({} rows deleted)",
+                             actorUuid, sqlite3_changes(db_));
         }
         return ok;
     }
 
     double DiaryDB::GetLastKnownGameTime(const std::string& actorUuid) {
         if (!db_) return 0.0;
-        const char* sql = "SELECT last_known_game_time FROM actor_templates WHERE actor_uuid=?1;";
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return 0.0;
-        sqlite3_bind_text(stmt, 1, actorUuid.c_str(), -1, SQLITE_TRANSIENT);
-        
-        double result = 0.0;
-        if (sqlite3_step(stmt) == SQLITE_ROW) {
-            result = sqlite3_column_double(stmt, 0);
-        }
-        sqlite3_finalize(stmt);
-        return result;
+        Statement st(db_, "SELECT last_known_game_time FROM actor_templates WHERE actor_uuid=?1;", "GetLastKnownGameTime");
+        return st.Bind(1, actorUuid).Next() ? st.Double(0) : 0.0;
     }
 
     bool DiaryDB::UpdateLastKnownGameTime(const std::string& actorUuid, double gameTime) {
         if (!db_) return false;
-        const char* sql =
+        Statement st(db_,
             "INSERT INTO actor_templates (actor_uuid, last_known_game_time) VALUES (?1, ?2) "
-            "ON CONFLICT(actor_uuid) DO UPDATE SET last_known_game_time=?2;";
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
-        sqlite3_bind_text(stmt, 1, actorUuid.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_double(stmt, 2, gameTime);
-        bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
-        sqlite3_finalize(stmt);
-        return ok;
+            "ON CONFLICT(actor_uuid) DO UPDATE SET last_known_game_time=?2;",
+            "UpdateLastKnownGameTime");
+        return st.Bind(1, actorUuid).Bind(2, gameTime).Run();
     }
 
     bool DiaryDB::UpsertActorTemplate(const std::string& uuid,
                                        const std::string& templateName) {
         if (!db_) return false;
-        const char* sql =
+        Statement st(db_,
             "INSERT INTO actor_templates (actor_uuid, template_name) VALUES (?1,?2) "
-            "ON CONFLICT(actor_uuid) DO UPDATE SET template_name=excluded.template_name;";
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
-        sqlite3_bind_text(stmt, 1, uuid.c_str(),          -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 2, templateName.c_str(),  -1, SQLITE_TRANSIENT);
-        return StepAndFinalize(db_, stmt, "UpsertActorTemplate");
+            "ON CONFLICT(actor_uuid) DO UPDATE SET template_name=excluded.template_name;",
+            "UpsertActorTemplate");
+        return st.Bind(1, uuid).Bind(2, templateName).Run();
     }
 
 } // namespace SkyrimNetDiaries

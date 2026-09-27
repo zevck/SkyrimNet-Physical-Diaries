@@ -154,7 +154,7 @@ namespace SkyrimNetDiaries {
             auto bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
             std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(formId);
 
-            if (uuid.empty() || uuid == "0") {
+            if (uuid.empty()) {
                 SKSE::log::warn("Could not resolve FormID 0x{:X} to UUID - skipping update", formId);
                 return;
             }
@@ -335,7 +335,7 @@ namespace SkyrimNetDiaries {
     void ReconcileWithTimeline() {
         auto* calendar = RE::Calendar::GetSingleton();
         if (!calendar) return;
-        const double now = calendar->GetCurrentGameTime() * 86400.0;
+        const double now = SkyrimNetDiaries::CurrentGameTimeSeconds();
         auto* bookManager = BookManager::GetSingleton();
         const int maxEntries = Config::GetSingleton()->GetEntriesPerVolume();
 
@@ -418,63 +418,40 @@ namespace SkyrimNetDiaries {
             if (volumes.empty()) continue;
             if (skipUuids.count(uuid)) continue;  // already queued for immediate recovery
 
-            // Find the latest volume.
-            const SkyrimNetDiaries::DiaryBookData* latest = nullptr;
-            for (const auto& vol : volumes) {
-                if (!latest || vol.volumeNumber > latest->volumeNumber) {
-                    latest = &vol;
-                }
-            }
-            if (!latest) continue;
+            const auto* latest = &volumes.back();  // volumes are sorted by number
 
             uint32_t actorFormId = SkyrimNetDiaries::Database::GetFormIDForUUID(uuid);
             if (actorFormId == 0) continue;
 
+            bool needsUpdate = false;
             if (latest->endTime > 0.0) {
-                // Sealed volume: probe for any entry strictly after the seal timestamp.
-                // This handles the revert+KEEP scenario where SkyrimNet retained entries
-                // our DB didn't track.
-                auto checkEntries = SkyrimNetDiaries::Database::GetDiaryEntries(
+                // Probe for any entry strictly after the latest volume's end: entries
+                // SkyrimNet has that SNPD never saw (the KEEP choice on a revert, or
+                // dashboard entries while the game was paused).
+                const auto checkEntries = SkyrimNetDiaries::Database::GetDiaryEntries(
                     actorFormId, 1, latest->endTime + 0.001, 0.0);
-
                 if (!checkEntries.empty()) {
-                    SKSE::log::info("[Recovery] {} vol {} sealed at {:.2f} but new entries exist — queuing update",
+                    SKSE::log::info("[Recovery] {} vol {} ends at {:.2f} but newer entries exist — queuing update",
                                    latest->actorName, latest->volumeNumber, latest->endTime);
-                    RE::FormID fid = static_cast<RE::FormID>(actorFormId);
-                    SKSE::GetTaskInterface()->AddTask([fid]() {
-                        UpdateDiaryForActorInternal(fid);
-                    });
-                    ++recoveryCount;
-                    skipUuids.insert(uuid);
+                    needsUpdate = true;
                 }
             } else {
-                // Open volume (endTime == 0): check whether SkyrimNet wrote new entries
-                // while the game was paused (e.g. via dashboard) that the mod event never
-                // delivered.  Use the volume's startTime as the lower bound — anything
-                // strictly after the latest tracked entry_date is new.
-                // We fetch 2 entries from startTime so we can count how many the current
-                // volume already accounts for vs how many now exist.
-                auto allSinceStart = SkyrimNetDiaries::Database::GetDiaryEntries(
-                    actorFormId, kFetchAllEntries, latest->startTime, 0.0);
-
-                int liveCount = static_cast<int>(allSinceStart.size());
-
-                // Compare against lastKnownEntryCount — this is the count from the last
-                // time UpdateBookText ran, persisted in DiaryDB.  Any positive delta means
-                // SkyrimNet wrote entries (e.g. via dashboard while paused) that the book
-                // text doesn't yet include.  This catches both the sub-overflow case
-                // (new entries but still under maxPerVolume) and the overflow case.
+                // Legacy rows without an end: compare the entry count from the volume's
+                // start with the count it was last rendered with.
+                const int liveCount = static_cast<int>(SkyrimNetDiaries::Database::GetDiaryEntries(
+                    actorFormId, kFetchAllEntries, latest->startTime, 0.0).size());
                 if (liveCount > latest->lastKnownEntryCount) {
                     SKSE::log::info("[Recovery] {} vol {} (open) has {} live entries vs {} known — queuing update",
-                                   latest->actorName, latest->volumeNumber, liveCount,
-                                   latest->lastKnownEntryCount);
-                    RE::FormID fid = static_cast<RE::FormID>(actorFormId);
-                    SKSE::GetTaskInterface()->AddTask([fid]() {
-                        UpdateDiaryForActorInternal(fid);
-                    });
-                    ++recoveryCount;
-                    skipUuids.insert(uuid);
+                                   latest->actorName, latest->volumeNumber, liveCount, latest->lastKnownEntryCount);
+                    needsUpdate = true;
                 }
+            }
+
+            if (needsUpdate) {
+                const RE::FormID fid = static_cast<RE::FormID>(actorFormId);
+                SKSE::GetTaskInterface()->AddTask([fid]() { UpdateDiaryForActorInternal(fid); });
+                ++recoveryCount;
+                skipUuids.insert(uuid);
             }
         }
 
@@ -498,8 +475,8 @@ namespace SkyrimNetDiaries {
         //   then frees the memory.  Tasks run on successive game-thread ticks so the
         //   load is spread out.
         //
-        // The whole scan is skipped if any volumes are already tracked (i.e. this save
-        // has been loaded before with the mod active).
+        // Actors that already have volumes (or have volumes being created) are skipped,
+        // as are those the recovery pass already queued.
         // =============================================================================
 
         // Shared state carried across discovery batch tasks via shared_ptr.
@@ -646,7 +623,7 @@ namespace SkyrimNetDiaries {
     // =============================================================================
     // MCM Reset: remove all tracked diary books from NPC inventories and clear all
     // BookManager and DiaryDB tracking.  SkyrimNet diary ENTRIES are
-    // NOT touched - books will be regenerated on the next diary event or Rebuild.
+    // NOT touched - books are recreated by the next diary event or load (catch-up).
     // Returns the number of actor records cleared (negative on exception).
     // =============================================================================
     int ResetAllDiariesInternal() {
@@ -722,7 +699,6 @@ namespace SkyrimNetDiaries {
                             continue;
                         }
 
-                        // --- Step 1: Sweep all currently-loaded references ---
                         // ForEachReference covers the active worldspace/interior, so books in
                         // nearby NPC inventories, containers, shelves, etc. are removed
                         // immediately without waiting for a reload.
@@ -749,29 +725,9 @@ namespace SkyrimNetDiaries {
                             }
                         }
 
-                        // --- We intentionally do NOT Dispose or SetDelete the form ---
-                        //
-                        // DPF.Dispose() marks the form's FormRecord as `deleted`, which
-                        // adds it to DPF's recycle pool.  DPF's AddForm() recycles deleted
-                        // records by FormID before allocating fresh ones, and its persisted
-                        // pool (co-save + cache file) accumulates DUPLICATE deleted records
-                        // for the same FormID across repeated reset/reload cycles.  Those
-                        // duplicates get recycled more than once, handing the SAME FormID to
-                        // two different actors — the root cause of cross-linked diary content
-                        // (e.g. "Frea's Diary" showing Fetri El's text).
-                        //
-                        // SetDelete(true) is also avoided: the form would be dropped on the
-                        // next load, DPF's restore would fail, and DPF would re-mark the
-                        // record deleted — re-poisoning the pool the same way.
-                        //
-                        // Leaving the form fully alive keeps DPF's lastFormId monotonically
-                        // increasing, so every future Create() gets a unique FormID.  The
-                        // orphaned book is inert: removed from all loaded inventories above,
-                        // no longer in our DiaryDB, never re-added.  Trade-off: NPCs in
-                        // unloaded cells keep a stale (untracked) copy until regeneration,
-                        // and orphaned forms slowly accumulate — both harmless versus the
-                        // alternative of corrupted, cross-linked diaries.
-                        (void)bookForm;
+                        // The form is never Disposed or SetDeleted: both poison DPF's
+                        // recycle pool and later hand one FormID to two actors.  See
+                        // docs/BOOK_FORMS.md.
                     }
                 });
             }

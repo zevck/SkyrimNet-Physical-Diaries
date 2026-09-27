@@ -37,15 +37,11 @@ namespace DiaryTheftHandler {
         bool g_legitimateTradeActive = false;
         std::mutex g_menuMutex;
 
-        double GameTimeSeconds() {
-            auto* calendar = RE::Calendar::GetSingleton();
-            return calendar ? calendar->GetCurrentGameTime() * 86400.0 : 0.0;
-        }
+        double GameTimeSeconds() { return SkyrimNetDiaries::CurrentGameTimeSeconds(); }
 
         // SkyrimNet UUID of a live actor, or "" when SkyrimNet doesn't know it.
         std::string UuidOf(const RE::Actor* actor) {
-            std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(actor->GetFormID());
-            return uuid == "0" ? std::string{} : uuid;
+            return SkyrimNetDiaries::Database::GetUUIDFromFormID(actor->GetFormID());
         }
 
         // True if the player's copy of `book` carries ownership data, i.e. the engine
@@ -248,7 +244,7 @@ namespace DiaryTheftHandler {
             // Detect backwards time travel and clear stolen volumes if detected
             auto calendar = RE::Calendar::GetSingleton();
             if (calendar) {
-                double currentTime = calendar->GetCurrentGameTime() * 86400.0;
+                double currentTime = SkyrimNetDiaries::CurrentGameTimeSeconds();
                 auto* diaryDB = SkyrimNetDiaries::DiaryDB::GetSingleton();
                 auto actorTemplates = diaryDB->LoadActorTemplates();
 

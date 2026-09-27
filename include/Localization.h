@@ -31,7 +31,8 @@ namespace SkyrimNetDiaries {
             return &singleton;
         }
 
-        // Detect game language, read GMSTs, load locale file. Call once during plugin load.
+        // Detect game language and load the locale file.  Call once during plugin load;
+        // GMST names are read later by ReadGMSTs().
         void Initialize();
 
         // Must be called after DataLoaded (GMSTs available). Reads sMonth*/sDay* GMSTs

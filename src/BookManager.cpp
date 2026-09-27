@@ -33,35 +33,52 @@ namespace SkyrimNetDiaries {
         return &singleton;
     }
 
-    void BookManager::Initialize(const std::string& baseTemplate,
-                                 const std::string& journal01,
-                                 const std::string& journal02,
-                                 const std::string& journal03,
-                                 const std::string& journal04,
-                                 const std::string& nightingaleJournal) {
-        templateBookEditorId_ = baseTemplate;
+    void BookManager::Initialize() {
+        journalTemplates_.assign(std::begin(kJournalTemplates), std::end(kJournalTemplates));
+        nightingaleTemplate_ = kNightingaleTemplate;
+        SKSE::log::info("BookManager initialized with {} journal templates, Nightingale: {}",
+                        journalTemplates_.size(), nightingaleTemplate_);
+    }
 
-        // Store journal variants (include base template for more variety)
-        journalTemplates_.push_back(baseTemplate);
-        if (!journal01.empty()) journalTemplates_.push_back(journal01);
-        if (!journal02.empty()) journalTemplates_.push_back(journal02);
-        if (!journal03.empty()) journalTemplates_.push_back(journal03);
-        if (!journal04.empty()) journalTemplates_.push_back(journal04);
+    namespace {
+        // In-memory volume <-> DiaryDB row.  Used by RegisterBook, FlushToDB and
+        // LoadFromDB so the three can't drift apart.
+        DiaryDB::VolumeRow ToRow(const DiaryBookData& d) {
+            DiaryDB::VolumeRow r;
+            r.actorUuid                  = d.actorUuid;
+            r.actorName                  = d.actorName;
+            r.actorFormId                = static_cast<std::uint32_t>(d.actorFormId);
+            r.bookFormId                 = static_cast<std::uint32_t>(d.bookFormId);
+            r.volumeNumber               = d.volumeNumber;
+            r.startTime                  = d.startTime;
+            r.endTime                    = d.endTime;
+            r.journalTemplate            = d.journalTemplate;
+            r.bioTemplateName            = d.bioTemplateName;
+            r.lastKnownEntryCount        = d.lastKnownEntryCount;
+            r.prevVolumeLastCreationTime = d.prevVolumeLastCreationTime;
+            r.prevVolumeCountAtBoundary  = d.prevVolumeCountAtBoundary;
+            r.bookText                   = d.cachedBookText;  // "" keeps the stored text
+            r.persistedInSave            = d.persistedInSave;
+            return r;
+        }
 
-        nightingaleTemplate_ = nightingaleJournal;
-
-        // Log initialization
-        if (!journalTemplates_.empty() && !nightingaleTemplate_.empty()) {
-            SKSE::log::info("BookManager initialized with base template: {}, {} journal variants, Nightingale: {}",
-                           baseTemplate, journalTemplates_.size(), nightingaleTemplate_);
-        } else if (!journalTemplates_.empty()) {
-            SKSE::log::info("BookManager initialized with base template: {}, {} journal variants",
-                           baseTemplate, journalTemplates_.size());
-        } else if (!nightingaleTemplate_.empty()) {
-            SKSE::log::info("BookManager initialized with base template: {}, Nightingale: {}",
-                           baseTemplate, nightingaleTemplate_);
-        } else {
-            SKSE::log::info("BookManager initialized with base template: {}", baseTemplate);
+        DiaryBookData FromRow(const DiaryDB::VolumeRow& r) {
+            DiaryBookData d;
+            d.actorUuid                  = r.actorUuid;
+            d.actorName                  = r.actorName;
+            d.actorFormId                = static_cast<RE::FormID>(r.actorFormId);
+            d.bookFormId                 = static_cast<RE::FormID>(r.bookFormId);
+            d.volumeNumber               = r.volumeNumber;
+            d.startTime                  = r.startTime;
+            d.endTime                    = r.endTime;
+            d.journalTemplate            = r.journalTemplate;
+            d.bioTemplateName            = r.bioTemplateName;
+            d.lastKnownEntryCount        = r.lastKnownEntryCount;
+            d.prevVolumeLastCreationTime = r.prevVolumeLastCreationTime;
+            d.prevVolumeCountAtBoundary  = r.prevVolumeCountAtBoundary;
+            d.cachedBookText             = r.bookText;
+            d.persistedInSave            = r.persistedInSave;
+            return d;
         }
     }
 
@@ -94,27 +111,12 @@ namespace SkyrimNetDiaries {
 
         std::string selectedTemplate;
 
-        // Check for Nightingale NPCs (special journal)
-        if (!nightingaleTemplate_.empty()) {
-            if (IsNightingale(actorFormId)) {
-                selectedTemplate = nightingaleTemplate_;
-                SKSE::log::debug("Selected Nightingale journal for {}", actorName);
-                actorTemplates_[actorUuid] = selectedTemplate;
-                DiaryDB::GetSingleton()->UpsertActorTemplate(actorUuid, selectedTemplate);
-                return selectedTemplate;
-            }
+        if (IsNightingale(actorFormId)) {
+            selectedTemplate = nightingaleTemplate_;
+        } else {
+            // Pick a variant from the actor's UUID so the choice is stable across reloads.
+            selectedTemplate = journalTemplates_[std::hash<std::string>{}(actorUuid) % journalTemplates_.size()];
         }
-
-        // If no variants configured, use base template
-        if (journalTemplates_.empty()) {
-            selectedTemplate = templateBookEditorId_;
-            SKSE::log::debug("No journal variants - using base template for {}", actorName);
-            actorTemplates_[actorUuid] = selectedTemplate;
-            return selectedTemplate;
-        }
-
-        // Pick a variant from the actor's UUID so the choice is stable across reloads.
-        selectedTemplate = journalTemplates_[std::hash<std::string>{}(actorUuid) % journalTemplates_.size()];
 
         SKSE::log::debug("Selected journal template for {}: {}", actorName, selectedTemplate);
         actorTemplates_[actorUuid] = selectedTemplate;
@@ -179,22 +181,8 @@ namespace SkyrimNetDiaries {
         SKSE::log::info("Registered book for actor {}: FormID 0x{:X}, Volume {} (template: {}, subfolder: {})",
                        actorUuid, bookFormId, volumeNumber, journalTemplate, bioTemplateName);
 
-        // Persist row so it survives a save revert (bookText written by caller via UpdateBookText).
-        DiaryDB::VolumeRow dbRow;
-        dbRow.actorUuid                  = data.actorUuid;
-        dbRow.actorName                  = data.actorName;
-        dbRow.actorFormId                = static_cast<uint32_t>(actorFormId);
-        dbRow.bookFormId                 = static_cast<uint32_t>(data.bookFormId);
-        dbRow.volumeNumber               = data.volumeNumber;
-        dbRow.startTime                  = data.startTime;
-        dbRow.endTime                    = data.endTime;
-        dbRow.journalTemplate            = data.journalTemplate;
-        dbRow.bioTemplateName            = data.bioTemplateName;
-        dbRow.lastKnownEntryCount        = data.lastKnownEntryCount;
-        dbRow.prevVolumeLastCreationTime = data.prevVolumeLastCreationTime;
-        dbRow.prevVolumeCountAtBoundary  = data.prevVolumeCountAtBoundary;
-        // bookText left empty – caller sets it via UpdateBookText immediately after.
-        DiaryDB::GetSingleton()->UpsertVolume(dbRow);
+        // Persist the row (the caller writes the text next, via SetVolumeText).
+        DiaryDB::GetSingleton()->UpsertVolume(ToRow(data));
     }
 
     void BookManager::UpdateBookEndTime(const std::string& actorUuid, int volumeNumber, double endTime) {
@@ -329,21 +317,7 @@ namespace SkyrimNetDiaries {
         int volumesFlushed = 0;
         for (const auto& [uuid, volumes] : books_) {
             for (const auto& data : volumes) {
-                DiaryDB::VolumeRow row;
-                row.actorUuid                  = data.actorUuid;
-                row.actorName                  = data.actorName;
-                row.bookFormId                 = static_cast<uint32_t>(data.bookFormId);
-                row.volumeNumber               = data.volumeNumber;
-                row.startTime                  = data.startTime;
-                row.endTime                    = data.endTime;
-                row.journalTemplate            = data.journalTemplate;
-                row.bioTemplateName            = data.bioTemplateName;
-                row.lastKnownEntryCount        = data.lastKnownEntryCount;
-                row.prevVolumeLastCreationTime = data.prevVolumeLastCreationTime;
-                row.prevVolumeCountAtBoundary  = data.prevVolumeCountAtBoundary;
-                row.bookText                   = data.cachedBookText;
-                row.persistedInSave            = data.persistedInSave;  // preserve — MarkAllVolumesPersisted sets on save
-                db->UpsertVolume(row);
+                db->UpsertVolume(ToRow(data));
                 ++volumesFlushed;
             }
         }
@@ -387,12 +361,10 @@ namespace SkyrimNetDiaries {
         }
 
         // Check inventory — avoid adding a duplicate.
-        auto inv = actor->GetInventory();
-        for (const auto& [item, invData] : inv) {
-            if (item && item->GetFormID() == bookFormId && invData.first > 0) {
-                SKSE::log::debug("[EnsureInventory] '{}' already in {}'s inventory", bookName, actorName);
-                return;
-            }
+        auto inv = actor->GetInventory([book](RE::TESBoundObject& a_obj) { return &a_obj == book; });
+        if (auto it = inv.find(book); it != inv.end() && it->second.first > 0) {
+            SKSE::log::debug("[EnsureInventory] '{}' already in {}'s inventory", bookName, actorName);
+            return;
         }
 
         actor->AddObjectToContainer(book, nullptr, 1, nullptr);
@@ -452,60 +424,26 @@ namespace SkyrimNetDiaries {
         std::vector<std::string> invalidActors;
 
         for (auto& row : rows) {
-            // Volumes that were never committed to a .ess save are ephemeral.
-            // The player may have quit-without-saving after diary creation, then
-            // loaded an older save whose game-time is EARLIER than the volume's
-            // recorded endTime.  Any new diary entry generated at that reverted
-            // game-time would have entry_date <= endTime and be silently filtered
-            // out as "belongs to previous volume" — so the book is never rebuilt.
-            //
-            // Safety: only delete if the DPF form is also gone.  If the form still
-            // exists the row may be a legitimate migrated row (persisted_in_save
-            // added via ALTER TABLE DEFAULT 0 on an older install) that just hasn't
-            // been re-saved yet.  In that case let QueueInventoryCheck / the catch-up
-            // scan handle it gracefully rather than nuking it here.
-            if (!row.persistedInSave) {
-                auto* form = RE::TESForm::LookupByID(static_cast<RE::FormID>(row.bookFormId));
-                bool formValid = form && form->GetFormType() == RE::FormType::Book;
-                if (!formValid) {
-                    SKSE::log::info("[LoadFromDB] {} vol {} was never saved and DPF form is gone — removing stale row and queuing recreation",
-                                   row.actorName, row.volumeNumber);
-                    db->DeleteVolume(row.actorUuid, row.volumeNumber);
-                    invalidActors.push_back(row.actorUuid);
-                    continue;
-                }
-                // Form still alive but not persisted — fall through and load normally.
-                // QueueSealedVolumeRecovery / catch-up will detect the stale endTime
-                // and rebuild if entries exist beyond it.
-                SKSE::log::info("[LoadFromDB] {} vol {} not persisted but DPF form 0x{:X} still valid — loading and deferring to catch-up",
-                               row.actorName, row.volumeNumber, row.bookFormId);
-            }
-
-            // Validate the DPF book form still exists (it is lost on save revert).
+            // The book form must exist.  A volume created after the loaded save isn't
+            // in it (DPF only restores forms the save contains): drop the row and let
+            // the actor be recreated from SkyrimNet's entries.
             auto* form = RE::TESForm::LookupByID(static_cast<RE::FormID>(row.bookFormId));
             if (!form || form->GetFormType() != RE::FormType::Book) {
-                SKSE::log::warn("[LoadFromDB] FormID 0x{:X} for {} vol {} is invalid — removing and queuing recovery",
-                               row.bookFormId, row.actorName, row.volumeNumber);
+                SKSE::log::info("[LoadFromDB] {} vol {}: book 0x{:X} is gone{} — removing row and queuing recreation",
+                                row.actorName, row.volumeNumber, row.bookFormId,
+                                row.persistedInSave ? "" : " (never saved)");
                 db->DeleteVolume(row.actorUuid, row.volumeNumber);
                 invalidActors.push_back(row.actorUuid);
                 continue;
             }
+            if (!row.persistedInSave) {
+                // Created this session and never saved (a reload without saving): the
+                // form is still in memory; QueueInventoryCheck puts it back.
+                SKSE::log::debug("[LoadFromDB] {} vol {} not saved yet, form 0x{:X} still valid",
+                                 row.actorName, row.volumeNumber, row.bookFormId);
+            }
 
-            DiaryBookData data;
-            data.actorUuid                   = row.actorUuid;
-            data.actorName                   = row.actorName;
-            data.bookFormId                  = static_cast<RE::FormID>(row.bookFormId);
-            data.volumeNumber                = row.volumeNumber;
-            data.startTime                   = row.startTime;
-            data.endTime                     = row.endTime;
-            data.journalTemplate             = row.journalTemplate;
-            data.bioTemplateName             = row.bioTemplateName;
-            data.lastKnownEntryCount         = row.lastKnownEntryCount;
-            data.prevVolumeLastCreationTime  = row.prevVolumeLastCreationTime;
-            data.prevVolumeCountAtBoundary   = row.prevVolumeCountAtBoundary;
-            data.cachedBookText              = row.bookText;  // pre-warmed from DB
-            data.persistedInSave             = row.persistedInSave;
-            data.actorFormId                 = static_cast<RE::FormID>(row.actorFormId);
+            DiaryBookData data = FromRow(row);
 
             // Claim this loaded diary's FormID so a later creation can't be handed
             // the same ID (guards against a duplicate deleted record in DPF's pool
@@ -582,31 +520,26 @@ namespace SkyrimNetDiaries {
         }
 
         // For sealed volumes, cap to MAX_ENTRIES so boundary tie-breaking is deterministic.
+        bool queryOk = false;
         auto liveEntries = Database::GetVolumeEntries(
             vol->cachedActorFormId, queryStart, queryEnd,
             vol->prevVolumeLastCreationTime, vol->prevVolumeCountAtBoundary,
-            vol->endTime > 0.0 ? MAX_ENTRIES : 0);
-        int liveCount = static_cast<int>(liveEntries.size());
-
-        // Fast path: nothing changed and cache is warm with current-format text — nothing to do.
-        // If the cached text is in the old format (no <font> tags, generated before font-tag
-        // support was added), fall through to force a one-time regeneration even when the
-        // entry count hasn't changed.  This upgrades stale DB rows automatically on first open.
-        // EXCEPTION: if liveCount == 0 we have nothing to regenerate FROM — in that case
-        // the cached text (e.g. externally loaded DB text) must be preserved as-is regardless
-        // of format.  Regenerating with an empty entry list would replace real content with
-        // "All entries removed", which is wrong for test/imported books.
-        bool textIsCurrentFormat = vol->cachedBookText.find("<font face='") != std::string::npos;
-        if (liveCount == vol->lastKnownEntryCount && !vol->cachedBookText.empty() && textIsCurrentFormat) {
+            vol->endTime > 0.0 ? MAX_ENTRIES : 0, &queryOk);
+        if (!queryOk) {
+            // Couldn't read SkyrimNet: keep what the book shows rather than treat the
+            // failure as "every entry was deleted".
+            SKSE::log::warn("[SNPD] {} vol {}: couldn't read entries from SkyrimNet — showing the cached text",
+                            vol->actorName, vol->volumeNumber);
             return;
         }
-        // EXCEPTION (see comment above): nothing to regenerate FROM when liveCount==0 —
-        // preserve whatever cached text exists, regardless of format.  This handles both
-        // old-format rows and current-format text for test/imported entries that were never
-        // written to the SkyrimNet API DB.
-        if (liveCount == 0 && !vol->cachedBookText.empty()) {
-            SKSE::log::info("[SNPD] {} vol {} has no live API entries — preserving cached text (test/imported data)",
-                vol->actorName, vol->volumeNumber);
+        int liveCount = static_cast<int>(liveEntries.size());
+
+        // Nothing changed and the cached text is current: done.  Text from before
+        // font tags existed is re-rendered once.  Zero live entries is real (the query
+        // succeeded): a volume whose entries were all deleted gets the "all entries
+        // removed" page.
+        bool textIsCurrentFormat = vol->cachedBookText.find("<font face='") != std::string::npos;
+        if (liveCount == vol->lastKnownEntryCount && !vol->cachedBookText.empty() && textIsCurrentFormat) {
             return;
         }
 

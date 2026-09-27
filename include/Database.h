@@ -42,6 +42,13 @@ namespace SkyrimNetDiaries {
         return a.creation_time < b.creation_time;
     }
 
+    // Current game time in entry_date units (game seconds): what diary dates are
+    // compared against.
+    inline double CurrentGameTimeSeconds() {
+        auto* calendar = RE::Calendar::GetSingleton();
+        return calendar ? calendar->GetCurrentGameTime() * 86400.0 : 0.0;
+    }
+
     // Limit that means "every entry" for GetDiaryEntries.
     inline constexpr int kFetchAllEntries = 10000;
 
@@ -52,10 +59,10 @@ namespace SkyrimNetDiaries {
 
         // Initialize the SkyrimNet API
         static bool InitializeAPI();
-        
+
         // Check if SkyrimNet memory system is ready
         static bool IsMemorySystemReady();
-        
+
         // Diary entries for a FormID (0 = every actor) within [startTime, endTime]
         // (0 = unbounded), returned oldest first.
         //
@@ -66,10 +73,14 @@ namespace SkyrimNetDiaries {
         // prevVolumeLastCreationTime / prevVolumeCountAtBoundary remove the previous
         // volume's entries that share this volume's first entry_date (see
         // docs/VOLUMES_AND_SYNC.md#volume-boundaries).
+        //
+        // An empty result can mean "no entries" or "the query failed"; pass `ok` to
+        // tell them apart (false: SkyrimNet unavailable, an exception, bad JSON).
         static std::vector<DiaryEntry> GetDiaryEntries(uint32_t formId, int limit = kFetchAllEntries,
                                                         double startTime = 0.0, double endTime = 0.0,
                                                         double prevVolumeLastCreationTime = 0.0,
-                                                        int prevVolumeCountAtBoundary = 0);
+                                                        int prevVolumeCountAtBoundary = 0,
+                                                        bool* ok = nullptr);
 
         // A volume's entries, oldest first: the whole [startTime, endTime] range minus
         // the previous volume's boundary entries, then capped to the first maxEntries
@@ -77,8 +88,8 @@ namespace SkyrimNetDiaries {
         static std::vector<DiaryEntry> GetVolumeEntries(uint32_t formId, double startTime, double endTime,
                                                          double prevVolumeLastCreationTime,
                                                          int prevVolumeCountAtBoundary,
-                                                         int maxEntries = 0);
-        
+                                                         int maxEntries = 0, bool* ok = nullptr);
+
         // Game time of the player's most recent SkyrimNet event, in entry_date units
         // (0 when there is none).  SkyrimNet asks its keep/clear question on load
         // exactly when this is later than the current game time.
@@ -86,21 +97,23 @@ namespace SkyrimNetDiaries {
 
         // Get bio template name for an actor FormID
         static std::string GetBioTemplateName(uint32_t formId);
-        
-        // UUID ↔ FormID conversion (using PublicAPI)
+
+        // UUID ↔ FormID conversion (using PublicAPI).  GetUUIDFromFormID returns ""
+        // for an actor SkyrimNet doesn't know.
         static std::string GetUUIDFromFormID(uint32_t formId);
         static uint32_t GetFormIDForUUID(const std::string& uuid);
-        
+
         // Actor name lookup by UUID
         static std::string GetActorName(const std::string& uuid);
-        
+
         // Get bio template name by UUID (converts UUID → FormID → GetBioTemplateName)
         static std::string GetTemplateNameByUUID(const std::string& uuid);
 
     private:
         // Parse JSON response from PublicGetDiaryEntries into DiaryEntry structures
-        static std::vector<DiaryEntry> ParseDiaryJSON(const std::string& jsonResponse);
-        
+        // `ok` (if given) is set false when the response isn't a valid JSON array.
+        static std::vector<DiaryEntry> ParseDiaryJSON(const std::string& jsonResponse, bool* ok = nullptr);
+
         // Track if API has been initialized
         static inline bool api_initialized_ = false;
     };

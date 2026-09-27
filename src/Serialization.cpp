@@ -52,7 +52,7 @@ namespace SkyrimNetDiaries::Serialization {
                     // This is critical for backwards time travel detection when loading older saves
                     auto calendar = RE::Calendar::GetSingleton();
                     if (calendar) {
-                        double currentTime = calendar->GetCurrentGameTime() * 86400.0;
+                        double currentTime = SkyrimNetDiaries::CurrentGameTimeSeconds();
                         auto actorTemplates = db->LoadActorTemplates();
                         int updatedCount = 0;
                         for (const auto& [uuid, templateName] : actorTemplates) {
@@ -98,7 +98,7 @@ namespace SkyrimNetDiaries::Serialization {
 
         void LoadCallback(SKSE::SerializationInterface* a_intfc) {
             try {
-                // Clear save folder cache - will be restored from serialized data below (or detected on first diary event)
+                // The save folder is detected from SkyrimNet.log by the post-load sync.
                 SaveFolder::Clear();
 
                 std::uint32_t type;

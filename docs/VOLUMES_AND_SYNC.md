@@ -122,7 +122,7 @@ It replaces the old game-time rebuild ("not saved and `endTime` after now"), whi
 
 Backwards time travel also clears stolen-volume records at load (see [THEFT.md](THEFT.md#save-reverts)).
 
-**Known gap:** when a deletion outside a load removes **every** entry of a volume, the book keeps its old text (a timeline Clear is handled by `ReconcileWithTimeline`). `RefreshVolumeOnOpen` returns early when the live count is 0 and cached text exists (to protect imported or test books), which skips the re-render that would produce the "all entries removed" page. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
+**Every entry deleted outside a load** (for example from the SkyrimNet dashboard): the next open renders the "all entries removed" page (`EmptyVolumeText`, marked with `kEmptySentinel`), and the inter-plugin API reports `NoEntries`. `RefreshVolumeOnOpen` only does this when the query succeeded: `GetVolumeEntries` reports a failed query (`ok = false`: SkyrimNet unavailable, an exception, an empty or non-array response) separately, and then the cached text is kept and a warning logged. (Until 2026-09-27 zero live entries always kept the old text, a guard for test/imported books that no longer exist.) SkyrimNet's own export answers `[]` on an internal error, which still looks like zero entries.
 
 ---
 

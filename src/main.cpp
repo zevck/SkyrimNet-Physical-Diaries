@@ -86,24 +86,24 @@ namespace {
                         ShowWarning(SkyrimNetDiaries::Localization::GetSingleton()->GetDpfMissingText());
                     }
                 }
-                
+
                 // Verify the diary template books resolve.  If they don't, every
                 // diary creation silently fails with "Template book not found" spam.
                 // Common causes: ESP not actually enabled, an EditorID-exposure
                 // plugin (e.g. po3_Tweaks / Native EditorID Fix) missing or the wrong
                 // runtime build, or a tool stripped the template records.
                 {
-                    auto* t1 = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>("SkyrimNetDiaryTemplate");
-                    auto* t2 = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>("SkyrimNetDiaryTemplate2");
-                    auto* t3 = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>("SkyrimNetDiaryTemplate3");
-                    auto* tN = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>("SkyrimNetDiaryTemplateN");
-                    if (!t1 || !t2 || !t3 || !tN) {
+                    std::vector<const char*> templates(std::begin(SkyrimNetDiaries::kJournalTemplates),
+                                                       std::end(SkyrimNetDiaries::kJournalTemplates));
+                    templates.push_back(SkyrimNetDiaries::kNightingaleTemplate);
+                    std::vector<const char*> missing;
+                    for (const char* id : templates) {
+                        if (!RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>(id)) missing.push_back(id);
+                    }
+                    if (!missing.empty()) {
                         SKSE::log::error("================================================================");
                         SKSE::log::error("[Physical Diaries] DIARY TEMPLATE BOOKS NOT FOUND — diaries cannot be created!");
-                        SKSE::log::error("  SkyrimNetDiaryTemplate:  {}", t1 ? "OK" : "MISSING");
-                        SKSE::log::error("  SkyrimNetDiaryTemplate2: {}", t2 ? "OK" : "MISSING");
-                        SKSE::log::error("  SkyrimNetDiaryTemplate3: {}", t3 ? "OK" : "MISSING");
-                        SKSE::log::error("  SkyrimNetDiaryTemplateN: {}", tN ? "OK" : "MISSING");
+                        for (const char* id : missing) SKSE::log::error("  {}: MISSING", id);
                         SKSE::log::error("  Possible causes:");
                         SKSE::log::error("   1. 'SkyrimNet Physical Diaries.esp' is not enabled in the load order");
                         SKSE::log::error("   2. An EditorID-exposure plugin (po3_Tweaks / Native EditorID Fix) is");
@@ -112,7 +112,7 @@ namespace {
                         SKSE::log::error("================================================================");
                         ShowWarning(SkyrimNetDiaries::Localization::GetSingleton()->GetTemplatesMissingText());
                     } else {
-                        SKSE::log::info("[Physical Diaries] Diary template books verified (all 4 resolved)");
+                        SKSE::log::info("[Physical Diaries] Diary template books verified (all {} resolved)", templates.size());
                     }
                 }
 
@@ -321,7 +321,7 @@ SKSE_PLUGIN_LOAD(const SKSE::LoadInterface* a_skse)
     // log = false: InitializeLog already set up our logger, and CommonLib's own
     // would replace it (and reopen the same file).
     SKSE::Init(a_skse, { .log = false });
-    
+
     // Load configuration, then immediately save it back so MO2 writes the file into
     // the Overwrite folder.  This ensures user settings survive future mod updates
     // that would otherwise replace the shipped INI inside the mod folder.
@@ -334,7 +334,7 @@ SKSE_PLUGIN_LOAD(const SKSE::LoadInterface* a_skse)
         spdlog::default_logger()->set_level(spdlog::level::debug);
         SKSE::log::info("Debug logging enabled via config");
     }
-    
+
     SKSE::log::debug("Registering for SKSE messaging interface...");
     auto messaging = SKSE::GetMessagingInterface();
     if (messaging) {
@@ -344,16 +344,8 @@ SKSE_PLUGIN_LOAD(const SKSE::LoadInterface* a_skse)
     SKSE::log::debug("Registering for SKSE serialization...");
     SkyrimNetDiaries::Serialization::Register();
 
-    // Initialize BookManager with template book Editor IDs from ESP
-    // 4 templates total: base, 2 variants, and Nightingale special
-    SkyrimNetDiaries::BookManager::GetSingleton()->Initialize(
-        "SkyrimNetDiaryTemplate",      // Base template
-        "SkyrimNetDiaryTemplate2",     // Variant 2
-        "SkyrimNetDiaryTemplate3",     // Variant 3
-        "",                              // Unused
-        "",                              // Unused
-        "SkyrimNetDiaryTemplateN"      // Nightingale journal
-    );
+    // Template book EditorIDs from the ESP (kJournalTemplates, kNightingaleTemplate).
+    SkyrimNetDiaries::BookManager::GetSingleton()->Initialize();
 
     // Register C++ event handler for diary theft/return detection
     SKSE::log::debug("Registering diary theft/return event handler...");
@@ -374,6 +366,6 @@ SKSE_PLUGIN_LOAD(const SKSE::LoadInterface* a_skse)
     PapyrusAPI::Register();
 
     SKSE::log::info("SkyrimNetPhysicalDiaries loaded successfully!");
-    
+
     return true;
 }

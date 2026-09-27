@@ -67,7 +67,7 @@ namespace SkyrimNetDiaries::TimelineGate {
         bool HasFutureDiaryEntries() {
             auto* calendar = RE::Calendar::GetSingleton();
             if (!calendar) return false;
-            const double now = calendar->GetCurrentGameTime() * 86400.0;
+            const double now = SkyrimNetDiaries::CurrentGameTimeSeconds();
             // SkyrimNet returns entries newest first.
             const auto newest = Database::GetDiaryEntries(0, 1, 0.0, 0.0);
             return !newest.empty() && newest.front().entry_date > now + 1.0;
@@ -191,7 +191,7 @@ namespace SkyrimNetDiaries::TimelineGate {
             // event is later than the loaded save's game time.  Future diary entries
             // alone don't make it ask.
             auto* calendar = RE::Calendar::GetSingleton();
-            const double gameNow = calendar ? calendar->GetCurrentGameTime() * 86400.0 : 0.0;
+            const double gameNow = SkyrimNetDiaries::CurrentGameTimeSeconds();
             const double lastEvent = Database::GetPlayerLastEventTime();
             g_promptExpected = lastEvent > gameNow;
             if (g_promptExpected) {
@@ -225,7 +225,7 @@ namespace SkyrimNetDiaries::TimelineGate {
             // The player's future events are gone without us seeing the prompt:
             // SkyrimNet has already cleared them.
             if (auto* calendar = RE::Calendar::GetSingleton();
-                calendar && Database::GetPlayerLastEventTime() <= calendar->GetCurrentGameTime() * 86400.0) {
+                calendar && Database::GetPlayerLastEventTime() <= SkyrimNetDiaries::CurrentGameTimeSeconds()) {
                 return true;
             }
             if (now - g_waitStart > kNoPromptTimeout) {

@@ -39,7 +39,7 @@ cmake --build build --config Release --target SkyrimNetPhysicalDiaries
 |---|---|
 | Plugin version is `1.0.0` in both `CMakeLists.txt` and `vcpkg.json`, though v1.1.0 has shipped | Keep them in sync when you bump it |
 | vcpkg triplet forced to `x64-windows-static`; static MSVC runtime | `CMakeLists.txt` top |
-| vcpkg deps: `sqlite3`, `nlohmann-json`, `spdlog`, `fmt` (+ CommonLib's) | `vcpkg.json` |
+| vcpkg deps: `sqlite3`, `nlohmann-json`, `spdlog`, `fmt`, `minhook` (+ CommonLib's) | `vcpkg.json` |
 | Plugin declared with `add_commonlibsse_plugin(... USE_ADDRESS_LIBRARY ...)`, which also generates `SKSEPlugin_Version`/`Query`. Don't declare them by hand. | `CMakeLists.txt`, bottom of `main.cpp` |
 | PCH `include/PCH.h` is force-included in every source file. Don't add explicit `RE/…` or `SKSE/…` includes. | `target_precompile_headers` |
 | **New `.cpp` files must be added to `sources` by hand**; there is no glob. Re-run the configure step afterwards. | `CMakeLists.txt` |
@@ -78,7 +78,8 @@ Levels: `debug` for routine tracing, `info` for state changes worth seeing in a 
 | Prefix | Area |
 |---|---|
 | `[BookTextHook]` | `Opening diary` at `info` on every diary open; the per-call entry line only with `DebugLog` on |
-| `[DPF]` | Creation, FormID collisions, invalid `sourceFiles` cleared on load (VR) |
+| `[DPF]` | Creation, FormID collisions, cancelled creations, invalid `sourceFiles` cleared on load (VR) |
+| `[TimelineGate]`, `[Timeline]` | Waiting for SkyrimNet's keep/clear prompt, and reconciling volumes with the history it kept or cleared |
 | `[LoadFromDB]`, `[EnsureInventory]`, `[FindActorForBook]` | Load-time validation and NPC lookup |
 | `[Recovery]`, `QueueBatchCatchUpScan`, `DiscoveryBatch`, `CatchUp` | Load-time sync (see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md)) |
 | `[SNPD]` | `RefreshVolumeOnOpen` re-renders |
@@ -121,7 +122,7 @@ One DLL serves SE, AE and VR. Don't add a runtime-version gate that turns a feat
 
 ## Conventions
 
-- Game state (forms, inventories, references) is touched only on the game thread, via `SKSE::GetTaskInterface()->AddTask`. DPF callbacks and Papyrus natives arrive on VM threads.
+- Game state (forms, inventories, references) is touched only on the game thread, via `SKSE::GetTaskInterface()->AddTask`. The DPF callback arrives on a VM thread; Papyrus natives run on the game thread (registered non-tasklet; keep it that way). See [ARCHITECTURE.md](ARCHITECTURE.md#threading).
 - Wrap SkyrimNet-API and DB work in `try`/`catch`. An exception crossing the SKSE boundary takes the game down.
 - Identify diaries by book FormID (`GetBookForFormID`) and NPCs by SkyrimNet UUID. Never by name (names are localized and SkyrimNet shares names) and never by a bare stored FormID.
 - User-visible text goes through `Localization`. See [LOCALIZATION.md](LOCALIZATION.md).

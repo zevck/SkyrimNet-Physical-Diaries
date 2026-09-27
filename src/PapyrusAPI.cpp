@@ -43,7 +43,7 @@ namespace PapyrusAPI {
             // Papyrus caller was able to resolve the Actor object (NPCs not in a loaded cell
             // will return None from Game.GetForm, which silently skips SetTheftCleared).
             std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(formId);
-            if (!uuid.empty() && uuid != "0") {
+            if (!uuid.empty()) {
                 DiaryTheftHandler::ClearStolenVolumes(uuid);
             }
 
@@ -99,7 +99,7 @@ namespace PapyrusAPI {
             }
 
             std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(akActor->GetFormID());
-            if (uuid.empty() || uuid == "0") {
+            if (uuid.empty()) {
                 return "{\"stolen\": false}";  // Unknown actor = no theft tracking
             }
 
@@ -127,7 +127,7 @@ namespace PapyrusAPI {
             }
 
             std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(akActor->GetFormID());
-            if (uuid.empty() || uuid == "0") {
+            if (uuid.empty()) {
                 SKSE::log::debug("[IsDiaryStolen] {} - no UUID, returning false", akActor->GetName());
                 return "false";  // Unknown actor = no theft tracking
             }
@@ -154,7 +154,7 @@ namespace PapyrusAPI {
             }
 
             std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(akActor->GetFormID());
-            if (uuid.empty() || uuid == "0") {
+            if (uuid.empty()) {
                 SKSE::log::warn("[PapyrusAPI] SetTheftCleared: Unable to get UUID for actor {}", akActor->GetName());
                 return;
             }
@@ -175,10 +175,6 @@ namespace PapyrusAPI {
     }
 
     // -------------------------------------------------------------------------
-    // MCM Maintenance natives
-    // -------------------------------------------------------------------------
-
-    // -------------------------------------------------------------------------
     // MCM Debug log toggle
     // -------------------------------------------------------------------------
 
@@ -194,9 +190,7 @@ namespace PapyrusAPI {
 
     bool MCM_RegenerateTextsOnly(RE::StaticFunctionTag*) {
         SKSE::log::info("[PapyrusAPI] MCM_RegenerateTextsOnly called");
-        auto* bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
-        if (!bookManager) return false;
-        bookManager->RegenerateAllDiaryTexts();
+        SkyrimNetDiaries::BookManager::GetSingleton()->RegenerateAllDiaryTexts();
         return true;
     }
 

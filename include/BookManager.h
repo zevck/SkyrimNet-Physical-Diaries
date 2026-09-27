@@ -30,8 +30,8 @@ namespace SkyrimNetDiaries {
         std::string actorUuid;
         std::string actorName;
         RE::FormID bookFormId;         // The actual book FormID (unique identifier)
-        double startTime;              // Unix timestamp - show entries after this (0 = beginning)
-        double endTime;                // Unix timestamp - show entries before this (0 = present/no limit)
+        double startTime;              // Game seconds (entry_date units): first entry's date (0 for volume 1)
+        double endTime;                // Game seconds: the last included entry's date
         int volumeNumber = 1;
         std::string journalTemplate;   // Which template book was used (for consistent appearance)
         std::string bioTemplateName;   // Actor-specific subfolder key (e.g. "lydia_3a2") — unique per NPC
@@ -54,10 +54,17 @@ namespace SkyrimNetDiaries {
         std::string cachedBookText;
 
         // True once this volume has been included in a Skyrim .ess save file.
-        // Set by kPostSaveGame.  When false the NPC's inventory state is not
+        // Set at kSaveGame.  When false the NPC's inventory state is not
         // authoritative (reload-without-save) and QueueInventoryCheck may re-add.
         bool persistedInSave = false;
     };
+
+    // Template books in the ESP, found by EditorID.  Everyone gets one of the
+    // journal variants (by UUID hash); the Nightingale NPCs get their own.
+    inline constexpr const char* kJournalTemplates[] = {
+        "SkyrimNetDiaryTemplate", "SkyrimNetDiaryTemplate2", "SkyrimNetDiaryTemplate3",
+    };
+    inline constexpr const char* kNightingaleTemplate = "SkyrimNetDiaryTemplateN";
 
     class BookManager {
     public:
@@ -65,12 +72,7 @@ namespace SkyrimNetDiaries {
 
         // Initialize with template book Editor IDs from ESP
         // baseTemplate is the default, others are for variety (pass empty strings to disable variety)
-        void Initialize(const std::string& baseTemplate,
-                       const std::string& journal01 = "",
-                       const std::string& journal02 = "",
-                       const std::string& journal03 = "",
-                       const std::string& journal04 = "",
-                       const std::string& nightingaleJournal = "");
+        void Initialize();
 
         // Queues creation of one volume's book (async: DPF creates the form, then the
         // volume is registered and the book added to the NPC).  `entries` are the
@@ -102,7 +104,7 @@ namespace SkyrimNetDiaries {
                          int prevVolumeCountAtBoundary = 0,
                          RE::FormID actorFormId = 0);
 
-        // Update a book's endTime (when diary is stolen/removed)
+        // Update a volume's endTime (after an update, a seal or a deletion), in memory and DiaryDB
         void UpdateBookEndTime(const std::string& actorUuid, int volumeNumber, double endTime);
 
         // Renders `entries` into the volume (bounded by its startTime/endTime), writes the
@@ -115,7 +117,7 @@ namespace SkyrimNetDiaries {
         // Drops the actor's volumes numbered fromVolume and up (memory and DiaryDB).
         void UnregisterVolumesFrom(const std::string& actorUuid, int fromVolume);
 
-        // Regenerate all diary texts from database (called on game load)
+        // Re-render every tracked volume from SkyrimNet (MCM "Regenerate texts" and font changes)
         void RegenerateAllDiaryTexts();
 
         // Load all volumes from DiaryDB into books_ / actorTemplates_.
@@ -164,9 +166,8 @@ namespace SkyrimNetDiaries {
         std::string SelectJournalTemplate(const std::string& actorUuid, const std::string& actorName,
                                           RE::FormID actorFormId);
 
-        std::string templateBookEditorId_;  // Default/base template
-        std::vector<std::string> journalTemplates_;  // Additional template variants
-        std::string nightingaleTemplate_;  // Special template for Nightingale NPCs
+        std::vector<std::string> journalTemplates_;  // variants picked from by UUID hash
+        std::string nightingaleTemplate_;            // Karliah, Gallus, Mercer Frey
         std::unordered_map<std::string, std::string> actorTemplates_;  // UUID → template choice (persists across volumes)
         std::unordered_map<std::string, std::vector<DiaryBookData>> books_; // UUID → all volumes
     };
