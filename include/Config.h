@@ -92,6 +92,12 @@ namespace SkyrimNetDiaries {
                     }
                 }
 
+                // Replace invalid or out-of-range values with what Get() would return,
+                // so the warning is logged once here instead of on every read.
+                for (const auto& s : kIntSettings) {
+                    Set(s, Get(s));
+                }
+
                 SKSE::log::info("Loaded config from: {}", iniPath.string());
                 LogSettings();
                 return true;
@@ -102,52 +108,49 @@ namespace SkyrimNetDiaries {
             }
         }
 
-        // Get integer value
-        int GetInt(const std::string& section, const std::string& key, int defaultValue) const {
-            std::string fullKey = section + "." + key;
-            auto it = settings_.find(fullKey);
-            if (it != settings_.end()) {
-                try {
-                    return std::stoi(it->second);
-                } catch (...) {
-                    SKSE::log::warn("Invalid integer value for {}: '{}' - using default {}", 
-                                  fullKey, it->second, defaultValue);
-                }
-            }
-            return defaultValue;
-        }
+        // Every integer setting: INI section and key, default, and the range the value
+        // is clamped to.  Clamping happens on read, so a hand-edited INI can't feed
+        // EntriesPerVolume = 0 (an endless chunking loop) or negative sizes to the code.
+        struct IntSetting { const char* section; const char* key; int defaultValue; int min; int max; };
+        static constexpr IntSetting kDebugLog         { "General", "DebugLog",         0,  0, 1  };
+        static constexpr IntSetting kShowDateHeaders  { "Diary",   "ShowDateHeaders",  1,  0, 1  };
+        static constexpr IntSetting kEntriesPerVolume { "Diary",   "EntriesPerVolume", 10, 1, 50 };
+        static constexpr IntSetting kFontSizeTitle    { "Fonts",   "TitleSize",        18, 8, 24 };
+        static constexpr IntSetting kFontSizeDate     { "Fonts",   "DateSize",         16, 8, 24 };
+        static constexpr IntSetting kFontSizeContent  { "Fonts",   "ContentSize",      14, 8, 24 };
+        static constexpr IntSetting kFontSizeSmall    { "Fonts",   "SmallSize",        12, 8, 24 };
+        // INI order.  Language (string) is written first in [General], FontFace last in [Fonts].
+        static constexpr IntSetting kIntSettings[] = {
+            kDebugLog, kShowDateHeaders, kEntriesPerVolume,
+            kFontSizeTitle, kFontSizeDate, kFontSizeContent, kFontSizeSmall,
+        };
 
-        // Get string value
-        std::string GetString(const std::string& section, const std::string& key, const std::string& defaultValue) const {
-            std::string fullKey = section + "." + key;
-            auto it = settings_.find(fullKey);
-            return (it != settings_.end()) ? it->second : defaultValue;
+        int Get(const IntSetting& s) const {
+            return std::clamp(GetInt(s.section, s.key, s.defaultValue), s.min, s.max);
+        }
+        void Set(const IntSetting& s, int value) {
+            settings_[std::string(s.section) + "." + s.key] = std::to_string(std::clamp(value, s.min, s.max));
         }
 
         // Convenience getters for diary-specific settings
         std::string GetLanguageOverride() const { return GetString("General", "Language", ""); }
-        bool GetDebugLog() const { return GetInt("General", "DebugLog", 0) != 0; }
-        bool GetShowDateHeaders() const { return GetInt("Diary", "ShowDateHeaders", 1) != 0; }
-        int GetEntriesPerVolume() const { return GetInt("Diary", "EntriesPerVolume", 10); }
-        int GetFontSizeTitle() const { return GetInt("Fonts", "TitleSize", 18); }
-        int GetFontSizeDate() const { return GetInt("Fonts", "DateSize", 16); }
-        int GetFontSizeContent() const { return GetInt("Fonts", "ContentSize", 14); }
-        int GetFontSizeSmall() const { return GetInt("Fonts", "SmallSize", 12); }
+        bool GetDebugLog() const { return Get(kDebugLog) != 0; }
+        bool GetShowDateHeaders() const { return Get(kShowDateHeaders) != 0; }
+        int GetEntriesPerVolume() const { return Get(kEntriesPerVolume); }
+        int GetFontSizeTitle() const { return Get(kFontSizeTitle); }
+        int GetFontSizeDate() const { return Get(kFontSizeDate); }
+        int GetFontSizeContent() const { return Get(kFontSizeContent); }
+        int GetFontSizeSmall() const { return Get(kFontSizeSmall); }
         std::string GetFontFace() const { return GetString("Fonts", "FontFace", "$HandwrittenFont"); }
 
-        // Set an integer value in memory (does not persist until Save() is called)
-        void SetInt(const std::string& section, const std::string& key, int value) {
-            settings_[section + "." + key] = std::to_string(value);
-        }
-
-        // Convenience setters
-        void SetDebugLog(bool v) { SetInt("General", "DebugLog", v ? 1 : 0); }
-        void SetShowDateHeaders(bool v) { SetInt("Diary", "ShowDateHeaders", v ? 1 : 0); }
-        void SetEntriesPerVolume(int v) { SetInt("Diary", "EntriesPerVolume", std::clamp(v, 1, 50)); }
-        void SetFontSizeTitle(int v)    { SetInt("Fonts", "TitleSize",        std::clamp(v, 8, 24)); }
-        void SetFontSizeDate(int v)     { SetInt("Fonts", "DateSize",         std::clamp(v, 8, 24)); }
-        void SetFontSizeContent(int v)  { SetInt("Fonts", "ContentSize",      std::clamp(v, 8, 24)); }
-        void SetFontSizeSmall(int v)    { SetInt("Fonts", "SmallSize",        std::clamp(v, 8, 24)); }
+        // Convenience setters (in memory until Save())
+        void SetDebugLog(bool v) { Set(kDebugLog, v ? 1 : 0); }
+        void SetShowDateHeaders(bool v) { Set(kShowDateHeaders, v ? 1 : 0); }
+        void SetEntriesPerVolume(int v) { Set(kEntriesPerVolume, v); }
+        void SetFontSizeTitle(int v)    { Set(kFontSizeTitle, v); }
+        void SetFontSizeDate(int v)     { Set(kFontSizeDate, v); }
+        void SetFontSizeContent(int v)  { Set(kFontSizeContent, v); }
+        void SetFontSizeSmall(int v)    { Set(kFontSizeSmall, v); }
         void SetFontFace(const std::string& v) { settings_["Fonts.FontFace"] = v; }
 
         // Persist current settings back to the INI file loaded via Load()
@@ -161,49 +164,30 @@ namespace SkyrimNetDiaries {
 
         bool SaveToPath(const std::filesystem::path& path) const {
             try {
+                // Build the whole file first, so a failure can't leave it half-written.
+                std::ostringstream out;
+                std::string currentSection;
+                for (const auto& s : kIntSettings) {
+                    if (s.section != currentSection) {
+                        if (!currentSection.empty()) out << "\n";
+                        out << "[" << s.section << "]\n";
+                        currentSection = s.section;
+                        if (currentSection == "General") {
+                            const std::string lang = GetLanguageOverride();
+                            if (!lang.empty()) out << "Language = " << lang << "\n";
+                        }
+                    }
+                    out << s.key << " = " << Get(s) << "\n";
+                }
+                out << "FontFace = " << GetFontFace() << "\n";  // [Fonts] is the last section
+
                 std::filesystem::create_directories(path.parent_path());
                 std::ofstream file(path, std::ios::trunc);
                 if (!file.is_open()) {
                     SKSE::log::error("Config::Save() - failed to open: {}", path.string());
                     return false;
                 }
-
-                // Write in canonical section order so the file is human-readable
-                struct SectionKey { const char* section; const char* key; int defaultVal; };
-                // Write Language override (string setting, before the int table)
-                std::string currentSection = "General";
-                file << "[General]\n";
-                {
-                    std::string lang = GetLanguageOverride();
-                    if (!lang.empty()) {
-                        file << "Language = " << lang << "\n";
-                    }
-                }
-
-                const SectionKey order[] = {
-                    { "General", "DebugLog",         0  },
-                    { "Diary",   "ShowDateHeaders",  1  },
-                    { "Diary",   "EntriesPerVolume", 10 },
-                    { "Fonts", "TitleSize",        18 },
-                    { "Fonts", "DateSize",         16 },
-                    { "Fonts", "ContentSize",      14 },
-                    { "Fonts", "SmallSize",        12 },
-                };
-
-                for (auto& sk : order) {
-                    if (sk.section != currentSection) {
-                        if (!currentSection.empty()) file << "\n";
-                        file << "[" << sk.section << "]\n";
-                        currentSection = sk.section;
-                    }
-                    std::string fullKey = std::string(sk.section) + "." + sk.key;
-                    auto it = settings_.find(fullKey);
-                    int val = (it != settings_.end()) ? std::stoi(it->second) : sk.defaultVal;
-                    file << sk.key << " = " << val << "\n";
-                }
-
-                // Write string settings (not in the int table above)
-                file << "FontFace = " << GetFontFace() << "\n";
+                file << out.str();
 
                 SKSE::log::info("Config saved to: {}", path.string());
                 return true;
@@ -220,15 +204,32 @@ namespace SkyrimNetDiaries {
         Config(const Config&) = delete;
         Config& operator=(const Config&) = delete;
 
+        // Raw INI value; Get() clamps it.
+        int GetInt(const std::string& section, const std::string& key, int defaultValue) const {
+            std::string fullKey = section + "." + key;
+            auto it = settings_.find(fullKey);
+            if (it != settings_.end()) {
+                try {
+                    return std::stoi(it->second);
+                } catch (...) {
+                    SKSE::log::warn("Invalid integer value for {}: '{}' - using default {}",
+                                  fullKey, it->second, defaultValue);
+                }
+            }
+            return defaultValue;
+        }
+
+        std::string GetString(const std::string& section, const std::string& key, const std::string& defaultValue) const {
+            std::string fullKey = section + "." + key;
+            auto it = settings_.find(fullKey);
+            return (it != settings_.end()) ? it->second : defaultValue;
+        }
+
         void LogSettings() const {
             SKSE::log::info("Config Settings:");
-            SKSE::log::info("  DebugLog: {}", GetDebugLog());
-            SKSE::log::info("  ShowDateHeaders: {}", GetShowDateHeaders());
-            SKSE::log::info("  EntriesPerVolume: {}", GetEntriesPerVolume());
-            SKSE::log::info("  FontSizeTitle: {}", GetFontSizeTitle());
-            SKSE::log::info("  FontSizeDate: {}", GetFontSizeDate());
-            SKSE::log::info("  FontSizeContent: {}", GetFontSizeContent());
-            SKSE::log::info("  FontSizeSmall: {}", GetFontSizeSmall());
+            for (const auto& s : kIntSettings) {
+                SKSE::log::info("  {}.{}: {}", s.section, s.key, Get(s));
+            }
         }
 
         std::unordered_map<std::string, std::string> settings_;

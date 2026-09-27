@@ -79,6 +79,11 @@ namespace SkyrimNetDiaries {
                                                          int prevVolumeCountAtBoundary,
                                                          int maxEntries = 0);
         
+        // Game time of the player's most recent SkyrimNet event, in entry_date units
+        // (0 when there is none).  SkyrimNet asks its keep/clear question on load
+        // exactly when this is later than the current game time.
+        static double GetPlayerLastEventTime();
+
         // Get bio template name for an actor FormID
         static std::string GetBioTemplateName(uint32_t formId);
         

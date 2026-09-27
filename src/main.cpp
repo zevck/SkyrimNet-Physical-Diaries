@@ -131,12 +131,16 @@ namespace {
             // Mark every tracked volume as having been written into a .ess save file.
             // On the next kPostLoadGame, QueueInventoryCheck will skip these volumes
             // so legitimately taken/stolen books are not re-added to NPC inventories.
-            SkyrimNetDiaries::DiaryDB::GetSingleton()->MarkAllVolumesPersisted();
-            // Sync the in-memory flag too so the current session stays consistent.
-            for (auto& [uuid, volumes] : SkyrimNetDiaries::BookManager::GetSingleton()->GetAllBooksRef()) {
-                for (auto& vol : volumes) vol.persistedInSave = true;
+            try {
+                SkyrimNetDiaries::DiaryDB::GetSingleton()->MarkAllVolumesPersisted();
+                // Sync the in-memory flag too so the current session stays consistent.
+                for (auto& [uuid, volumes] : SkyrimNetDiaries::BookManager::GetSingleton()->GetAllBooksRef()) {
+                    for (auto& vol : volumes) vol.persistedInSave = true;
+                }
+                SKSE::log::debug("kSaveGame: all volumes marked as persisted");
+            } catch (const std::exception& e) {
+                SKSE::log::error("Exception in kSaveGame: {}", e.what());
             }
-            SKSE::log::debug("kPostSaveGame: all volumes marked as persisted");
             break;
         }
 
@@ -211,61 +215,69 @@ namespace {
 
                 const auto waited = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
                 SKSE::log::info("kPostLoadGame: SkyrimNet ready, starting post-load sync (waited {:.1f}s)", waited);
+                try {
 
-                // Detect the save folder from SkyrimNet.log and open this save's DiaryDB.
-                // Always re-detect on each load in case the player loaded a different save.
-                SkyrimNetDiaries::SaveFolder::Clear();
-                SkyrimNetDiaries::SaveFolder::DetectFromLog();
-                if (!SkyrimNetDiaries::SaveFolder::Get().empty()) {
-                    SkyrimNetDiaries::DiaryDB::GetSingleton()->Open(SkyrimNetDiaries::SaveFolder::Get());
-                } else {
-                    SKSE::log::warn("kPostLoadGame: save folder still unknown — DiaryDB not opened");
-                }
-
-                // SkyrimNet clears decorator registrations on every load.
-                DiaryTheftHandler::RegisterStolenDecorator();
-
-                auto invalidActors = SkyrimNetDiaries::BookManager::GetSingleton()->LoadFromDB();
-
-                // Match SkyrimNet's history: volumes reaching past this save lose the
-                // entries a Clear deleted (before books are re-added below).
-                SkyrimNetDiaries::ReconcileWithTimeline();
-
-                // For volumes whose DPF form still exists in process memory but whose
-                // inventory entry was wiped by a reload-without-save, re-add the book.
-                SkyrimNetDiaries::BookManager::GetSingleton()->QueueInventoryCheck();
-
-                // Clear stolen-volume records if this save is earlier in game time
-                // than the last session (the theft happened in an abandoned timeline).
-                DiaryTheftHandler::ReconcileAfterLoad();
-
-                // Diary events are handled again from here on; entries that arrived while
-                // we waited are picked up by the recovery and catch-up scans below.
-                SkyrimNetDiaries::SetPostLoadSyncReady(true);
-
-                // Build skip set: deduplicated UUIDs being immediately recovered.
-                std::unordered_set<std::string> skipUuids;
-                if (!invalidActors.empty()) {
-                    SKSE::log::info("kPostLoadGame: {} actor(s) had invalid FormIDs — queuing immediate recreation", invalidActors.size());
-                    std::unordered_set<std::string> seen;
-                    for (const auto& uuid : invalidActors) {
-                        if (!seen.insert(uuid).second) continue;
-                        uint32_t formId = SkyrimNetDiaries::Database::GetFormIDForUUID(uuid);
-                        if (formId == 0) {
-                            SKSE::log::warn("kPostLoadGame: could not resolve FormID for UUID {} — catch-up scan will handle it", uuid);
-                            continue;
-                        }
-                        skipUuids.insert(uuid);
-                        RE::FormID fid = static_cast<RE::FormID>(formId);
-                        SKSE::GetTaskInterface()->AddTask([fid]() {
-                            SkyrimNetDiaries::UpdateDiaryForActorInternal(fid);
-                        });
+                    // Detect the save folder from SkyrimNet.log and open this save's DiaryDB.
+                    // Always re-detect on each load in case the player loaded a different save.
+                    SkyrimNetDiaries::SaveFolder::Clear();
+                    SkyrimNetDiaries::SaveFolder::DetectFromLog();
+                    if (!SkyrimNetDiaries::SaveFolder::Get().empty()) {
+                        SkyrimNetDiaries::DiaryDB::GetSingleton()->Open(SkyrimNetDiaries::SaveFolder::Get());
+                    } else {
+                        SKSE::log::warn("kPostLoadGame: save folder still unknown — DiaryDB not opened");
                     }
-                }
 
-                // Pass skip set so these two paths don't re-queue the same actors.
-                SkyrimNetDiaries::QueueSealedVolumeRecovery(skipUuids);
-                SkyrimNetDiaries::QueueBatchCatchUpScan(std::move(skipUuids));
+                    // SkyrimNet clears decorator registrations on every load.
+                    DiaryTheftHandler::RegisterStolenDecorator();
+
+                    auto invalidActors = SkyrimNetDiaries::BookManager::GetSingleton()->LoadFromDB();
+
+                    // Match SkyrimNet's history: volumes reaching past this save lose the
+                    // entries a Clear deleted (before books are re-added below).
+                    SkyrimNetDiaries::ReconcileWithTimeline();
+
+                    // For volumes whose DPF form still exists in process memory but whose
+                    // inventory entry was wiped by a reload-without-save, re-add the book.
+                    SkyrimNetDiaries::BookManager::GetSingleton()->QueueInventoryCheck();
+
+                    // Clear stolen-volume records if this save is earlier in game time
+                    // than the last session (the theft happened in an abandoned timeline).
+                    DiaryTheftHandler::ReconcileAfterLoad();
+
+                    // Diary events are handled again from here on; entries that arrived while
+                    // we waited are picked up by the recovery and catch-up scans below.
+                    SkyrimNetDiaries::SetPostLoadSyncReady(true);
+
+                    // Build skip set: deduplicated UUIDs being immediately recovered.
+                    std::unordered_set<std::string> skipUuids;
+                    if (!invalidActors.empty()) {
+                        SKSE::log::info("kPostLoadGame: {} actor(s) had invalid FormIDs — queuing immediate recreation", invalidActors.size());
+                        std::unordered_set<std::string> seen;
+                        for (const auto& uuid : invalidActors) {
+                            if (!seen.insert(uuid).second) continue;
+                            uint32_t formId = SkyrimNetDiaries::Database::GetFormIDForUUID(uuid);
+                            if (formId == 0) {
+                                SKSE::log::warn("kPostLoadGame: could not resolve FormID for UUID {} — catch-up scan will handle it", uuid);
+                                continue;
+                            }
+                            skipUuids.insert(uuid);
+                            RE::FormID fid = static_cast<RE::FormID>(formId);
+                            SKSE::GetTaskInterface()->AddTask([fid]() {
+                                SkyrimNetDiaries::UpdateDiaryForActorInternal(fid);
+                            });
+                        }
+                    }
+
+                    // Pass skip set so these two paths don't re-queue the same actors.
+                    SkyrimNetDiaries::QueueSealedVolumeRecovery(skipUuids);
+                    SkyrimNetDiaries::QueueBatchCatchUpScan(std::move(skipUuids));
+                } catch (const std::exception& e) {
+                    SKSE::log::error("Exception in the post-load sync: {}", e.what());
+                } catch (...) {
+                    SKSE::log::error("Unknown exception in the post-load sync");
+                }
+                // Never leave diary events waiting for a sync that failed.
+                SkyrimNetDiaries::SetPostLoadSyncReady(true);
 
             }; // end of runSetup lambda body
 

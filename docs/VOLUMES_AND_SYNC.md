@@ -96,10 +96,10 @@ This is why DiaryDB is keyed to the SkyrimNet save folder rather than stored in 
 
 SkyrimNet asks the question from its own `kPostLoadGame` work, and its database reports ready well before the player answers. Syncing at that point builds books from "future" entries that a CLEAR then deletes, and the book left behind opens blank. So the post-load sync also waits for the timeline to settle:
 
-1. Once SkyrimNet's database is ready, `TimelineGate::IsSettled` asks for the newest diary entry. If it is not dated after the current game time, there is nothing to decide and the sync starts at once. That is every normal load.
+1. Once SkyrimNet's database is ready, `TimelineGate::IsSettled` asks SkyrimNet's own question: is the player's latest event (`PublicGetRecentEvents(player, 1)`, `Database::GetPlayerLastEventTime`) later than the current game time? SkyrimNet prompts exactly then. If not, there is nothing to decide and the sync starts at once. That is every normal load, and also a load where only some *diary entries* lie in the future: SkyrimNet doesn't ask then, so its history stays as it is.
 2. Otherwise it waits for SkyrimNet's prompt. A MinHook detour on `MessageBoxData::QueueMessage` (`RELOCATION_ID(51422, 52271)`) compares each queued box with the text of `skynet_DeleteHistoryMessage` (looked up by EditorID at `kDataLoaded`), and wraps that box's callback to see the button. Button 0 is Keep; anything else is Clear.
 3. **Keep** → sync at once. **Clear** → sync once SkyrimNet has deleted the future entries (a few ms; 10 s cap). While the prompt is on screen there is no time limit.
-4. Future entries but no prompt within 30 s (SkyrimNet decides from the player's events, not diary entries, so it may not ask) → sync anyway and log a warning. If the future entries disappear first, SkyrimNet has cleared them and the sync starts.
+4. A prompt is expected but not seen within 30 s (for example its text didn't match) → sync anyway and log a warning. If the player's future events disappear first, SkyrimNet has cleared them and the sync starts.
 
 This is a stopgap until SkyrimNet's public API can report whether its timeline check is still pending (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
 

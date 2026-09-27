@@ -195,12 +195,19 @@ namespace SkyrimNetDiaries::InterPluginAPI {
     } // namespace
 
     bool HandleMessage(SKSE::MessagingInterface::Message* msg) {
-        switch (msg->type) {
-        case SkyrimNetPhysicalDiaries_API::SNPD_QUERY_BOOK:        HandleBookQuery(msg);       return true;
-        case SkyrimNetPhysicalDiaries_API::SNPD_QUERY_ENTRY:       HandleEntryQuery(msg);      return true;
-        case SkyrimNetPhysicalDiaries_API::SNPD_QUERY_ALL_ENTRIES: HandleAllEntriesQuery(msg); return true;
-        default:                                                   return false;
+        try {
+            switch (msg->type) {
+            case SkyrimNetPhysicalDiaries_API::SNPD_QUERY_BOOK:        HandleBookQuery(msg);       return true;
+            case SkyrimNetPhysicalDiaries_API::SNPD_QUERY_ENTRY:       HandleEntryQuery(msg);      return true;
+            case SkyrimNetPhysicalDiaries_API::SNPD_QUERY_ALL_ENTRIES: HandleAllEntriesQuery(msg); return true;
+            default:                                                   return false;
+            }
+        } catch (const std::exception& e) {
+            SKSE::log::error("[InterPluginAPI] HandleMessage exception: {}", e.what());
+        } catch (...) {
+            SKSE::log::error("[InterPluginAPI] HandleMessage: unknown exception");
         }
+        return true;
     }
 
 } // namespace SkyrimNetDiaries::InterPluginAPI

@@ -35,8 +35,8 @@ namespace SkyrimNetDiaries::TimelineGate {
         constexpr const char* kPromptEditorID = "skynet_DeleteHistoryMessage";
         constexpr int kKeepButton = 0;
 
-        // Future diary entries but no prompt: SkyrimNet decides from the player's
-        // events, not diary entries, so it may not ask.  Don't wait forever.
+        // A prompt is expected but never seen (its text didn't match, say): don't
+        // wait forever.
         constexpr auto kNoPromptTimeout = std::chrono::seconds(30);
         // After Clear, SkyrimNet deletes on its own thread a few ms after the box closes.
         constexpr auto kClearDeletionTimeout = std::chrono::seconds(10);
@@ -51,7 +51,7 @@ namespace SkyrimNetDiaries::TimelineGate {
 
         // Poll state (game thread only).
         bool g_checked = false;
-        bool g_futureAtStart = false;
+        bool g_promptExpected = false;
         Clock::time_point g_waitStart;
         bool g_loggedWaiting = false;
 
@@ -169,7 +169,7 @@ namespace SkyrimNetDiaries::TimelineGate {
         g_prompt.store(Prompt::kNone);
         g_answeredAt.store(0);
         g_checked = false;
-        g_futureAtStart = false;
+        g_promptExpected = false;
         g_loggedWaiting = false;
     }
 
@@ -187,10 +187,16 @@ namespace SkyrimNetDiaries::TimelineGate {
         if (!g_checked) {
             g_checked = true;
             g_waitStart = now;
-            g_futureAtStart = HasFutureDiaryEntries();
-            if (g_futureAtStart) {
-                SKSE::log::info("[TimelineGate] SkyrimNet has diary entries dated after this save — "
-                                "waiting for its keep/clear prompt before syncing");
+            // SkyrimNet's own test: it asks keep/clear exactly when the player's latest
+            // event is later than the loaded save's game time.  Future diary entries
+            // alone don't make it ask.
+            auto* calendar = RE::Calendar::GetSingleton();
+            const double gameNow = calendar ? calendar->GetCurrentGameTime() * 86400.0 : 0.0;
+            const double lastEvent = Database::GetPlayerLastEventTime();
+            g_promptExpected = lastEvent > gameNow;
+            if (g_promptExpected) {
+                SKSE::log::info("[TimelineGate] SkyrimNet's history runs past this save ({:.2f} > {:.2f}) — "
+                                "waiting for its keep/clear prompt before syncing", lastEvent, gameNow);
             }
         }
 
@@ -213,11 +219,13 @@ namespace SkyrimNetDiaries::TimelineGate {
             return false;  // the player may take as long as they like to answer
         case Prompt::kNone:
         default:
-            if (!g_futureAtStart) {
-                return true;
+            if (!g_promptExpected) {
+                return true;  // SkyrimNet won't ask: its history stays as it is
             }
-            // Gone without us seeing the prompt: SkyrimNet has already cleared them.
-            if (!HasFutureDiaryEntries()) {
+            // The player's future events are gone without us seeing the prompt:
+            // SkyrimNet has already cleared them.
+            if (auto* calendar = RE::Calendar::GetSingleton();
+                calendar && Database::GetPlayerLastEventTime() <= calendar->GetCurrentGameTime() * 86400.0) {
                 return true;
             }
             if (now - g_waitStart > kNoPromptTimeout) {

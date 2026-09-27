@@ -263,46 +263,60 @@ namespace
             }
 
             if (a_book) {
-                auto* bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
-                auto* vol = bookManager->GetBookForFormID(a_book->GetFormID());
-                if (vol) {
-                    // Refresh text before injection: detects new/deleted entries and
-                    // reformats if the live count differs from the cached count.
-                    bookManager->RefreshVolumeOnOpen(vol);
-                    if (!vol->cachedBookText.empty()) {
+                // Prepare the diary text under try/catch: this runs inside the engine's
+                // call stack, where an escaping exception is a crash.  On failure the
+                // book opens with its own text instead.
+                std::string textToInject;
+                try {
+                    auto* bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
+                    if (auto* vol = bookManager->GetBookForFormID(a_book->GetFormID())) {
+                        // Refresh text before injection: detects new/deleted entries and
+                        // reformats if the live count differs from the cached count.
+                        bookManager->RefreshVolumeOnOpen(vol);
+                        if (!vol->cachedBookText.empty()) {
+                            SKSE::log::info("[BookTextHook] Opening diary: formId=0x{:X} actor='{}' vol={} textLen={}",
+                                a_book->GetFormID(), vol->actorName, vol->volumeNumber, vol->cachedBookText.size());
 
-                        SKSE::log::info("[BookTextHook] Opening diary: formId=0x{:X} actor='{}' vol={} textLen={}",
-                            a_book->GetFormID(), vol->actorName, vol->volumeNumber, vol->cachedBookText.size());
-
-                        // Always apply Win-1251 conversion for any Cyrillic content.
-                        // Scaleform GFx's replaceText() uses BYTE offsets but
-                        // getLineOffset() returns CHARACTER indices. For 2-byte UTF-8
-                        // Cyrillic this causes progressive text overlay. Win-1251 is
-                        // single-byte Cyrillic so byte == char, fixing the mismatch.
-                        // The conversion is a no-op for ASCII, so it is safe for all
-                        // locales — covers Russian, Ukrainian, Belarusian, and any
-                        // user who has a Cyrillic-capable font mod installed.
-                        std::string textToInject = Utf8ToWin1251(vol->cachedBookText);
-
-                        // Stack-local BSString — must NOT be static.  A shared static
-                        // BSString was responsible for an EXCEPTION_ACCESS_VIOLATION in
-                        // BookMenu::OpenBookMenu on at least one VR user (RBX = 0x43534544
-                        // "DESC", consistent with reading uninitialized memory through a
-                        // dangling reference): nested book opens or other mods with hooks
-                        // on the same code path could re-enter thunk and mutate the static
-                        // BSString's internal buffer mid-call, leaving the engine holding
-                        // a stale pointer.  A stack-local instance per call eliminates the
-                        // cross-call aliasing entirely.
-                        RE::BSString injectedText{ textToInject.c_str() };
-
-                        if (!CallOriginalGuarded(injectedText, a_extra, safeRef, a_book,
-                                                 a_pos, a_rot, a_scale, safeUseDefaultPos)) {
-                            SKSE::log::warn("[BookTextHook] OpenBookMenu faulted (caught) for diary "
-                                            "formId=0x{:X} — book not opened, game continues",
-                                            a_book->GetFormID());
+                            // Always apply Win-1251 conversion for any Cyrillic content.
+                            // Scaleform GFx's replaceText() uses BYTE offsets but
+                            // getLineOffset() returns CHARACTER indices. For 2-byte UTF-8
+                            // Cyrillic this causes progressive text overlay. Win-1251 is
+                            // single-byte Cyrillic so byte == char, fixing the mismatch.
+                            // The conversion is a no-op for ASCII, so it is safe for all
+                            // locales — covers Russian, Ukrainian, Belarusian, and any
+                            // user who has a Cyrillic-capable font mod installed.
+                            textToInject = Utf8ToWin1251(vol->cachedBookText);
                         }
-                        return;
                     }
+                } catch (const std::exception& e) {
+                    SKSE::log::error("[BookTextHook] Preparing diary text for 0x{:X} failed: {} — opening the book without it",
+                                     a_book->GetFormID(), e.what());
+                    textToInject.clear();
+                } catch (...) {
+                    SKSE::log::error("[BookTextHook] Preparing diary text for 0x{:X} failed — opening the book without it",
+                                     a_book->GetFormID());
+                    textToInject.clear();
+                }
+
+                if (!textToInject.empty()) {
+                    // Stack-local BSString — must NOT be static.  A shared static
+                    // BSString was responsible for an EXCEPTION_ACCESS_VIOLATION in
+                    // BookMenu::OpenBookMenu on at least one VR user (RBX = 0x43534544
+                    // "DESC", consistent with reading uninitialized memory through a
+                    // dangling reference): nested book opens or other mods with hooks
+                    // on the same code path could re-enter thunk and mutate the static
+                    // BSString's internal buffer mid-call, leaving the engine holding
+                    // a stale pointer.  A stack-local instance per call eliminates the
+                    // cross-call aliasing entirely.
+                    RE::BSString injectedText{ textToInject.c_str() };
+
+                    if (!CallOriginalGuarded(injectedText, a_extra, safeRef, a_book,
+                                             a_pos, a_rot, a_scale, safeUseDefaultPos)) {
+                        SKSE::log::warn("[BookTextHook] OpenBookMenu faulted (caught) for diary "
+                                        "formId=0x{:X} — book not opened, game continues",
+                                        a_book->GetFormID());
+                    }
+                    return;
                 }
             }
 

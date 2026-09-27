@@ -139,58 +139,65 @@ namespace SkyrimNetDiaries {
     }
 
     std::vector<DiaryEntry> Database::GetDiaryEntries(uint32_t formId, int limit, double startTime, double endTime, double prevVolumeLastCreationTime, int prevVolumeCountAtBoundary) {
-        if (!api_initialized_ && !InitializeAPI()) {
-            SKSE::log::error("API not initialized - cannot get diary entries");
-            return {};
-        }
+        try {
+            if (!api_initialized_ && !InitializeAPI()) {
+                SKSE::log::error("API not initialized - cannot get diary entries");
+                return {};
+            }
 
-        if (!PublicGetDiaryEntries) {
-            SKSE::log::error("PublicGetDiaryEntries not available");
-            return {};
-        }
+            if (!PublicGetDiaryEntries) {
+                SKSE::log::error("PublicGetDiaryEntries not available");
+                return {};
+            }
 
-        SKSE::log::debug("Calling PublicGetDiaryEntries(formId=0x{:X}, limit={}, startTime={:.2f}, endTime={:.2f})",
-                        formId, limit, startTime, endTime);
+            SKSE::log::debug("Calling PublicGetDiaryEntries(formId=0x{:X}, limit={}, startTime={:.2f}, endTime={:.2f})",
+                            formId, limit, startTime, endTime);
 
-        std::string jsonResponse = PublicGetDiaryEntries(formId, limit, startTime, endTime);
+            std::string jsonResponse = PublicGetDiaryEntries(formId, limit, startTime, endTime);
         
-        auto entries = ParseDiaryJSON(jsonResponse);
+            auto entries = ParseDiaryJSON(jsonResponse);
 
-        // Oldest first, matching the volume-splitting order in CreateAllVolumesForActor.
-        std::sort(entries.begin(), entries.end(), EntryOlder);
+            // Oldest first, matching the volume-splitting order in CreateAllVolumesForActor.
+            std::sort(entries.begin(), entries.end(), EntryOlder);
 
-        // Exclude entries belonging to the previous volume.  When two consecutive volumes share
-        // the same entry_date at their boundary, the previous volume's last entry(ies) would
-        // otherwise pass the startTime filter and appear in this volume too.
-        // We remove exactly prevVolumeCountAtBoundary entries that satisfy the boundary condition
-        // (entry_date <= startTime AND creation_time <= prevVolumeLastCreationTime), processing
-        // them in sorted order so we never over-remove when two entries are truly identical.
-        if (prevVolumeLastCreationTime > 0.0 && prevVolumeCountAtBoundary > 0) {
-            int toRemove = prevVolumeCountAtBoundary;
-            auto it = entries.begin();
-            while (it != entries.end() && toRemove > 0) {
-                if (it->entry_date <= startTime && it->creation_time <= prevVolumeLastCreationTime) {
-                    it = entries.erase(it);
-                    --toRemove;
-                } else {
-                    ++it;
+            // Exclude entries belonging to the previous volume.  When two consecutive volumes share
+            // the same entry_date at their boundary, the previous volume's last entry(ies) would
+            // otherwise pass the startTime filter and appear in this volume too.
+            // We remove exactly prevVolumeCountAtBoundary entries that satisfy the boundary condition
+            // (entry_date <= startTime AND creation_time <= prevVolumeLastCreationTime), processing
+            // them in sorted order so we never over-remove when two entries are truly identical.
+            if (prevVolumeLastCreationTime > 0.0 && prevVolumeCountAtBoundary > 0) {
+                int toRemove = prevVolumeCountAtBoundary;
+                auto it = entries.begin();
+                while (it != entries.end() && toRemove > 0) {
+                    if (it->entry_date <= startTime && it->creation_time <= prevVolumeLastCreationTime) {
+                        it = entries.erase(it);
+                        --toRemove;
+                    } else {
+                        ++it;
+                    }
                 }
             }
-        }
 
-        // Client-side enforcement of time bounds.
-        if (startTime > 0.0) {
-            entries.erase(std::remove_if(entries.begin(), entries.end(),
-                [startTime](const DiaryEntry& e) { return e.entry_date < startTime; }), entries.end());
-        }
-        if (endTime > 0.0) {
-            entries.erase(std::remove_if(entries.begin(), entries.end(),
-                [endTime](const DiaryEntry& e) { return e.entry_date > endTime; }), entries.end());
-        }
+            // Client-side enforcement of time bounds.
+            if (startTime > 0.0) {
+                entries.erase(std::remove_if(entries.begin(), entries.end(),
+                    [startTime](const DiaryEntry& e) { return e.entry_date < startTime; }), entries.end());
+            }
+            if (endTime > 0.0) {
+                entries.erase(std::remove_if(entries.begin(), entries.end(),
+                    [endTime](const DiaryEntry& e) { return e.entry_date > endTime; }), entries.end());
+            }
 
-        SKSE::log::debug("Retrieved {} diary entries for FormID 0x{:X}", entries.size(), formId);
+            SKSE::log::debug("Retrieved {} diary entries for FormID 0x{:X}", entries.size(), formId);
         
-        return entries;
+            return entries;
+        } catch (const std::exception& e) {
+            SKSE::log::error("GetDiaryEntries exception: {}", e.what());
+        } catch (...) {
+            SKSE::log::error("GetDiaryEntries: unknown exception");
+        }
+        return {};
     }
 
     std::vector<DiaryEntry> Database::GetVolumeEntries(uint32_t formId, double startTime, double endTime,
@@ -206,36 +213,66 @@ namespace SkyrimNetDiaries {
         return entries;
     }
 
+    double Database::GetPlayerLastEventTime() {
+        try {
+            if (!api_initialized_ && !InitializeAPI()) return 0.0;
+            if (!PublicGetRecentEvents) return 0.0;
+            // Same query as SkyrimNet's own continuity check: the player's latest event.
+            const auto events = json::parse(PublicGetRecentEvents(0x14, 1, ""), nullptr, false);
+            if (!events.is_array() || events.empty()) return 0.0;
+            const auto& latest = events.front();
+            if (!latest.contains("gameTime") || !latest["gameTime"].is_number()) return 0.0;
+            return latest["gameTime"].get<double>();
+        } catch (const std::exception& e) {
+            SKSE::log::error("GetPlayerLastEventTime exception: {}", e.what());
+            return 0.0;
+        }
+    }
+
     std::string Database::GetBioTemplateName(uint32_t formId) {
-        if (!api_initialized_ && !InitializeAPI()) {
-            return "";
-        }
+        try {
+            if (!api_initialized_ && !InitializeAPI()) {
+                return "";
+            }
 
-        if (!PublicGetBioTemplateName) {
-            return "";
-        }
+            if (!PublicGetBioTemplateName) {
+                return "";
+            }
 
-        std::string templateName = PublicGetBioTemplateName(formId);
+            std::string templateName = PublicGetBioTemplateName(formId);
         
-        if (!templateName.empty()) {
-            SKSE::log::debug("Bio template for 0x{:X}: {}", formId, templateName);
+            if (!templateName.empty()) {
+                SKSE::log::debug("Bio template for 0x{:X}: {}", formId, templateName);
+            }
+        
+            return templateName;
+        } catch (const std::exception& e) {
+            SKSE::log::error("GetBioTemplateName exception: {}", e.what());
+        } catch (...) {
+            SKSE::log::error("GetBioTemplateName: unknown exception");
         }
-        
-        return templateName;
+        return "";
     }
 
     // UUID ↔ FormID conversion
     std::string Database::GetUUIDFromFormID(uint32_t formId) {
-        if (!api_initialized_ && !InitializeAPI()) {
-            return "";
-        }
+        try {
+            if (!api_initialized_ && !InitializeAPI()) {
+                return "";
+            }
 
-        if (!PublicFormIDToUUID) {
-            return "";
-        }
+            if (!PublicFormIDToUUID) {
+                return "";
+            }
 
-        uint64_t uuid = PublicFormIDToUUID(formId);
-        return std::to_string(uuid);
+            uint64_t uuid = PublicFormIDToUUID(formId);
+            return std::to_string(uuid);
+        } catch (const std::exception& e) {
+            SKSE::log::error("GetUUIDFromFormID exception: {}", e.what());
+        } catch (...) {
+            SKSE::log::error("GetUUIDFromFormID: unknown exception");
+        }
+        return "";
     }
 
     uint32_t Database::GetFormIDForUUID(const std::string& uuid) {

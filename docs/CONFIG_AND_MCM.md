@@ -17,7 +17,9 @@ Code: `include/Config.h` (header-only singleton `SkyrimNetDiaries::Config`), `So
 | `[Fonts] TitleSize` / `DateSize` / `ContentSize` / `SmallSize` | 18 / 16 / 14 / 12 | 8–24 | Sizes in the rendered markup |
 | `[Fonts] FontFace` | `$HandwrittenFont` | font name | `face=` in the rendered markup |
 
-**`Save()` writes a fixed list of keys** (`Config::SaveToPath`). A key missing from that list is **dropped from the file at the next startup**. When you add a setting, add a getter, a setter with clamping, **and** an entry in `SaveToPath`.
+**Every integer setting is one row in `Config::kIntSettings`**: section, key, default and range. Getters and setters clamp to that range, so a hand-edited INI can't feed out-of-range values to the code (`EntriesPerVolume = 0` used to loop forever), and a non-numeric value falls back to the default. `SaveToPath` and the startup log walk the same table, so the defaults can't drift apart. `Save()` builds the whole file in memory before writing it, so a failure can't leave it half-written.
+
+**`Save()` writes only known keys.** A key that isn't in `kIntSettings` (or the two string settings, `Language` and `FontFace`) is **dropped from the file at the next startup**.
 
 ## The MCM (`SkyrimNetDiaries_MCM`, `extends SKI_ConfigBase`)
 
@@ -37,7 +39,7 @@ Strings are `$SNPD_…` keys translated in `Interface/Translations/` (UTF-16 LE 
 
 ## Adding a setting end to end
 
-1. `Config.h`: getter with default, setter with clamping, entry in `SaveToPath`.
+1. `Config.h`: a row in `kIntSettings` (section, key, default, range) plus a getter and setter that call `Get`/`Set` with it. String settings need their own line in `SaveToPath`.
 2. `PapyrusAPI.cpp`: `MCM_Get…` / `MCM_Set…` (the setter calls `Save()`), registered on `SkyrimNetDiaries_MCM`.
 3. `SkyrimNetDiaries_MCM.psc`: `Native` declarations, the option, handlers, and a regenerate call if it changes rendering.
 4. Add `$SNPD_…` keys to **all nine** translation files.
