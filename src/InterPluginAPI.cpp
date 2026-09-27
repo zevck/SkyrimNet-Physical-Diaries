@@ -19,6 +19,8 @@
 
 #include "InterPluginAPI.h"
 #include "BookManager.h"
+#include "BookText.h"
+#include "Localization.h"
 #include "SkyrimNetPhysicalDiariesAPI.h"
 #include <cstring>
 
@@ -26,18 +28,37 @@ namespace SkyrimNetDiaries::InterPluginAPI {
 
     namespace {
 
-        // Splits rendered book text on "[pagebreak]\n\n".
+        // Splits rendered book text on kPageBreak.
         std::vector<std::string_view> SplitPages(std::string_view text) {
-            static constexpr std::string_view kPageSep = "[pagebreak]\n\n";
             std::vector<std::string_view> pages;
             std::size_t pos = 0;
             while (true) {
-                auto found = text.find(kPageSep, pos);
+                auto found = text.find(kPageBreak, pos);
                 if (found == std::string_view::npos) { pages.push_back(text.substr(pos)); break; }
                 pages.push_back(text.substr(pos, found - pos));
-                pos = found + kPageSep.size();
+                pos = found + kPageBreak.size();
             }
             return pages;
+        }
+
+        // The book text escapes "&", "<" and ">" in diary prose for Scaleform.  Callers
+        // got the raw characters before that, so hand them back unescaped.
+        std::string UnescapeMarkup(std::string_view text) {
+            std::string out;
+            out.reserve(text.size());
+            for (std::size_t i = 0; i < text.size(); ++i) {
+                if (text[i] == '&') {
+                    if (text.substr(i, 5) == "&amp;") { out += '&'; i += 4; continue; }
+                    if (text.substr(i, 4) == "&lt;")  { out += '<'; i += 3; continue; }
+                    if (text.substr(i, 4) == "&gt;")  { out += '>'; i += 3; continue; }
+                }
+                out += text[i];
+            }
+            return out;
+        }
+
+        bool IsEmptyVolume(const std::string& cachedText) {
+            return cachedText.find(Localization::kEmptySentinel) != std::string::npos;
         }
 
         void HandleBookQuery(SKSE::MessagingInterface::Message* msg) {
@@ -47,8 +68,11 @@ namespace SkyrimNetDiaries::InterPluginAPI {
                 return;
             }
             auto* query = static_cast<SkyrimNetPhysicalDiaries_API::SNPDBookQuery*>(msg->data);
-            query->isDiaryBook = false;
-            query->resultCode  = SkyrimNetPhysicalDiaries_API::SNPDResultCode::NotADiary;
+            query->isDiaryBook  = false;
+            query->resultCode   = SkyrimNetPhysicalDiaries_API::SNPDResultCode::NotADiary;
+            query->entryCount   = 0;
+            query->volumeNumber = 0;
+            query->totalVolumes = 0;
             query->text[0] = '\0';
 
             auto* bm       = SkyrimNetDiaries::BookManager::GetSingleton();
@@ -60,10 +84,10 @@ namespace SkyrimNetDiaries::InterPluginAPI {
                 auto* allVols        = bm->GetAllVolumesForActor(bookData->actorUuid);
                 query->totalVolumes  = allVols ? static_cast<std::int32_t>(allVols->size()) : 1;
 
-                const auto& t = bookData->cachedBookText;
                 // Don't expose the "entries removed" placeholder — it would be read aloud by TTS mods.
                 // Leave text empty so callers know there's nothing to read for this volume.
-                if (t.find("<!-- SNPD_EMPTY -->") == std::string::npos) {
+                if (!IsEmptyVolume(bookData->cachedBookText)) {
+                    const std::string t = UnescapeMarkup(bookData->cachedBookText);
                     query->resultCode = SkyrimNetPhysicalDiaries_API::SNPDResultCode::Success;
                     size_t copyLen = std::min(t.size(), sizeof(query->text) - 1);
                     std::memcpy(query->text, t.c_str(), copyLen);
@@ -100,12 +124,12 @@ namespace SkyrimNetDiaries::InterPluginAPI {
             }
 
             // Page layout: [0]=blank, [1]=title+date-range, [2+]=one page per entry.
-            auto pages = SplitPages(bookData->cachedBookText);
+            const std::string text = UnescapeMarkup(bookData->cachedBookText);
+            auto pages = SplitPages(text);
 
             // Entry pages start at index 2; check for the "removed" placeholder.
             int entryPageCount = static_cast<int>(pages.size()) - 2;
-            if (entryPageCount <= 0 ||
-                pages[2].find("<!-- SNPD_EMPTY -->") != std::string_view::npos) {
+            if (entryPageCount <= 0 || IsEmptyVolume(bookData->cachedBookText)) {
                 query->resultCode = SkyrimNetPhysicalDiaries_API::SNPDResultCode::NoEntries;
                 SKSE::log::debug("SNPD_QUERY_ENTRY: FormID 0x{:X} has no entries", query->bookFormId);
                 return;
@@ -158,14 +182,14 @@ namespace SkyrimNetDiaries::InterPluginAPI {
             }
 
             // Page layout: [0]=blank, [1]=title+date-range, [2+]=one page per entry.
-            auto pages = SplitPages(bookData->cachedBookText);
+            const std::string text = UnescapeMarkup(bookData->cachedBookText);
+            auto pages = SplitPages(text);
 
             query->isValid    = true;
             query->resultCode = SkyrimNetPhysicalDiaries_API::SNPDResultCode::Success;
 
             int entryPageCount = static_cast<int>(pages.size()) - 2;
-            if (entryPageCount <= 0 ||
-                pages[2].find("<!-- SNPD_EMPTY -->") != std::string_view::npos) {
+            if (entryPageCount <= 0 || IsEmptyVolume(bookData->cachedBookText)) {
                 SKSE::log::debug("SNPD_QUERY_ALL_ENTRIES: FormID 0x{:X} has no entries", query->bookFormId);
                 return;
             }

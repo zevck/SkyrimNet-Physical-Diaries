@@ -51,6 +51,17 @@ namespace
     // UTF-8 Cyrillic to Win-1251 so Scaleform can paginate properly.
     //
     // Characters outside Win-1251 Cyrillic are left as UTF-8 (best effort).
+    // True if the text contains Cyrillic letters (U+0400–U+04FF: UTF-8 lead bytes
+    // 0xD0–0xD3).  Only such text is converted to Win-1251; converting other text
+    // turned French guillemets into bytes that aren't valid UTF-8.
+    static bool HasCyrillic(const std::string& text) {
+        for (std::size_t i = 0; i + 1 < text.size(); ++i) {
+            const auto b = static_cast<unsigned char>(text[i]);
+            if (b >= 0xD0 && b <= 0xD3 && (static_cast<unsigned char>(text[i + 1]) & 0xC0) == 0x80) return true;
+        }
+        return false;
+    }
+
     static std::string Utf8ToWin1251(const std::string& utf8) {
         std::string out;
         out.reserve(utf8.size());  // Will be smaller (2-byte → 1-byte)
@@ -144,10 +155,30 @@ namespace
                     out += static_cast<char>(*(p-1));
                 }
             } else if ((*p & 0xF0) == 0xE0 && p + 2 < end) {
-                // 3-byte UTF-8: pass through unchanged
-                out += static_cast<char>(*p++);
-                out += static_cast<char>(*p++);
-                out += static_cast<char>(*p++);
+                // 3-byte UTF-8: the Win-1251 punctuation SanitizeBookText doesn't
+                // replace, else pass through unchanged (multi-byte text desyncs
+                // pagination, so map what Win-1251 has).
+                const uint32_t cp = (static_cast<uint32_t>(*p & 0x0F) << 12)
+                                  | (static_cast<uint32_t>(*(p+1) & 0x3F) << 6)
+                                  | static_cast<uint32_t>(*(p+2) & 0x3F);
+                char mapped = 0;
+                switch (cp) {
+                case 0x201E: mapped = static_cast<char>(0x84); break;  // „
+                case 0x201A: mapped = static_cast<char>(0x82); break;  // ‚
+                case 0x2022: mapped = static_cast<char>(0x95); break;  // •
+                case 0x2039: mapped = static_cast<char>(0x8B); break;  // ‹
+                case 0x203A: mapped = static_cast<char>(0x9B); break;  // ›
+                case 0x2116: mapped = static_cast<char>(0xB9); break;  // №
+                default: break;
+                }
+                if (mapped) {
+                    out += mapped;
+                    p += 3;
+                } else {
+                    out += static_cast<char>(*p++);
+                    out += static_cast<char>(*p++);
+                    out += static_cast<char>(*p++);
+                }
             } else if ((*p & 0xF8) == 0xF0 && p + 3 < end) {
                 // 4-byte UTF-8: pass through unchanged
                 out += static_cast<char>(*p++);
@@ -277,15 +308,16 @@ namespace
                             SKSE::log::info("[BookTextHook] Opening diary: formId=0x{:X} actor='{}' vol={} textLen={}",
                                 a_book->GetFormID(), vol->actorName, vol->volumeNumber, vol->cachedBookText.size());
 
-                            // Always apply Win-1251 conversion for any Cyrillic content.
-                            // Scaleform GFx's replaceText() uses BYTE offsets but
-                            // getLineOffset() returns CHARACTER indices. For 2-byte UTF-8
-                            // Cyrillic this causes progressive text overlay. Win-1251 is
-                            // single-byte Cyrillic so byte == char, fixing the mismatch.
-                            // The conversion is a no-op for ASCII, so it is safe for all
-                            // locales — covers Russian, Ukrainian, Belarusian, and any
-                            // user who has a Cyrillic-capable font mod installed.
-                            textToInject = Utf8ToWin1251(vol->cachedBookText);
+                            // Win-1251 for Cyrillic text.  Scaleform GFx's replaceText()
+                            // uses BYTE offsets but getLineOffset() returns CHARACTER
+                            // indices; for 2-byte UTF-8 Cyrillic this makes text overlap
+                            // progressively.  Win-1251 is single-byte, so byte == char.
+                            // Only converted when the text has Cyrillic (Russian,
+                            // Ukrainian, Belarusian, or a Cyrillic font mod); other text
+                            // stays UTF-8.
+                            textToInject = HasCyrillic(vol->cachedBookText)
+                                               ? Utf8ToWin1251(vol->cachedBookText)
+                                               : vol->cachedBookText;
                         }
                     }
                 } catch (const std::exception& e) {

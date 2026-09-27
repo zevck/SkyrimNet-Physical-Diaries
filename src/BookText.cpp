@@ -20,12 +20,41 @@
 #include "BookText.h"
 #include "Config.h"
 #include "Localization.h"
+#include <cmath>
 
 namespace SkyrimNetDiaries {
 
     namespace {
 
         // Helper function to sanitize text for Skyrim's book renderer
+        // LLM text goes into Scaleform's book HTML.  A "<" would start a tag and swallow
+        // text ("<sigh>", "<3"), so escape the three markup characters.  The
+        // inter-plugin API turns them back before handing text to other mods.
+        std::string EscapeMarkup(std::string text) {
+            std::string out;
+            out.reserve(text.size());
+            for (const char c : text) {
+                switch (c) {
+                case '&': out += "&amp;"; break;
+                case '<': out += "&lt;"; break;
+                case '>': out += "&gt;"; break;
+                default:  out += c;
+                }
+            }
+            return out;
+        }
+
+        // An entry must not contain the page separator: it would add a page and shift
+        // the entry numbering the inter-plugin API relies on.
+        std::string NeutralizePageBreaks(std::string text) {
+            std::size_t pos = 0;
+            while ((pos = text.find("[pagebreak]", pos)) != std::string::npos) {
+                text.replace(pos, 11, "[page break]");
+                pos += 12;
+            }
+            return text;
+        }
+
         std::string SanitizeBookText(const std::string& text) {
             std::string result = text;
 
@@ -276,89 +305,48 @@ namespace SkyrimNetDiaries {
                 result = std::move(out);
             }
 
-            return result;
+            return EscapeMarkup(NeutralizePageBreaks(std::move(result)));
         }
 
-        // Helper function to convert game time to readable date
+        struct GameDate {
+            int day;        // 1-based
+            int month;      // 0 = Morning Star
+            int year;       // 4E year
+            int dayOfWeek;  // 0 = Sundas
+        };
+
+        // Game seconds (entry_date units) → calendar date.  The game starts on Sundas,
+        // 17 Last Seed 4E 201, and Skyrim's months have the Gregorian lengths with no
+        // leap years.
+        GameDate ToGameDate(double gameTime) {
+            static constexpr int kMonthDays[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+            const int totalDays = static_cast<int>(std::floor(gameTime / 86400.0));
+
+            GameDate date{ 17 + totalDays, 7, 201, ((totalDays % 7) + 7) % 7 };
+            // Before the start date (only test entries): walk back month by month.
+            while (date.day <= 0) {
+                if (--date.month < 0) { date.month = 11; --date.year; }
+                date.day += kMonthDays[date.month];
+            }
+            while (date.day > kMonthDays[date.month]) {
+                date.day -= kMonthDays[date.month];
+                if (++date.month > 11) { date.month = 0; ++date.year; }
+            }
+            return date;
+        }
+
         std::string FormatGameDate(double gameTime) {
-            // Game start: 17 Last Seed, 4E 201 (Sundas)
-            // gameTime appears to be in seconds since game start
-            // Convert to days: 60 seconds/min * 60 min/hour * 24 hours/day = 86400 seconds/day
-            int totalDays = static_cast<int>(gameTime / 86400.0);
-
-            const int startDay = 17;
-            const int startMonth = 7; // Last Seed (0-indexed)
-            const int startYear = 201;
-            const int startDayOfWeek = 0; // Sundas
-
+            const auto date = ToGameDate(gameTime);
             auto* loc = SkyrimNetDiaries::Localization::GetSingleton();
-
-            // Calculate absolute day number from game start (17 Last Seed)
-            int absoluteDay = startDay + totalDays;
-            int currentMonth = startMonth;
-            int currentYear = startYear;
-
-            // Handle month/year underflow (negative totalDays — e.g. test entries before game start)
-            while (absoluteDay <= 0) {
-                absoluteDay += 30;
-                currentMonth--;
-                if (currentMonth < 0) {
-                    currentMonth = 11;
-                    currentYear--;
-                }
-            }
-            // Handle month/year overflow
-            while (absoluteDay > 30) {
-                absoluteDay -= 30;
-                currentMonth++;
-                if (currentMonth >= 12) {
-                    currentMonth = 0;
-                    currentYear++;
-                }
-            }
-
-            // Calculate day of week from start day — use +7 to keep result non-negative
-            int dayOfWeek = ((startDayOfWeek + totalDays) % 7 + 7) % 7;
-
-            return loc->FormatDateLong(loc->GetDayName(dayOfWeek).c_str(), absoluteDay,
-                                       loc->GetMonthName(currentMonth).c_str(), currentYear);
+            return loc->FormatDateLong(loc->GetDayName(date.dayOfWeek).c_str(), date.day,
+                                       loc->GetMonthName(date.month).c_str(), date.year);
         }
 
+        // Without the weekday, for the title page.
         std::string FormatGameDateShort(double gameTime) {
-            // Same as FormatGameDate but without day of week - for title page
-            int totalDays = static_cast<int>(gameTime / 86400.0);
-
-            const int startDay = 17;
-            const int startMonth = 7; // Last Seed (0-indexed)
-            const int startYear = 201;
-
+            const auto date = ToGameDate(gameTime);
             auto* loc = SkyrimNetDiaries::Localization::GetSingleton();
-
-            // Calculate absolute day number from game start (17 Last Seed)
-            int absoluteDay = startDay + totalDays;
-            int currentMonth = startMonth;
-            int currentYear = startYear;
-
-            // Handle month/year underflow (negative totalDays)
-            while (absoluteDay <= 0) {
-                absoluteDay += 30;
-                currentMonth--;
-                if (currentMonth < 0) {
-                    currentMonth = 11;
-                    currentYear--;
-                }
-            }
-            // Handle month/year overflow
-            while (absoluteDay > 30) {
-                absoluteDay -= 30;
-                currentMonth++;
-                if (currentMonth >= 12) {
-                    currentMonth = 0;
-                    currentYear++;
-                }
-            }
-
-            return loc->FormatDateShort(absoluteDay, loc->GetMonthName(currentMonth).c_str(), currentYear);
+            return loc->FormatDateShort(date.day, loc->GetMonthName(date.month).c_str(), date.year);
         }
 
     } // namespace
@@ -378,17 +366,17 @@ namespace SkyrimNetDiaries {
         std::string fontFace = config->GetFontFace();
 
         // Blank first page
-        bookText = "[pagebreak]\n\n";
+        bookText = std::string(kPageBreak);
 
         // Title page — handwriting font, centred; leading newlines push it down visually
         bookText += "\n\n\n\n\n\n";
         bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontTitle) + "'><p align='center'>";
         auto* loc = SkyrimNetDiaries::Localization::GetSingleton();
-        bookText += loc->FormatDiaryTitle(actorName);
+        bookText += loc->FormatDiaryTitle(EscapeMarkup(actorName));
         bookText += "</p></font>\n\n";
 
         if (entries.empty()) {
-            bookText += "[pagebreak]\n\n";
+            bookText += std::string(kPageBreak);
             bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'><p align='center'>"
                       + std::string(SkyrimNetDiaries::Localization::kEmptySentinel)
                       + loc->GetEmptyVolumeText() + "</p></font>";
@@ -406,7 +394,7 @@ namespace SkyrimNetDiaries {
             bookText += "</p></font>\n\n";
 
             // Page break — entries start on the next page
-            bookText += "[pagebreak]\n\n";
+            bookText += std::string(kPageBreak);
 
             int entriesIncluded = 0;
 
@@ -453,7 +441,7 @@ namespace SkyrimNetDiaries {
 
                 // Pagebreak between entries
                 if (i < entries.size() - 1) {
-                    bookText += "[pagebreak]\n\n";
+                    bookText += std::string(kPageBreak);
                 }
             }
         }

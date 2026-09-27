@@ -42,7 +42,7 @@ If any step is skipped, the build is still clean and the failure appears only at
 
 ## Inter-plugin API (SKSE messaging)
 
-For other SKSE plugins, such as TTS or reading mods, that want a diary's text. Declared in `include/SkyrimNetPhysicalDiariesAPI.h` (`SNPD_API_VERSION = 3`). All three queries are synchronous: the struct is filled in before `Dispatch` returns.
+For other SKSE plugins, such as TTS or reading mods, that want a diary's text. **SeverActions uses it for its book-reading action**, so treat it as a contract: don't change result codes, layout or output without a version bump. Declared in `include/SkyrimNetPhysicalDiariesAPI.h` (`SNPD_API_VERSION = 3`). All three queries are synchronous: the struct is filled in before `Dispatch` returns. Callers dispatch to `"SkyrimNetPhysicalDiaries"`; SNPD's single `RegisterListener(OnMessage)` receives it (a 2026-09-27 review claimed that listener only hears SKSE; SeverActions shows otherwise).
 
 | Message | Struct | Returns |
 |---|---|---|
@@ -53,9 +53,11 @@ For other SKSE plugins, such as TTS or reading mods, that want a diary's text. D
 Result codes: `Success`, `NoEntries` (the volume is the "all entries removed" page, detected by `<!-- SNPD_EMPTY -->`), `NotADiary`, `IndexOutOfRange`. Buffers are fixed-size arrays in the structs; text is cut off to fit.
 
 Implementation notes:
-- Answers come from **`cachedBookText`** (in memory), not from SkyrimNet. The header says "each Dispatch queries the live SkyrimNet database directly", which is wrong (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
-- Entry queries split the rendered text on `"[pagebreak]\n\n"` and assume entries start at page 2. Changing the layout in `FormatDiaryEntries` breaks them. See [BOOK_TEXT.md](BOOK_TEXT.md#rendering-formatdiaryentries).
-- The header suggests that callers pre-filter candidate books by name (`"*'s Diary*"`) and by an empty `itemCardDescription`. The name check fails for localized titles. Callers should just send the query.
+- Answers come from **`cachedBookText`** (in memory, refreshed when the book is opened), not from SkyrimNet. Dispatch from the game thread; `books_` is read without a lock.
+- Entry text is font-tagged in all three queries. `&`, `<` and `>` in the prose are escaped in the book text and turned back (`UnescapeMarkup`) before being returned, so callers get the prose as before.
+- Entry queries split the rendered text on `kPageBreak` (`BookText.h`) and assume entries start at page 2. Changing the layout in `FormatDiaryEntries` breaks them. See [BOOK_TEXT.md](BOOK_TEXT.md#rendering-formatdiaryentries).
+- `SNPD_QUERY_ALL_ENTRIES` on a volume whose entries were all removed returns `Success`, `isValid = true`, `entryCount = 0` (not `NoEntries`). An entry that doesn't fit the buffer is skipped and counted in `truncatedCount`; a later, shorter one may still be packed.
+- Callers should just send the query; the header's old advice to pre-filter by the English title is gone.
 
 ## ModEvents
 

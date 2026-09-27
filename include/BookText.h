@@ -26,6 +26,10 @@
 // See docs/BOOK_TEXT.md.
 namespace SkyrimNetDiaries {
 
+    // Page separator in rendered text.  Page 0 is blank, page 1 the title, and
+    // every later page one entry; the inter-plugin API splits on this.
+    inline constexpr std::string_view kPageBreak = "[pagebreak]\n\n";
+
     // One volume: blank page, title page with date range, then one page per entry.
     // Entries outside [startTime, endTime] are skipped (0 = unbounded).  An empty
     // list renders the "all entries removed" page, marked with kEmptySentinel.
