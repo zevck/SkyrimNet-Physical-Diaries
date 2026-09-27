@@ -1,0 +1,227 @@
+/*
+ * SkyrimNet Physical Diaries - a Skyrim SKSE plugin that turns SkyrimNet NPC
+ * diary entries into books you can find and read in the world.
+ * Copyright (C) 2026 Zevick
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#include "TimelineGate.h"
+#include "Database.h"
+#include <MinHook.h>
+#include <atomic>
+#include <chrono>
+#include <mutex>
+
+namespace SkyrimNetDiaries::TimelineGate {
+
+    namespace {
+
+        using Clock = std::chrono::steady_clock;
+
+        // SkyrimNetInternal.ClearTimelineMessage(): button 0 keeps the history,
+        // anything else clears it.
+        constexpr const char* kPromptEditorID = "skynet_DeleteHistoryMessage";
+        constexpr int kKeepButton = 0;
+
+        // Future diary entries but no prompt: SkyrimNet decides from the player's
+        // events, not diary entries, so it may not ask.  Don't wait forever.
+        constexpr auto kNoPromptTimeout = std::chrono::seconds(30);
+        // After Clear, SkyrimNet deletes on its own thread a few ms after the box closes.
+        constexpr auto kClearDeletionTimeout = std::chrono::seconds(10);
+
+        enum class Prompt : int { kNone, kShown, kKept, kCleared };
+
+        std::atomic<Prompt> g_prompt{ Prompt::kNone };
+        std::atomic<Clock::rep> g_answeredAt{ 0 };
+
+        std::mutex g_textMutex;
+        std::string g_promptText;  // skynet_DeleteHistoryMessage text; "" = unknown
+
+        // Poll state (game thread only).
+        bool g_checked = false;
+        bool g_futureAtStart = false;
+        Clock::time_point g_waitStart;
+        bool g_loggedWaiting = false;
+
+        std::string Trim(std::string_view a_text) {
+            const auto begin = a_text.find_first_not_of(" \t\r\n");
+            if (begin == std::string_view::npos) return {};
+            const auto end = a_text.find_last_not_of(" \t\r\n");
+            return std::string(a_text.substr(begin, end - begin + 1));
+        }
+
+        // True if SkyrimNet holds a diary entry dated after the current game time,
+        // i.e. the loaded save is behind SkyrimNet's history.
+        bool HasFutureDiaryEntries() {
+            auto* calendar = RE::Calendar::GetSingleton();
+            if (!calendar) return false;
+            const double now = calendar->GetCurrentGameTime() * 86400.0;
+            // SkyrimNet returns entries newest first.
+            const auto newest = Database::GetDiaryEntries(0, 1, 0.0, 0.0);
+            return !newest.empty() && newest.front().entry_date > now + 1.0;
+        }
+
+        // Passes the answer on to SkyrimNet's callback after noting which button it was.
+        class PromptCallback : public RE::IMessageBoxCallback {
+        public:
+            PromptCallback(RE::BSTSmartPointer<RE::IMessageBoxCallback> a_original, std::uint8_t a_buttonOffset)
+                : original_(std::move(a_original)), buttonOffset_(a_buttonOffset) {}
+
+            ~PromptCallback() override = default;
+
+            void Run(std::uint8_t a_button) override {
+                const int index = static_cast<int>(a_button) - static_cast<int>(buttonOffset_);
+                const bool keep = index == kKeepButton;
+                g_answeredAt.store(Clock::now().time_since_epoch().count());
+                g_prompt.store(keep ? Prompt::kKept : Prompt::kCleared);
+                SKSE::log::info("[TimelineGate] SkyrimNet timeline prompt answered: {}", keep ? "Keep" : "Clear");
+                if (original_) {
+                    original_->Run(a_button);
+                }
+            }
+
+        private:
+            RE::BSTSmartPointer<RE::IMessageBoxCallback> original_;
+            std::uint8_t buttonOffset_;
+        };
+
+        using QueueMessage_t = void (*)(RE::MessageBoxData*);
+        QueueMessage_t g_originalQueueMessage = nullptr;
+
+        void Hook_QueueMessage(RE::MessageBoxData* a_data) {
+            try {
+                if (a_data && a_data->bodyText.c_str()) {
+                    std::string promptText;
+                    {
+                        std::lock_guard lock(g_textMutex);
+                        promptText = g_promptText;
+                    }
+                    if (!promptText.empty() && Trim(a_data->bodyText.c_str()) == promptText) {
+                        a_data->callback = RE::BSTSmartPointer<RE::IMessageBoxCallback>(
+                            new PromptCallback(a_data->callback, a_data->buttonPressOffset));
+                        g_prompt.store(Prompt::kShown);
+                        SKSE::log::info("[TimelineGate] SkyrimNet timeline prompt shown");
+                    }
+                }
+            } catch (const std::exception& e) {
+                SKSE::log::error("[TimelineGate] QueueMessage hook exception: {}", e.what());
+            } catch (...) {
+                SKSE::log::error("[TimelineGate] QueueMessage hook unknown exception");
+            }
+            g_originalQueueMessage(a_data);
+        }
+
+    } // namespace
+
+    void Install() {
+        // SE id 51422 (also used by VR) | AE id 52271.  MinHook rather than a
+        // hand-written detour: SkyrimNet hooks this function too, and MinHook
+        // handles a prologue that another plugin has already patched.
+        REL::Relocation<std::uintptr_t> target{ RELOCATION_ID(51422, 52271) };
+        auto* targetPtr = reinterpret_cast<void*>(target.address());
+
+        const auto init = MH_Initialize();
+        if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) {
+            SKSE::log::error("[TimelineGate] MH_Initialize failed ({}) — timeline prompt not tracked",
+                             MH_StatusToString(init));
+            return;
+        }
+        auto status = MH_CreateHook(targetPtr, reinterpret_cast<void*>(&Hook_QueueMessage),
+                                    reinterpret_cast<void**>(&g_originalQueueMessage));
+        if (status == MH_OK) {
+            status = MH_EnableHook(targetPtr);
+        }
+        if (status != MH_OK) {
+            SKSE::log::error("[TimelineGate] QueueMessage hook failed ({}) — timeline prompt not tracked",
+                             MH_StatusToString(status));
+            return;
+        }
+        SKSE::log::info("Installed QueueMessage hook (RELOCATION_ID 51422/52271)");
+    }
+
+    void OnDataLoaded() {
+        auto* message = RE::TESForm::LookupByEditorID<RE::BGSMessage>(kPromptEditorID);
+        if (!message) {
+            SKSE::log::warn("[TimelineGate] '{}' not found (SkyrimNet not installed, or no EditorID "
+                            "provider) — SNPD can't wait for SkyrimNet's timeline prompt", kPromptEditorID);
+            return;
+        }
+        RE::BSString text;
+        message->GetDescription(text, message);
+        std::lock_guard lock(g_textMutex);
+        g_promptText = Trim(text.c_str() ? text.c_str() : "");
+        SKSE::log::info("[TimelineGate] SkyrimNet timeline prompt found ({} chars)", g_promptText.size());
+    }
+
+    void Reset() {
+        g_prompt.store(Prompt::kNone);
+        g_answeredAt.store(0);
+        g_checked = false;
+        g_futureAtStart = false;
+        g_loggedWaiting = false;
+    }
+
+    bool IsSettled() {
+        const auto now = Clock::now();
+        if (!g_checked) {
+            g_checked = true;
+            g_waitStart = now;
+            g_futureAtStart = HasFutureDiaryEntries();
+            if (g_futureAtStart) {
+                SKSE::log::info("[TimelineGate] SkyrimNet has diary entries dated after this save — "
+                                "waiting for its keep/clear prompt before syncing");
+            }
+        }
+
+        switch (g_prompt.load()) {
+        case Prompt::kKept:
+            return true;
+        case Prompt::kCleared: {
+            if (!HasFutureDiaryEntries()) {
+                return true;
+            }
+            const Clock::time_point answeredAt{ Clock::duration(g_answeredAt.load()) };
+            if (now - answeredAt > kClearDeletionTimeout) {
+                SKSE::log::warn("[TimelineGate] Clear was chosen but future diary entries are still there "
+                                "after {}s — continuing", kClearDeletionTimeout.count());
+                return true;
+            }
+            return false;
+        }
+        case Prompt::kShown:
+            return false;  // the player may take as long as they like to answer
+        case Prompt::kNone:
+        default:
+            if (!g_futureAtStart) {
+                return true;
+            }
+            // Gone without us seeing the prompt: SkyrimNet has already cleared them.
+            if (!HasFutureDiaryEntries()) {
+                return true;
+            }
+            if (now - g_waitStart > kNoPromptTimeout) {
+                SKSE::log::warn("[TimelineGate] No SkyrimNet timeline prompt within {}s — continuing",
+                                kNoPromptTimeout.count());
+                return true;
+            }
+            if (!g_loggedWaiting) {
+                g_loggedWaiting = true;
+                SKSE::log::debug("[TimelineGate] Waiting for SkyrimNet's timeline prompt...");
+            }
+            return false;
+        }
+    }
+
+} // namespace SkyrimNetDiaries::TimelineGate

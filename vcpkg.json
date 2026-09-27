@@ -6,6 +6,7 @@
     "directxmath",
     "directxtk",
     "fmt",
+    "minhook",
     "nlohmann-json",
     "rapidcsv",
     "sqlite3",

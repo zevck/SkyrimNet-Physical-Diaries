@@ -28,11 +28,23 @@
 #include "PapyrusAPI.h"
 #include "SaveFolder.h"
 #include "Serialization.h"
+#include "TimelineGate.h"
 #include "VolumeSync.h"
 #include <spdlog/sinks/basic_file_sink.h>
+#include <atomic>
+#include <chrono>
+#include <thread>
 #include <unordered_set>
 
 namespace {
+
+    // Bumped on every kPreLoadGame so a post-load setup still waiting from an
+    // earlier load gives up instead of running against the new one.
+    std::atomic<std::uint32_t> g_loadGeneration{ 0 };
+
+    // SkyrimNet readiness is polled every 100 ms for up to a minute.
+    constexpr auto kSetupPollInterval = std::chrono::milliseconds(100);
+    constexpr auto kMemorySystemTimeout = std::chrono::seconds(60);
 
     void OnMessage(SKSE::MessagingInterface::Message* msg)
     {
@@ -102,6 +114,9 @@ namespace {
                     }
                 }
 
+                // Needs the forms loaded: find SkyrimNet's keep/clear prompt text.
+                SkyrimNetDiaries::TimelineGate::OnDataLoaded();
+
                 // Now that GMSTs are loaded, read localized month/day names
                 SkyrimNetDiaries::Localization::GetSingleton()->ReadGMSTs();
             } catch (const std::exception& e) {
@@ -124,52 +139,82 @@ namespace {
             break;
         }
 
+        case SKSE::MessagingInterface::kPreLoadGame: {
+            ++g_loadGeneration;
+            SkyrimNetDiaries::TimelineGate::Reset();
+            // Diary events wait for this load's post-load sync (see SetPostLoadSyncReady).
+            SkyrimNetDiaries::SetPostLoadSyncReady(false);
+            break;
+        }
+
+        case SKSE::MessagingInterface::kNewGame: {
+            // No kPostLoadGame follows a new game, so nothing else would release diary events.
+            SkyrimNetDiaries::SetPostLoadSyncReady(true);
+            break;
+        }
+
         case SKSE::MessagingInterface::kPostLoadGame: {
             // First, and independent of SkyrimNet: DPF has restored its forms by now.
             SkyrimNetDiaries::BookManager::SanitizeLoadedBookForms();
 
             if (!SkyrimNetDiaries::Database::InitializeAPI()) {
                 SKSE::log::warn("Failed to initialize API (SkyrimNet may not be loaded yet)");
+                SkyrimNetDiaries::SetPostLoadSyncReady(true);
                 break;
             }
             SKSE::log::info("✓ SkyrimNet API ready");
-
-            // Detect save folder (from co-save SNDF record or SkyrimNet.log fallback).
-            // Always re-detect on each load in case the player loaded a different save.
-            SkyrimNetDiaries::SaveFolder::Clear();
-            SkyrimNetDiaries::SaveFolder::DetectFromLog();
-
-            // Open the per-save SQLite diary DB.
-            if (!SkyrimNetDiaries::SaveFolder::Get().empty()) {
-                SkyrimNetDiaries::DiaryDB::GetSingleton()->Open(SkyrimNetDiaries::SaveFolder::Get());
-            } else {
-                SKSE::log::warn("kPostLoadGame: save folder still unknown — DiaryDB not opened");
-            }
 
             // Clear the actor reference cache — pointers from the previous load session
             // may be stale (or nullptr from failed lookups).  A fresh search runs on this load.
             SkyrimNetDiaries::BookManager::ClearActorCache();
 
-            // Queue the post-load setup task with a retry loop: SkyrimNet's Papyrus-based
-            // memory system re-initialises asynchronously on reload and may not be ready
-            // for several frames.  We poll IsMemorySystemReady() and re-queue ourselves
-            // on the next game frame until it is (capped at 300 attempts ≈ ~5 seconds).
+            // The post-load setup waits for two things, polled every 100 ms:
+            //   1. SkyrimNet's database (IsMemorySystemReady), for up to a minute.
+            //   2. SkyrimNet's timeline decision (TimelineGate), with no limit while its
+            //      keep/clear prompt is on screen.  Syncing earlier builds books from
+            //      "future" entries that a Clear then deletes.
+            // Everything that reads SkyrimNet's data, including opening DiaryDB, runs
+            // only after both.
+            const auto generation = g_loadGeneration.load();
+            const auto start = std::chrono::steady_clock::now();
             auto runSetup = std::make_shared<std::function<void()>>();
-            *runSetup = [runSetup, attempt = 0]() mutable {
+            *runSetup = [runSetup, generation, start]() {
+                if (generation != g_loadGeneration.load()) {
+                    return;  // another load started; its own setup takes over
+                }
+                const auto retry = [runSetup]() {
+                    std::thread([runSetup]() {
+                        std::this_thread::sleep_for(kSetupPollInterval);
+                        SKSE::GetTaskInterface()->AddTask([runSetup]() { (*runSetup)(); });
+                    }).detach();
+                };
+
                 if (!SkyrimNetDiaries::Database::IsMemorySystemReady()) {
-                    if (++attempt >= 300) {
-                        SKSE::log::error("kPostLoadGame: SkyrimNet memory system never became ready after 300 retries — giving up");
+                    if (std::chrono::steady_clock::now() - start > kMemorySystemTimeout) {
+                        SKSE::log::error("kPostLoadGame: SkyrimNet memory system not ready after {}s — giving up",
+                                         kMemorySystemTimeout.count());
+                        SkyrimNetDiaries::SetPostLoadSyncReady(true);
                         return;
                     }
-                    if (attempt % 30 == 1) {
-                        SKSE::log::debug("kPostLoadGame: waiting for SkyrimNet memory system (attempt {})...", attempt);
-                    }
-                    SKSE::GetTaskInterface()->AddTask([runSetup]() { (*runSetup)(); });
+                    retry();
+                    return;
+                }
+                if (!SkyrimNetDiaries::TimelineGate::IsSettled()) {
+                    retry();
                     return;
                 }
 
-                if (attempt > 0) {
-                    SKSE::log::info("kPostLoadGame: SkyrimNet memory system ready after {} retries", attempt);
+                const auto waited = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+                SKSE::log::info("kPostLoadGame: SkyrimNet ready, starting post-load sync (waited {:.1f}s)", waited);
+
+                // Detect the save folder from SkyrimNet.log and open this save's DiaryDB.
+                // Always re-detect on each load in case the player loaded a different save.
+                SkyrimNetDiaries::SaveFolder::Clear();
+                SkyrimNetDiaries::SaveFolder::DetectFromLog();
+                if (!SkyrimNetDiaries::SaveFolder::Get().empty()) {
+                    SkyrimNetDiaries::DiaryDB::GetSingleton()->Open(SkyrimNetDiaries::SaveFolder::Get());
+                } else {
+                    SKSE::log::warn("kPostLoadGame: save folder still unknown — DiaryDB not opened");
                 }
 
                 // SkyrimNet clears decorator registrations on every load.
@@ -184,6 +229,10 @@ namespace {
                 // Clear stolen-volume records if this save is earlier in game time
                 // than the last session (the theft happened in an abandoned timeline).
                 DiaryTheftHandler::ReconcileAfterLoad();
+
+                // Diary events are handled again from here on; entries that arrived while
+                // we waited are picked up by the recovery and catch-up scans below.
+                SkyrimNetDiaries::SetPostLoadSyncReady(true);
 
                 // Build skip set: deduplicated UUIDs being immediately recovered.
                 std::unordered_set<std::string> skipUuids;
@@ -294,6 +343,9 @@ SKSE_PLUGIN_LOAD(const SKSE::LoadInterface* a_skse)
     // Install book text injection hook (replaces Dynamic Book Framework text delivery,
     // covers SE, AE and VR — see BookTextHook.cpp).
     BookTextHook::Install();
+
+    // Watch for SkyrimNet's keep/clear timeline prompt (see TimelineGate.h).
+    SkyrimNetDiaries::TimelineGate::Install();
 
     // Register Papyrus native functions
     SKSE::log::debug("Registering Papyrus native functions...");

@@ -69,6 +69,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 | Actor lookup | `src/ActorLookup.cpp`, `include/ActorLookup.h` | `FindActorForBook`: volume → owning NPC by UUID, with a per-session cache |
 | Text rendering | `src/BookText.cpp`, `include/BookText.h` | `FormatDiaryEntries`, text sanitizing, game-date formatting. See [BOOK_TEXT.md](BOOK_TEXT.md). |
 | Save folder, co-save | `src/SaveFolder.cpp`, `src/Serialization.cpp` (+ headers) | Detecting the SkyrimNet save folder from `SkyrimNet.log`; the legacy co-save callbacks. See [DATABASE.md](DATABASE.md). |
+| Timeline gate | `src/TimelineGate.cpp`, `include/TimelineGate.h` | Holds the post-load sync until SkyrimNet's keep/clear timeline prompt is answered (MinHook detour on `MessageBoxData::QueueMessage`). See [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#waiting-for-the-decision-timelinegate). |
 | Inter-plugin API | `src/InterPluginAPI.cpp`, `include/InterPluginAPI.h` | Answers `SNPD_QUERY_*` SKSE messages. See [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md#inter-plugin-api-skse-messaging). |
 | Persistence | `src/DiaryDB.cpp`, `include/DiaryDB.h` | Per-save SQLite: volumes, actor templates, stolen volumes. See [DATABASE.md](DATABASE.md). |
 | SkyrimNet client | `src/Database.cpp`, `include/Database.h`, `include/SkyrimNetPublicAPI.h` | Loads SkyrimNet's exported functions, parses diary JSON, UUID ↔ FormID, names, bio template names |
@@ -87,20 +88,22 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 2. `Config::Load()` followed at once by `Config::Save()`, so MO2 copies the INI into `overwrite/` and user settings survive mod updates. Debug level is applied from `[General] DebugLog`.
 3. Register `OnMessage`; `Serialization::Register()` registers the co-save callbacks under the unique ID `'SNDB'`.
 4. `BookManager::Initialize(...)` with the four template EditorIDs.
-5. `DiaryTheftHandler::Register()` (event sinks), `Localization::Initialize()`, `BookTextHook::Install()`, `PapyrusAPI::Register()`.
+5. `DiaryTheftHandler::Register()` (event sinks), `Localization::Initialize()`, `BookTextHook::Install()`, `TimelineGate::Install()`, `PapyrusAPI::Register()`.
 
-**`kDataLoaded`**: warn with a message box if `Dynamic Persistent Forms.esp` is missing; verify all four templates resolve by EditorID and show a message box naming the likely causes if not; `Localization::ReadGMSTs()`.
+**`kDataLoaded`**: warn with a message box if `Dynamic Persistent Forms.esp` is missing; verify all four templates resolve by EditorID and show a message box naming the likely causes if not; `TimelineGate::OnDataLoaded()` (finds SkyrimNet's prompt text); `Localization::ReadGMSTs()`.
+
+**`kPreLoadGame`**: bump the load generation (an older setup still waiting gives up), `TimelineGate::Reset()`, and `SetPostLoadSyncReady(false)` so diary events wait for this load's sync. **`kNewGame`** sets it back to true, since no `kPostLoadGame` follows.
 
 **`kPostLoadGame`**:
 1. `BookManager::SanitizeLoadedBookForms()`: clear the invalid `sourceFiles` pointer DPF leaves on some clones (VR). Runs first and does not depend on SkyrimNet.
 2. `Database::InitializeAPI()`. If SkyrimNet is not loaded, stop here.
-3. Detect the save folder from `SkyrimNet.log` and `DiaryDB::Open()` it. **This happens before the readiness wait below**, which is a known risk (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
-4. `BookManager::ClearActorCache()` (also clears the FormID claim table).
-5. A self-requeuing task polls `Database::IsMemorySystemReady()` for up to 300 game-thread ticks. When it is ready:
+3. `BookManager::ClearActorCache()` (also clears the FormID claim table).
+4. The post-load sync polls every 100 ms (a sleeper thread re-queues a game-thread task) until `Database::IsMemorySystemReady()` (up to 60 s) **and** `TimelineGate::IsSettled()` (no limit while SkyrimNet's keep/clear prompt is open). Then:
+   - Detect the save folder from `SkyrimNet.log` and `DiaryDB::Open()` it.
    - `DiaryTheftHandler::RegisterStolenDecorator()`: re-register the `snpd_diary_stolen` decorator through the Papyrus VM. SkyrimNet drops all decorator registrations on load, and the Papyrus `OnInit` that also registers it runs only on a new game.
    - `LoadFromDB()`, then `QueueInventoryCheck()`.
    - `DiaryTheftHandler::ReconcileAfterLoad()`: clear stolen volumes for any actor whose `last_known_game_time` is later than the current game time (the player loaded an earlier save).
-   - Queue immediate recreation for actors whose book forms were invalid, then `QueueSealedVolumeRecovery()` and `QueueBatchCatchUpScan()`.
+   - `SetPostLoadSyncReady(true)`, then queue immediate recreation for actors whose book forms were invalid, then `QueueSealedVolumeRecovery()` and `QueueBatchCatchUpScan()`.
 
 **Save**: the co-save `SaveCallback` opens the DB if a new game never got a `kPostLoadGame`, runs `FlushToDB()`, stamps `last_known_game_time`, and writes the `SNDB` sentinel and `SNDF` folder records. `kSaveGame` then marks every volume `persisted_in_save`. See [DATABASE.md](DATABASE.md#co-save-records).
 
@@ -139,8 +142,8 @@ Rules: anything touching forms, inventories or references must run on the game t
 | Dynamic Persistent Forms | Creates the runtime book forms. Called only through the Papyrus VM (`DispatchStaticCall("DynamicPersistentForms", "Create", …)`). See [BOOK_FORMS.md](BOOK_FORMS.md#alternatives-evaluated). |
 | powerofthree's Tweaks **or** Native EditorID Fix | Templates are found with `LookupByEditorID`, which needs one of these. Don't read a form's own ID with `GetFormEditorID()`: it returns "" for books without Native EditorID Fix. |
 | SkyUI | MCM |
-| Address Library (SE/AE) or VR Address Library | The book hook. See [DEVELOPMENT.md](DEVELOPMENT.md#engine-touchpoints). |
-| Build: CommonLibSSE-NG v9.1.0 (submodule), vcpkg `sqlite3`, `nlohmann-json`, `spdlog`, `fmt` | |
+| Address Library (SE/AE) or VR Address Library | The book hook and the `QueueMessage` hook. See [DEVELOPMENT.md](DEVELOPMENT.md#engine-touchpoints). |
+| Build: CommonLibSSE-NG v9.1.0 (submodule), vcpkg `sqlite3`, `nlohmann-json`, `spdlog`, `fmt`, `minhook` | |
 
 ---
 

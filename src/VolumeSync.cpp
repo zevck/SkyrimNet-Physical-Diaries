@@ -25,11 +25,14 @@
 #include "DiaryDB.h"
 #include "Localization.h"
 #include "SaveFolder.h"
+#include <atomic>
 #include <unordered_map>
 
 namespace SkyrimNetDiaries {
 
     namespace {
+
+        std::atomic<bool> g_postLoadSyncReady{ true };
 
         // =============================================================================
         // Create all diary volumes for an actor from a flat list of entries.
@@ -100,8 +103,18 @@ namespace SkyrimNetDiaries {
     // ModEvent-triggered diary update for single actor
     // =============================================================================
 
+    void SetPostLoadSyncReady(bool ready) {
+        g_postLoadSyncReady.store(ready);
+    }
+
     void UpdateDiaryForActorInternal(RE::FormID formId) {
         SKSE::log::debug("=== UpdateDiaryForActorInternal called for FormID 0x{:X} ===", formId);
+
+        if (!g_postLoadSyncReady.load()) {
+            SKSE::log::info("Diary update for FormID 0x{:X} deferred: the post-load sync hasn't run yet "
+                            "and will pick the entry up", formId);
+            return;
+        }
 
         // Initialize SkyrimNet API if not already done
         if (!SkyrimNetDiaries::Database::InitializeAPI()) {
@@ -189,6 +202,31 @@ namespace SkyrimNetDiaries {
                         SKSE::log::info("Stale endTime {:.2f} > currentTime {:.2f} for {} — rebuilding from all entries",
                                        latestVolume->endTime, currentTime, actorName);
                         auto bookManager2 = SkyrimNetDiaries::BookManager::GetSingleton();
+
+                        // The rebuild creates new book forms, so take the old ones out of
+                        // the NPC's inventory or they stay there untracked and open blank.
+                        // Only the NPC's own copies: this volume was never saved, so the
+                        // player can't legitimately hold it.  Forms are left alive (never
+                        // Dispose, see docs/BOOK_FORMS.md).
+                        std::vector<RE::FormID> oldBooks;
+                        if (auto* volumes = bookManager2->GetAllVolumesForActor(uuid)) {
+                            for (const auto& vol : *volumes) oldBooks.push_back(vol.bookFormId);
+                        }
+                        SKSE::GetTaskInterface()->AddTask([formId, oldBooks, actorName]() {
+                            auto* npc = RE::TESForm::LookupByID<RE::Actor>(formId);
+                            if (!npc) return;
+                            for (const auto bookId : oldBooks) {
+                                auto* book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(bookId);
+                                if (!book) continue;
+                                auto inv = npc->GetInventory([book](RE::TESBoundObject& a_obj) { return &a_obj == book; });
+                                auto it = inv.find(book);
+                                if (it != inv.end() && it->second.first > 0) {
+                                    npc->RemoveItem(book, it->second.first, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+                                    SKSE::log::info("Removed stale book 0x{:X} from {}'s inventory before rebuild", bookId, actorName);
+                                }
+                            }
+                        });
+
                         bookManager2->UnregisterBook(uuid);
                         auto allEntries = SkyrimNetDiaries::Database::GetDiaryEntries(formId, 10000, 0.0, 0.0);
                         if (!allEntries.empty()) {
@@ -500,17 +538,16 @@ namespace SkyrimNetDiaries {
                     return;
                 }
 
-                SKSE::log::info("QueueBatchCatchUpScan: discovery done, queuing {} per-actor tasks",
-                                state->actorUuidToName.size());
-
                 auto bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
                 auto taskInterface = SKSE::GetTaskInterface();
+                int queued = 0, skippedRecovering = 0, skippedHaveBooks = 0;
 
                 for (const auto& [uuid, name] : state->actorUuidToName) {
                     // Skip actors already being handled by immediate recovery.
-                    if (state->skip.count(uuid)) continue;
+                    if (state->skip.count(uuid)) { ++skippedRecovering; continue; }
                     // Skip actors that got volumes from a regular diary event during discovery.
-                    if (bookManager->GetBookForActor(uuid)) continue;
+                    if (bookManager->GetBookForActor(uuid)) { ++skippedHaveBooks; continue; }
+                    ++queued;
 
                     taskInterface->AddTask(
                         [uuid, name]() {
@@ -556,6 +593,10 @@ namespace SkyrimNetDiaries {
                             }
                         });
                 }
+
+                SKSE::log::info("QueueBatchCatchUpScan: discovery found {} actor(s) with entries: {} queued, "
+                                "{} already being recreated, {} already have books",
+                                state->actorUuidToName.size(), queued, skippedRecovering, skippedHaveBooks);
 
             } catch (const std::exception& e) {
                 SKSE::log::error("RunDiscoveryBatch exception: {}", e.what());

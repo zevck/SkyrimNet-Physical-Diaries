@@ -28,6 +28,7 @@ include(lib/commonlibsse-ng/cmake/CommonLibSSE.cmake)
 # ---- Dependencies ----
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
+find_package(minhook CONFIG REQUIRED)
 
 # ---- Sources ----
 set(sources
@@ -45,6 +46,7 @@ set(sources
     src/PapyrusAPI.cpp
     src/SaveFolder.cpp
     src/Serialization.cpp
+    src/TimelineGate.cpp
     src/VolumeSync.cpp
 )
 
@@ -94,6 +96,7 @@ target_link_libraries(
     PRIVATE
         nlohmann_json::nlohmann_json
         unofficial::sqlite3::sqlite3
+        minhook::minhook
 )
 
 # ---- Installation ----

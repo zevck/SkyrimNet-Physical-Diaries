@@ -111,6 +111,7 @@ Check these whenever CommonLib or the game runtime changes.
 | `OpenBookMenu` signature | `OpenBookMenuHook::func_t` | `(const BSString&, const ExtraDataList*, TESObjectREFR*, TESObjectBOOK*, const NiPoint3&, const NiMatrix3&, float, bool)` |
 | `TESObjectBOOK` fields | `DPFCreateCallback`, `ClearBogusSourceFiles` | `data.type`, `data.flags` (`kCantTake`), `inventoryModel`, `sourceFiles`, `weight`, `value`, `teaches` (never written) |
 | Papyrus VM dispatch | `PumpDiaryCreateQueue`, decorator registration | `DispatchStaticCall` + `IStackCallbackFunctor` (`CanSave`, `SetObject`, `operator()`) |
+| `MessageBoxData::QueueMessage` entry hook | `TimelineGate::Install` | `RELOCATION_ID(51422, 52271)`, VR reuses the SE id. A MinHook detour, because SkyrimNet (also MinHook) hooks the same function; MinHook copes with a prologue another plugin has already patched. `IMessageBoxCallback::Run(std::uint8_t)` and `MessageBoxData::{bodyText, callback, buttonPressOffset}` are relied on. |
 | Event sinks | `DiaryTheftHandler` | `TESContainerChangedEvent`, `MenuOpenCloseEvent` |
 | Avoided on VR | — | `BSPointerHandle::get()` (`RELOCATION_ID(12785, 12922)`) is missing from the VR Address Library and crashes; use `Actor::LookupByHandle` (12204/12332) if a handle ever needs resolving. `MenuTopicManager::speaker` likewise. |
 

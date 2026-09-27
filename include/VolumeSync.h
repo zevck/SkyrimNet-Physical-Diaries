@@ -31,6 +31,12 @@ namespace SkyrimNetDiaries {
     // volumes.  Game thread only.
     void UpdateDiaryForActorInternal(RE::FormID formId);
 
+    // False from kPreLoadGame until the post-load sync has run.  While false,
+    // UpdateDiaryForActorInternal ignores diary events: DiaryDB isn't loaded yet, so
+    // it would take every actor for new and create duplicate volumes.  The post-load
+    // recovery and catch-up scans pick those entries up instead.
+    void SetPostLoadSyncReady(bool ready);
+
     // kPostLoadGame (revert + KEEP): queues an update for every actor whose latest
     // volume is missing entries SkyrimNet still has.
     void QueueSealedVolumeRecovery(const std::unordered_set<std::string>& skipUuids = {});
