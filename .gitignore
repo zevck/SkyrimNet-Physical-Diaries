@@ -20,3 +20,6 @@ LETTERS_MOD_DESIGN.md
 *.zip
 *.7z
 *.dll
+Build_Config_Local.ps1
+*.pex
+*.dll
