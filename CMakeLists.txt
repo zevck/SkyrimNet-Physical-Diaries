@@ -32,13 +32,20 @@ find_package(unofficial-sqlite3 CONFIG REQUIRED)
 # ---- Sources ----
 set(sources
     src/main.cpp
-    src/Database.cpp
+    src/ActorLookup.cpp
+    src/BookCreation.cpp
     src/BookManager.cpp
+    src/BookText.cpp
+    src/BookTextHook.cpp
+    src/Database.cpp
     src/DiaryDB.cpp
     src/DiaryTheftHandler.cpp
-    src/BookTextHook.cpp
-    src/PapyrusAPI.cpp
+    src/InterPluginAPI.cpp
     src/Localization.cpp
+    src/PapyrusAPI.cpp
+    src/SaveFolder.cpp
+    src/Serialization.cpp
+    src/VolumeSync.cpp
 )
 
 # ---- Generate Plugin.h ----

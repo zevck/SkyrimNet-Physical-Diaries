@@ -3,21 +3,17 @@
 #include "Config.h"
 #include "Database.h"
 #include "DiaryDB.h"
+#include "VolumeSync.h"
 #include <spdlog/spdlog.h>
-
-// Forward declarations from main.cpp (defined in global namespace)
-extern void UpdateDiaryForActorInternal(RE::FormID formId);
-extern int  ResetAllDiariesInternal();
 
 namespace PapyrusAPI {
 
-    void UpdateDiaryForActorWrapper(RE::StaticFunctionTag*, std::int32_t formId) {
-        SKSE::log::debug("[PapyrusAPI] UpdateDiaryForActor called with FormID 0x{:X}", formId);
-
+    // Shared by both diary-event natives.
+    void UpdateDiaryForFormID(RE::FormID formId) {
         // Clear theft tracking here in C++ so it always runs regardless of whether the
         // Papyrus caller was able to resolve the Actor object (NPCs not in a loaded cell
         // will return None from Game.GetForm, which silently skips SetTheftCleared).
-        std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(static_cast<uint32_t>(formId));
+        std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(formId);
         if (!uuid.empty() && uuid != "0") {
             auto* diaryDB = SkyrimNetDiaries::DiaryDB::GetSingleton();
             diaryDB->ClearAllStolenVolumes(uuid);
@@ -27,7 +23,44 @@ namespace PapyrusAPI {
             }
         }
 
-        ::UpdateDiaryForActorInternal(static_cast<RE::FormID>(formId));
+        SkyrimNetDiaries::UpdateDiaryForActorInternal(formId);
+    }
+
+    // Legacy entry point, kept for older EventListener scripts.  Papyrus ints are
+    // signed, so FormIDs >= 0x80000000 (ESL and high load-order NPCs) arrive clamped
+    // to 0x7FFFFFFF from a string conversion; UpdateDiaryFromEvent avoids that.
+    void UpdateDiaryForActorWrapper(RE::StaticFunctionTag*, std::int32_t formId) {
+        SKSE::log::debug("[PapyrusAPI] UpdateDiaryForActor called with FormID 0x{:X}", formId);
+        UpdateDiaryForFormID(static_cast<RE::FormID>(formId));
+    }
+
+    // Takes the SkyrimNet_DiaryCreated JSON payload and reads actorFormId as an
+    // unsigned 32-bit value, which Papyrus can't represent.
+    void UpdateDiaryFromEventWrapper(RE::StaticFunctionTag*, RE::BSFixedString json) {
+        try {
+            auto payload = nlohmann::json::parse(json.c_str(), nullptr, false);
+            if (payload.is_discarded() || !payload.is_object() || !payload.contains("actorFormId")) {
+                SKSE::log::warn("[PapyrusAPI] SkyrimNet_DiaryCreated payload has no actorFormId: {}", json.c_str());
+                return;
+            }
+            const auto& value = payload["actorFormId"];
+            RE::FormID formId = 0;
+            if (value.is_number_unsigned()) {
+                formId = static_cast<RE::FormID>(value.get<std::uint64_t>());
+            } else if (value.is_number_integer()) {
+                formId = static_cast<RE::FormID>(value.get<std::int64_t>());  // signed encoding of the same bits
+            } else if (value.is_string()) {
+                formId = static_cast<RE::FormID>(std::stoull(value.get<std::string>(), nullptr, 0));
+            }
+            if (formId == 0) {
+                SKSE::log::warn("[PapyrusAPI] SkyrimNet_DiaryCreated has unusable actorFormId: {}", value.dump());
+                return;
+            }
+            SKSE::log::debug("[PapyrusAPI] UpdateDiaryFromEvent: FormID 0x{:X}", formId);
+            UpdateDiaryForFormID(formId);
+        } catch (const std::exception& e) {
+            SKSE::log::error("[PapyrusAPI] UpdateDiaryFromEvent exception: {}", e.what());
+        }
     }
 
     RE::BSFixedString GetDiaryTheftStatus(RE::StaticFunctionTag*, RE::Actor* akActor) {
@@ -128,7 +161,7 @@ namespace PapyrusAPI {
 
     bool MCM_ResetAllDiaries(RE::StaticFunctionTag*) {
         SKSE::log::info("[PapyrusAPI] MCM_ResetAllDiaries called");
-        int affected = ::ResetAllDiariesInternal();
+        int affected = SkyrimNetDiaries::ResetAllDiariesInternal();
         return affected >= 0;
     }
 
@@ -198,7 +231,8 @@ namespace PapyrusAPI {
             return false;
         }
 
-        a_vm->RegisterFunction("UpdateDiaryForActor", "SkyrimNetDiaries_Native", UpdateDiaryForActorWrapper);
+        a_vm->RegisterFunction("UpdateDiaryForActor",  "SkyrimNetDiaries_Native", UpdateDiaryForActorWrapper);
+        a_vm->RegisterFunction("UpdateDiaryFromEvent", "SkyrimNetDiaries_Native", UpdateDiaryFromEventWrapper);
         a_vm->RegisterFunction("GetDiaryTheftStatus", "SkyrimNetDiaries_API", GetDiaryTheftStatus);
         a_vm->RegisterFunction("IsDiaryStolen",       "SkyrimNetDiaries_API", IsDiaryStolen);
         a_vm->RegisterFunction("SetTheftCleared",     "SkyrimNetDiaries_API", SetTheftCleared);

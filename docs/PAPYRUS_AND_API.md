@@ -2,7 +2,7 @@
 
 SNPD's Papyrus surface (scripts and native functions), the theft API other mods can call, and the SKSE-message API other plugins can use to read diary text.
 
-Code: `Source/Scripts/*.psc` → `Scripts/*.pex`, `src/PapyrusAPI.cpp`, `include/SkyrimNetPhysicalDiariesAPI.h`, the `SNPD_QUERY_*` cases in `OnMessage` (`src/main.cpp`).
+Code: `Source/Scripts/*.psc` → `Scripts/*.pex`, `src/PapyrusAPI.cpp`, `include/SkyrimNetPhysicalDiariesAPI.h`, the `SNPD_QUERY_*` handlers in `src/InterPluginAPI.cpp`.
 
 ---
 
@@ -10,10 +10,10 @@ Code: `Source/Scripts/*.psc` → `Scripts/*.pex`, `src/PapyrusAPI.cpp`, `include
 
 | Script | Attached to | Role |
 |---|---|---|
-| `SkyrimNetDiaries_EventListener` | Quest in the ESP (`extends Quest`) | `OnInit`: registers for ModEvent `SkyrimNet_DiaryCreated` and registers the `snpd_diary_stolen` decorator (new game only; C++ re-registers it on every load). `OnDiaryCreated`: pulls `actorFormId` out of the JSON with `StringUtil` and calls `SkyrimNetDiaries_Native.UpdateDiaryForActor`. |
+| `SkyrimNetDiaries_EventListener` | Quest in the ESP (`extends Quest`) | `OnInit`: registers for ModEvent `SkyrimNet_DiaryCreated` and registers the `snpd_diary_stolen` decorator (new game only; C++ re-registers it on every load). `OnDiaryCreated`: passes the JSON payload to `SkyrimNetDiaries_Native.UpdateDiaryFromEvent`. Don't parse `actorFormId` in Papyrus: `as int` clamps FormIDs of `0x80000000` and up (ESL and high load-order NPCs) to `0x7FFFFFFF`. |
 | `SkyrimNetDiaries_Decorators` | — (global functions) | `IsDiaryStolen(Actor)`: the function the decorator points at; forwards to the native |
 | `SkyrimNetDiaries_API` | — (native declarations) | Public theft API (below) |
-| `SkyrimNetDiaries_Native` | — (native declarations) | `UpdateDiaryForActor(int formId)` |
+| `SkyrimNetDiaries_Native` | — (native declarations) | `UpdateDiaryFromEvent(string json)`; legacy `UpdateDiaryForActor(int formId)` |
 | `SkyrimNetDiaries_MCM` | MCM quest (`SKI_ConfigBase`) | Settings and Maintenance pages. See [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md). |
 
 ## Native functions
@@ -22,7 +22,8 @@ All registered in `PapyrusAPI::RegisterFunctions`.
 
 | Papyrus class.function | C++ | Called from |
 |---|---|---|
-| `SkyrimNetDiaries_Native.UpdateDiaryForActor(int)` | `UpdateDiaryForActorWrapper`: clears stolen volumes, then `UpdateDiaryForActorInternal` | EventListener |
+| `SkyrimNetDiaries_Native.UpdateDiaryFromEvent(String)` | `UpdateDiaryFromEventWrapper`: parses `actorFormId` from the event JSON, then `UpdateDiaryForFormID` (clears stolen volumes, then `UpdateDiaryForActorInternal`) | EventListener |
+| `SkyrimNetDiaries_Native.UpdateDiaryForActor(int)` | `UpdateDiaryForActorWrapper` → `UpdateDiaryForFormID`. Legacy, kept for older listener scripts; wrong for FormIDs ≥ `0x80000000` | Nothing in SNPD |
 | `SkyrimNetDiaries_API.IsDiaryStolen(Actor) → String` | `"true"` / `"false"` | Decorators |
 | `SkyrimNetDiaries_API.GetDiaryTheftStatus(Actor) → String` | JSON; see [THEFT.md](THEFT.md) | Public API only |
 | `SkyrimNetDiaries_API.SetTheftCleared(Actor)` | Clears stolen volumes | Public API only |

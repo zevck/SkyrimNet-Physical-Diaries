@@ -43,10 +43,10 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
  SkyrimNet (LLM) writes a diary entry
         │  ModEvent "SkyrimNet_DiaryCreated" {actorFormId,…}
         ▼
- SkyrimNetDiaries_EventListener.psc ──► SkyrimNetDiaries_Native.UpdateDiaryForActor(formId)
+ SkyrimNetDiaries_EventListener.psc ──► SkyrimNetDiaries_Native.UpdateDiaryFromEvent(json)
         │                                         (PapyrusAPI.cpp)
         ▼
- main.cpp  UpdateDiaryForActorInternal ──► Database.cpp ──► SkyrimNet public API (JSON)
+ VolumeSync.cpp  UpdateDiaryForActorInternal ──► Database.cpp ──► SkyrimNet public API (JSON)
         │   CreateAllVolumesForActor / seal / update in place
         ▼
  BookManager  CreateDiaryBook ─► serial queue ─► DPF.Create() (Papyrus VM) ─► DPFCreateCallback
@@ -62,13 +62,19 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 
 | Component | Files | Role |
 |---|---|---|
-| Entry point, lifecycle | `src/main.cpp` | `SKSEPlugin_Load`, SKSE message handler (`OnMessage`), co-save callbacks, save-folder detection, entry → volume logic, text formatting, catch-up and recovery scans, MCM reset, inter-plugin API responses |
-| Book forms and volumes | `src/BookManager.cpp`, `include/BookManager.h` | DPF creation queue and FormID claim table, template choice, actor resolution, inventory placement, the in-memory volume registry (`books_`), load from DB, refresh on open. See [BOOK_FORMS.md](BOOK_FORMS.md). |
+| Entry point, lifecycle | `src/main.cpp` | `SKSEPlugin_Load` and the SKSE message handler (`OnMessage`): dependency checks at `kDataLoaded`, `kSaveGame`, the `kPostLoadGame` sequence |
+| Entry → volume sync | `src/VolumeSync.cpp`, `include/VolumeSync.h` | `UpdateDiaryForActorInternal` (create, update, seal, overflow), the recovery and catch-up scans, MCM reset. See [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md). |
+| Book forms and volumes | `src/BookManager.cpp`, `include/BookManager.h` | Template choice, the in-memory volume registry (`books_`), load from DB, inventory re-add, refresh on open. See [BOOK_FORMS.md](BOOK_FORMS.md). |
+| Book creation | `src/BookCreation.cpp`, `include/BookCreation.h` | `CreateDiaryBook`, the serial DPF create queue, `DPFCreateCallback`, the FormID claim table, the `sourceFiles` fix. See [BOOK_FORMS.md](BOOK_FORMS.md). |
+| Actor lookup | `src/ActorLookup.cpp`, `include/ActorLookup.h` | `FindActorForBook`: volume → owning NPC by UUID, with a per-session cache |
+| Text rendering | `src/BookText.cpp`, `include/BookText.h` | `FormatDiaryEntries`, text sanitizing, game-date formatting. See [BOOK_TEXT.md](BOOK_TEXT.md). |
+| Save folder, co-save | `src/SaveFolder.cpp`, `src/Serialization.cpp` (+ headers) | Detecting the SkyrimNet save folder from `SkyrimNet.log`; the legacy co-save callbacks. See [DATABASE.md](DATABASE.md). |
+| Inter-plugin API | `src/InterPluginAPI.cpp`, `include/InterPluginAPI.h` | Answers `SNPD_QUERY_*` SKSE messages. See [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md#inter-plugin-api-skse-messaging). |
 | Persistence | `src/DiaryDB.cpp`, `include/DiaryDB.h` | Per-save SQLite: volumes, actor templates, stolen volumes. See [DATABASE.md](DATABASE.md). |
 | SkyrimNet client | `src/Database.cpp`, `include/Database.h`, `include/SkyrimNetPublicAPI.h` | Loads SkyrimNet's exported functions, parses diary JSON, UUID ↔ FormID, names, bio template names |
 | Text injection | `src/BookTextHook.cpp`, `include/BookTextHook.h` | Hook on `BookMenu::OpenBookMenu`: substitutes diary text, VR world-open workaround, SEH guard, UTF-8 → Win-1251. See [BOOK_TEXT.md](BOOK_TEXT.md). |
-| Theft | `src/DiaryTheftHandler.cpp`, `include/DiaryTheftHandler.h` | Container-change and menu sinks that record theft, returns and willing handovers. See [THEFT.md](THEFT.md). |
-| Papyrus natives | `src/PapyrusAPI.cpp`, `include/PapyrusAPI.h` | MCM getters and setters, the theft API, `UpdateDiaryForActor` |
+| Theft | `src/DiaryTheftHandler.cpp`, `include/DiaryTheftHandler.h` | Container-change and menu sinks that record theft, returns and willing handovers; the `snpd_diary_stolen` decorator registration and post-load theft reconciliation. See [THEFT.md](THEFT.md). |
+| Papyrus natives | `src/PapyrusAPI.cpp`, `include/PapyrusAPI.h` | MCM getters and setters, the theft API, `UpdateDiaryFromEvent` |
 | Localization | `src/Localization.cpp`, `include/Localization.h` | Language detection, locale `.ini`, GMST month and day names, title and date formats. See [LOCALIZATION.md](LOCALIZATION.md). |
 | Settings | `include/Config.h` (header-only) | INI load and save. See [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md). |
 
@@ -79,7 +85,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 **`SKSEPlugin_Load`** (`main.cpp`), in order:
 1. `InitializeLog()`, then `SKSE::Init`.
 2. `Config::Load()` followed at once by `Config::Save()`, so MO2 copies the INI into `overwrite/` and user settings survive mod updates. Debug level is applied from `[General] DebugLog`.
-3. Register `OnMessage`; register co-save callbacks under the unique ID `'SNDB'`.
+3. Register `OnMessage`; `Serialization::Register()` registers the co-save callbacks under the unique ID `'SNDB'`.
 4. `BookManager::Initialize(...)` with the four template EditorIDs.
 5. `DiaryTheftHandler::Register()` (event sinks), `Localization::Initialize()`, `BookTextHook::Install()`, `PapyrusAPI::Register()`.
 
@@ -91,9 +97,9 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 3. Detect the save folder from `SkyrimNet.log` and `DiaryDB::Open()` it. **This happens before the readiness wait below**, which is a known risk (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
 4. `BookManager::ClearActorCache()` (also clears the FormID claim table).
 5. A self-requeuing task polls `Database::IsMemorySystemReady()` for up to 300 game-thread ticks. When it is ready:
-   - Re-register the `snpd_diary_stolen` decorator through the Papyrus VM. SkyrimNet drops all decorator registrations on load, and the Papyrus `OnInit` that also registers it runs only on a new game.
+   - `DiaryTheftHandler::RegisterStolenDecorator()`: re-register the `snpd_diary_stolen` decorator through the Papyrus VM. SkyrimNet drops all decorator registrations on load, and the Papyrus `OnInit` that also registers it runs only on a new game.
    - `LoadFromDB()`, then `QueueInventoryCheck()`.
-   - Theft reconciliation: clear stolen volumes for any actor whose `last_known_game_time` is later than the current game time (the player loaded an earlier save).
+   - `DiaryTheftHandler::ReconcileAfterLoad()`: clear stolen volumes for any actor whose `last_known_game_time` is later than the current game time (the player loaded an earlier save).
    - Queue immediate recreation for actors whose book forms were invalid, then `QueueSealedVolumeRecovery()` and `QueueBatchCatchUpScan()`.
 
 **Save**: the co-save `SaveCallback` opens the DB if a new game never got a `kPostLoadGame`, runs `FlushToDB()`, stamps `last_known_game_time`, and writes the `SNDB` sentinel and `SNDF` folder records. `kSaveGame` then marks every volume `persisted_in_save`. See [DATABASE.md](DATABASE.md#co-save-records).
@@ -105,8 +111,8 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 ## One diary entry, end to end
 
 1. SkyrimNet generates an entry. The `snpd_diary_stolen` decorator is evaluated **during** generation, so an NPC whose diary is missing writes about it.
-2. SkyrimNet sends ModEvent `SkyrimNet_DiaryCreated`. `SkyrimNetDiaries_EventListener.psc` pulls `actorFormId` out of the JSON with string search and calls `SkyrimNetDiaries_Native.UpdateDiaryForActor`.
-3. `UpdateDiaryForActorWrapper` (`PapyrusAPI.cpp`) clears that actor's stolen volumes (the theft has now been written about) and calls `UpdateDiaryForActorInternal` (`main.cpp`).
+2. SkyrimNet sends ModEvent `SkyrimNet_DiaryCreated`. `SkyrimNetDiaries_EventListener.psc` passes the JSON payload to `SkyrimNetDiaries_Native.UpdateDiaryFromEvent`, which reads `actorFormId` in C++ (a Papyrus `int` can't hold FormIDs of `0x80000000` and up).
+3. `UpdateDiaryForFormID` (`PapyrusAPI.cpp`) clears that actor's stolen volumes (the theft has now been written about) and calls `UpdateDiaryForActorInternal` (`VolumeSync.cpp`).
 4. `UpdateDiaryForActorInternal` fetches entries and takes one of three paths: create every volume (no volumes yet), start a new volume (the NPC no longer holds the latest one), or update or seal the latest volume in place. See [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md).
 5. New volumes go through `BookManager::CreateDiaryBook` → the serial create queue → `DPF.Create()` → `DPFCreateCallback`, which claims the FormID, configures the form from its template, registers the volume, writes the rendered text to DiaryDB and adds the book to the NPC. See [BOOK_FORMS.md](BOOK_FORMS.md).
 6. The player opens the book. `BookTextHook` finds the volume by FormID, calls `RefreshVolumeOnOpen` (which catches entries SkyrimNet added or deleted since the last render), converts the text and passes it to the engine in place of the book's own description. See [BOOK_TEXT.md](BOOK_TEXT.md).

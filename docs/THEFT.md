@@ -2,7 +2,7 @@
 
 A diary can be pickpocketed or stolen. The next time that NPC writes an entry, SkyrimNet's prompt knows the diary is missing, and the NPC writes about it. Returning the diary before then removes the record. Taking a diary openly, through the dialogue trade menu (e.g. from a follower), is not theft and sends a separate event instead.
 
-Code: `src/DiaryTheftHandler.cpp`, `src/PapyrusAPI.cpp` (`IsDiaryStolen`, `GetDiaryTheftStatus`, `SetTheftCleared`, `UpdateDiaryForActorWrapper`), `src/main.cpp` (theft reconciliation in `kPostLoadGame`), DiaryDB `stolen_volumes`.
+Code: `src/DiaryTheftHandler.cpp`, `src/PapyrusAPI.cpp` (`IsDiaryStolen`, `GetDiaryTheftStatus`, `SetTheftCleared`, `UpdateDiaryForFormID`), `DiaryTheftHandler::ReconcileAfterLoad` and `RegisterStolenDecorator` (called from `kPostLoadGame` in `src/main.cpp`), DiaryDB `stolen_volumes`.
 
 ---
 
@@ -39,7 +39,7 @@ The menu sinks track only whether the **Dialogue Menu**, **Console** and **Conta
 
 ## Clearing
 
-- **The NPC wrote about it:** `UpdateDiaryForActorWrapper`, the native the event listener calls for every new entry, runs `ClearAllStolenVolumes(uuid)` **before** processing the entry. The decorator was already evaluated while SkyrimNet generated that entry, so the NPC wrote about the theft once and the record is then cleared. This is done in C++ because Papyrus `Game.GetForm` returns None for NPCs in unloaded cells, which silently skipped the old Papyrus-side clear.
+- **The NPC wrote about it:** `UpdateDiaryForFormID`, which the event listener's native calls for every new entry, runs `ClearAllStolenVolumes(uuid)` **before** processing the entry. The decorator was already evaluated while SkyrimNet generated that entry, so the NPC wrote about the theft once and the record is then cleared. This is done in C++ because Papyrus `Game.GetForm` returns None for NPCs in unloaded cells, which silently skipped the old Papyrus-side clear.
 - **Returned in time:** the `HandleDiaryReturned` path above.
 - **Public API:** `SkyrimNetDiaries_API.SetTheftCleared(actor)`.
 

@@ -2,7 +2,7 @@
 
 How SkyrimNet's diary entries become volumes, how volumes stay in step with SkyrimNet when entries are added or deleted, and how save reverts are handled.
 
-Code: `src/main.cpp` (`CreateAllVolumesForActor`, `UpdateDiaryForActorInternal`, `QueueSealedVolumeRecovery`, `QueueBatchCatchUpScan` / `RunDiscoveryBatch`), `src/Database.cpp` (`GetDiaryEntries`), `src/BookManager.cpp` (`RefreshVolumeOnOpen`).
+Code: `src/VolumeSync.cpp` (`CreateAllVolumesForActor`, `UpdateDiaryForActorInternal`, `QueueSealedVolumeRecovery`, `QueueBatchCatchUpScan` / `RunDiscoveryBatch`), `src/Database.cpp` (`GetDiaryEntries`), `src/BookManager.cpp` (`RefreshVolumeOnOpen`).
 
 ---
 
@@ -42,7 +42,7 @@ SkyrimNet's time bounds are **inclusive**, so if the last entries of volume *n* 
 
 ## When an entry arrives: `UpdateDiaryForActorInternal`
 
-Called from the `UpdateDiaryForActor` native (event listener), from load-time recovery, and from the catch-up scan. It needs the API initialized and SkyrimNet's memory system ready.
+Called from the `UpdateDiaryFromEvent` native (event listener), from load-time recovery, and from the catch-up scan. It needs the API initialized and SkyrimNet's memory system ready.
 
 1. **No volumes yet** → fetch every entry (limit 10000) and create all volumes from 1.
 2. **Volumes exist** → fetch entries after the latest volume's `endTime` (the API bound is inclusive, so entries `<= endTime` are dropped client-side).

@@ -51,7 +51,8 @@ namespace SkyrimNetDiaries {
                        const std::string& journal04 = "",
                        const std::string& nightingaleJournal = "");
 
-        // Create a new diary book for an actor
+        // Queue creation of a new diary book for an actor (async; always returns
+        // nullptr).  Defined in BookCreation.cpp.
         RE::TESObjectBOOK* CreateDiaryBook(const std::string& actorUuid, const std::string& actorName,
                                            double startTime = 0.0, double endTime = 0.0, int volumeNumber = 1,
                                            RE::FormID targetActorFormID = 0,
@@ -106,7 +107,7 @@ namespace SkyrimNetDiaries {
 
         // Clears the invalid sourceFiles pointer DPF leaves on some clones (VR),
         // across every loaded book form.  Call at kPostLoadGame, before anything
-        // reads book descriptions.
+        // reads book descriptions.  Defined in BookCreation.cpp.
         static void SanitizeLoadedBookForms();
 
         // For every volume currently in books_, queues a game-thread task that checks

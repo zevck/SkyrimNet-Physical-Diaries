@@ -2,6 +2,7 @@
 #include "DiaryTheftHandler.h"
 #include "BookManager.h"
 #include "Database.h"
+#include "DiaryDB.h"
 #include <mutex>
 
 namespace DiaryTheftHandler {
@@ -445,6 +446,73 @@ namespace DiaryTheftHandler {
             SKSE::log::info("Registered dialogue, console, and container menu tracking for legitimate transfers");
         } else {
             SKSE::log::error("Failed to get UI singleton for menu tracking");
+        }
+    }
+
+    void RegisterStolenDecorator() {
+        // Re-register the snpd_diary_stolen decorator with SkyrimNet's prompt engine.
+        // SkyrimNet resets all Papyrus decorator registrations on every game load.
+        // Papyrus OnInit (which originally called RegisterDecorator) only fires on
+        // new game creation, so existing saves would lose the decorator after any
+        // reload.  We call SkyrimNetApi::RegisterDecorator via the Papyrus VM
+        // directly from C++ here, which works for every load of every save.
+        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+        if (vm) {
+            auto* args = RE::MakeFunctionArguments(
+                RE::BSFixedString("snpd_diary_stolen"),
+                RE::BSFixedString("SkyrimNetDiaries_Decorators"),
+                RE::BSFixedString("IsDiaryStolen"));
+            RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> nullCb;
+            bool ok = vm->DispatchStaticCall(
+                "SkyrimNetApi", "RegisterDecorator", args, nullCb);
+            delete args;
+            SKSE::log::info("kPostLoadGame: registered snpd_diary_stolen decorator via Papyrus VM ({})",
+                            ok ? "dispatched" : "FAILED");
+        } else {
+            SKSE::log::warn("kPostLoadGame: Papyrus VM not available — snpd_diary_stolen not registered");
+        }
+    }
+
+    void ReconcileAfterLoad() {
+        // Detect backwards time travel and clear stolen volumes if detected
+        auto calendar = RE::Calendar::GetSingleton();
+        if (calendar) {
+            double currentTime = calendar->GetCurrentGameTime() * 86400.0;
+            auto* diaryDB = SkyrimNetDiaries::DiaryDB::GetSingleton();
+            auto actorTemplates = diaryDB->LoadActorTemplates();
+
+            SKSE::log::debug("[Theft Reconciliation] Checking {} actors for backwards time travel (current time: {:.2f} seconds)",
+                           actorTemplates.size(), currentTime);
+
+            int clearedCount = 0;
+            for (const auto& [uuid, templateName] : actorTemplates) {
+                double lastKnownTime = diaryDB->GetLastKnownGameTime(uuid);
+                std::string actorName = SkyrimNetDiaries::Database::GetActorName(uuid);
+                if (actorName.empty()) {
+                    actorName = templateName;  // Fallback to template name if lookup fails
+                }
+
+                SKSE::log::debug("[Theft Reconciliation] {} ({}): last_known={:.2f}, current={:.2f}, delta={:.2f}",
+                               actorName, uuid.substr(0, 8), lastKnownTime, currentTime, currentTime - lastKnownTime);
+
+                // Detect backwards time travel - clear all stolen volumes if save is from earlier in time
+                if (currentTime < lastKnownTime) {
+                    SKSE::log::warn("[Physical Diaries] ⚠ Backwards time travel detected for {} - loaded save from {:.2f} but last session was at {:.2f} (went back {:.2f} seconds)",
+                                   actorName, currentTime, lastKnownTime, lastKnownTime - currentTime);
+                    diaryDB->ClearAllStolenVolumes(uuid);
+                    SKSE::log::debug("[Physical Diaries] ✓ Cleared all stolen volumes for {} due to time travel", actorName);
+                    clearedCount++;
+                }
+
+                // Update last known game time for all actors
+                diaryDB->UpdateLastKnownGameTime(uuid, currentTime);
+            }
+
+            if (clearedCount > 0) {
+                SKSE::log::info("[Theft Reconciliation] Cleared stolen volumes for {} actors due to backwards time travel", clearedCount);
+            } else {
+                SKSE::log::debug("[Theft Reconciliation] No backwards time travel detected - all actors up to date");
+            }
         }
     }
 }

@@ -2,7 +2,7 @@
 
 SNPD keeps its state in a per-save SQLite database (DiaryDB). The SKSE co-save holds only a sentinel and the save-folder name. **DiaryDB is the source of truth**, but only for SNPD's own data (volume boundaries, book FormIDs, rendered text, theft records). Diary content always comes from SkyrimNet.
 
-Code: `src/DiaryDB.cpp`, `include/DiaryDB.h` (singleton `SkyrimNetDiaries::DiaryDB`); co-save callbacks in `src/main.cpp`.
+Code: `src/DiaryDB.cpp`, `include/DiaryDB.h` (singleton `SkyrimNetDiaries::DiaryDB`); co-save callbacks in `src/Serialization.cpp`; save-folder detection in `src/SaveFolder.cpp`.
 
 ---
 

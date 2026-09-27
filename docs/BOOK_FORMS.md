@@ -2,7 +2,7 @@
 
 Every diary volume is its own `TESObjectBOOK` base form, created at runtime by Dynamic Persistent Forms (DPF) as a clone of a template book from the ESP. This doc covers how those forms are created, configured, attached to NPCs and kept valid across loads, and records the alternatives that were tested and rejected.
 
-Code: `src/BookManager.cpp` (`CreateDiaryBook`, `PumpDiaryCreateQueue`, `DPFCreateCallback`, `FindActorForBook`, `EnsureBookInInventory`, `LoadFromDB`).
+Code: `src/BookCreation.cpp` (`CreateDiaryBook`, `PumpDiaryCreateQueue`, `DPFCreateCallback`, the FormID claim table, `ClearBogusSourceFiles`), `src/ActorLookup.cpp` (`FindActorForBook`), `src/BookManager.cpp` (`EnsureBookInInventory`, `LoadFromDB`).
 
 ---
 
@@ -27,14 +27,14 @@ These are the root causes of what used to show up as "DPF losing records" and cr
 | DPF's FormID allocator is **not thread-safe** | Burst creation (the catch-up scan queues one task per actor, each making several volumes) handed concurrent callbacks the **same** FormID | The serial create queue. Only one `Create()` is ever in flight. |
 | DPF **recycles duplicate deleted records**. `Dispose()` puts a record in DPF's recycle pool, and over repeated reset/reload cycles the persisted pool gathers duplicates of the same FormID, which get handed out more than once. | A new volume received a FormID an existing diary already owned | The **FormID claim table** (`g_claimedFormIds`, FormID → owning UUID). The callback claims each FormID synchronously. If it is already claimed by a different UUID, the form is abandoned and the request re-queued, up to `kMaxCreateRetries` (16). DPF's next allocation consumes the duplicate slot. `LoadFromDB` seeds the table with every loaded volume; `ClearActorCache` clears it each load. |
 
-Because of the second bug, **MCM Reset deliberately does not call `DPF.Dispose()`** on the books it removes (see `ResetAllDiariesInternal` in `main.cpp`). Don't add it back.
+Because of the second bug, **MCM Reset deliberately does not call `DPF.Dispose()`** on the books it removes (see `ResetAllDiariesInternal` in `VolumeSync.cpp`). Don't add it back.
 
 ### Configuring a new form (game thread)
 
 From the template: `data.type` (must be a book tome, `0x00`. A note scroll, `0xFF`, ignores `[pagebreak]`) and `inventoryModel`. Then `weight = 0.5`, `value = 0`, flags cleared and `kCantTake` set, and the name from `Localization::FormatBookName`.
 
 - **Don't touch `data.teaches`.** Clearing or nulling it crashed DPF's serializer on save. The template's clean value is left alone.
-- **Invalid `sourceFiles` (VR crash fix, uncommitted as of 2026-09-26).** On VR, DPF clones have been seen with `sourceFiles.array == 0x1`. That hard-crashes `TESForm::GetFile` whenever anything calls `GetDescription` (item card refresh, Description Framework, save serialization). On SE/AE the value is `nullptr`, which `GetFile` null-checks. `ClearBogusSourceFiles` resets any value inside the first 64 KB (never a real pointer) to `nullptr`, the SE/AE state. It leaves valid pointers alone, so SE/AE behaviour does not change. It runs on each new clone and, through `SanitizeLoadedBookForms`, on **every** book form at the start of `kPostLoadGame`. That covers the forms DPF restores from its co-save without our callback, **including ones DiaryDB no longer tracks** (Reset orphans, rebuilt volumes, loads where the DB failed to open).
+- **Invalid `sourceFiles` (VR crash fix, untested on VR as of 2026-09-26).** On VR, DPF clones have been seen with `sourceFiles.array == 0x1`. That hard-crashes `TESForm::GetFile` whenever anything calls `GetDescription` (item card refresh, Description Framework, save serialization). On SE/AE the value is `nullptr`, which `GetFile` null-checks. `ClearBogusSourceFiles` resets any value inside the first 64 KB (never a real pointer) to `nullptr`, the SE/AE state. It leaves valid pointers alone, so SE/AE behaviour does not change. It runs on each new clone and, through `SanitizeLoadedBookForms`, on **every** book form at the start of `kPostLoadGame`. That covers the forms DPF restores from its co-save without our callback, **including ones DiaryDB no longer tracks** (Reset orphans, rebuilt volumes, loads where the DB failed to open).
   - An earlier version instead aliased the template's `sourceFiles` onto each clone, and only for tracked rows. Review rejected it: it missed untracked forms, changed SE/AE (descriptions resolved to the template's "This is a placeholder diary.") and made two forms share one engine allocation.
   - Not yet tested on VR. Open question: where the `0x1` comes from (DPF's copy path is a suspect).
 - **`kCantTake` for 5 seconds.** A detached thread sleeps 5 s and then queues the flag clear. Taking the book and saving immediately after creation crashed before DPF had finished registering the form. One sleeping thread per book is wasteful during bulk creation (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).

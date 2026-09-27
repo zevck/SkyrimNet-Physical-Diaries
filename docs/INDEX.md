@@ -60,4 +60,4 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 - **One DLL for SE, AE and VR.** Test the hook and form creation on VR when you touch them.
 - **A Papyrus change isn't done until the `.pex` is built and shipped.**
 - **There is no automated test suite.** Changes are checked in game through the logs.
-- **These docs describe the code as of 2026-09-26** (v1.1.0 plus that day's cleanup, with the VR fixes still uncommitted). Line numbers drift; function names are the stable anchor. When the code and a doc disagree, the code wins. Fix the doc in the same change.
+- **These docs describe the code as of 2026-09-26** (v1.1.0 plus that day's cleanup and file split, with the VR fixes still untested on VR). Line numbers drift; function names are the stable anchor. When the code and a doc disagree, the code wins. Fix the doc in the same change.
