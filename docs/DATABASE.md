@@ -10,7 +10,7 @@ Code: `src/DiaryDB.cpp`, `include/DiaryDB.h` (singleton `SkyrimNetDiaries::Diary
 
 `<game>/Data/SKSE/Plugins/SkyrimNetPhysicalDiaries/<saveFolder>/diary.db` (MO2: under `overwrite/`). `<saveFolder>` is SkyrimNet's save folder, `SkyrimNet-<id>`, found by `DetectSaveFolderFromLog` (see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#which-save-am-i-in)).
 
-- Opened at `kPostLoadGame`, or in `SaveCallback` on a new game that has had no load. `Open()` with the folder that is already open does nothing; a different folder closes the old one first.
+- Closed at `kPreLoadGame`, so nothing written during a load lands in the previous save's DB. Opened by the post-load sync, or in `SaveCallback` if a save happens before it (a new game that has had no load, or a save during the load wait). The folder name must be `SkyrimNet-` followed by digits and dashes; anything else is refused. `Open()` with the folder that is already open does nothing; a different folder closes the old one first.
 - WAL journal, `synchronous=NORMAL`.
 - **Keyed to the SkyrimNet save folder, not the `.ess`.** Loading an older save of the same character reopens the same DB, which has not been rolled back. That is deliberate: SNPD reconciles against SkyrimNet instead of reverting with the save. See [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#save-reverts-the-keep--clear-fork).
 - `RevertCallback` (new game or load) clears memory only. The file stays.
@@ -30,7 +30,7 @@ Created in `EnsureSchema()`.
 | `journal_template`, `bio_template_name` | Template EditorID; SkyrimNet bio template name (`player_special` for the player) |
 | `last_known_entry_count` | Entry count at the last render |
 | `book_text` | Rendered text. A cache: it can always be rebuilt from SkyrimNet. `UpsertVolume` with empty text keeps the stored text. |
-| `persisted_in_save` | 1 once a save has included the volume (`MarkAllVolumesPersisted` at `kSaveGame`) |
+| `persisted_in_save` | 1 once a save has included the volume (`MarkAllVolumesPersisted` at `kSaveGame`, and `UpsertVolume` from the in-memory flag, which never lowers it). The upsert path matters on a new game's first save, where the DB is only opened in `SaveCallback` after `kSaveGame` ran. |
 
 **`actor_templates`**: `actor_uuid` (PK), `template_name`, `last_known_game_time` (for detecting loads of earlier saves; see [THEFT.md](THEFT.md#save-reverts)).
 
@@ -47,7 +47,7 @@ Unique ID `'SNDB'`, record version 3.
 | Record | Contents | Status |
 |---|---|---|
 | `SNDB` | Two zero `uint32`s. `BookManager::Save`/`Load` write and ignore it. | Sentinel from when volumes lived in the co-save |
-| `SNDF` | Save-folder name | Written and read, but `kPostLoadGame` clears `g_currentSaveFolder` and detects it again from `SkyrimNet.log`, so the restored value is never used |
+| `SNDF` | Save-folder name | Written for compatibility, ignored on load: the folder is always detected from `SkyrimNet.log` |
 | `SNDC` | FormID → UUID cache | **Retired 2026-09-26.** Its only reader was a log-only event sink. Older saves still have the record; `LoadCallback` has no branch for it and SKSE skips unread records. |
 
 In short, the co-save does no real work any more. Removing it changes the save format, so it is left for a deliberate change (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).

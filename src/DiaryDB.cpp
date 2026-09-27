@@ -33,6 +33,15 @@ namespace SkyrimNetDiaries {
         if (db_ && openFolder_ == saveFolder) return true;  // already open for same folder
         if (db_) Close();
 
+        // The name becomes a path component: accept only "SkyrimNet-<digits and dashes>".
+        const bool validName = saveFolder.starts_with("SkyrimNet-") && saveFolder.size() > 10 &&
+            std::all_of(saveFolder.begin() + 10, saveFolder.end(),
+                        [](char c) { return (c >= '0' && c <= '9') || c == '-'; });
+        if (!validName) {
+            SKSE::log::error("[DiaryDB] Refusing to open invalid save folder name '{}'", saveFolder);
+            return false;
+        }
+
         auto dbPath = std::filesystem::current_path()
             / "Data" / "SKSE" / "Plugins" / "SkyrimNetPhysicalDiaries"
             / saveFolder / "diary.db";
@@ -142,8 +151,8 @@ namespace SkyrimNetDiaries {
             "INSERT INTO volumes "
             "(actor_uuid, actor_name, actor_form_id, book_form_id, volume_number, start_time, end_time, "
             " journal_template, bio_template_name, last_known_entry_count, "
-            " prev_volume_last_creation_time, prev_volume_count_at_boundary, book_text) "
-            "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) "
+            " prev_volume_last_creation_time, prev_volume_count_at_boundary, book_text, persisted_in_save) "
+            "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14) "
             "ON CONFLICT(actor_uuid, volume_number) DO UPDATE SET "
             " actor_name=excluded.actor_name, "
             " actor_form_id=CASE WHEN excluded.actor_form_id!=0 THEN excluded.actor_form_id ELSE volumes.actor_form_id END, "
@@ -155,6 +164,8 @@ namespace SkyrimNetDiaries {
             " last_known_entry_count=excluded.last_known_entry_count, "
             " prev_volume_last_creation_time=excluded.prev_volume_last_creation_time, "
             " prev_volume_count_at_boundary=excluded.prev_volume_count_at_boundary, "
+            // Never un-persist: once a volume was in a save, it stays marked.
+            " persisted_in_save=MAX(volumes.persisted_in_save, excluded.persisted_in_save), "
             // Preserve existing text when the caller passes an empty string.
             " book_text=CASE WHEN excluded.book_text='' THEN volumes.book_text "
             "                ELSE excluded.book_text END;";
@@ -178,6 +189,7 @@ namespace SkyrimNetDiaries {
         sqlite3_bind_double(stmt,11, r.prevVolumeLastCreationTime);
         sqlite3_bind_int (stmt, 12, r.prevVolumeCountAtBoundary);
         sqlite3_bind_text(stmt, 13, r.bookText.c_str(),            -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int (stmt, 14, r.persistedInSave ? 1 : 0);
 
         return StepAndFinalize(db_, stmt, "UpsertVolume");
     }
@@ -316,7 +328,7 @@ namespace SkyrimNetDiaries {
         while (sqlite3_step(stmt) == SQLITE_ROW) {
             const char* uuid = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
             const char* name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-            if (uuid && name) result[uuid] = name;
+            if (uuid && name && *name) result[uuid] = name;  // skip rows with no template yet
         }
         sqlite3_finalize(stmt);
         return result;

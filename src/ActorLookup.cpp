@@ -32,8 +32,10 @@ namespace SkyrimNetDiaries {
         // reused across sessions, so a FormID key could cross-bind two actors that
         // happened to share a stored FormID snapshot.  Cleared each load via
         // ClearActorCache().
+        // Stores FormIDs, not Actor pointers: a non-persistent actor can be deleted
+        // mid-session (cell reset), and a cached pointer would then dangle.
         static std::mutex g_actorCacheMutex;
-        static std::unordered_map<std::string, RE::Actor*> g_actorCacheByUuid;
+        static std::unordered_map<std::string, RE::FormID> g_actorCacheByUuid;
     }
 
     // ---------------------------------------------------------------------------
@@ -71,7 +73,12 @@ namespace SkyrimNetDiaries {
         {
             std::lock_guard<std::mutex> lock(g_actorCacheMutex);
             auto it = g_actorCacheByUuid.find(actorUuid);
-            if (it != g_actorCacheByUuid.end()) return it->second;
+            if (it != g_actorCacheByUuid.end()) {
+                if (auto* cached = RE::TESForm::LookupByID<RE::Actor>(it->second); cached && !cached->IsDeleted()) {
+                    return cached;
+                }
+                g_actorCacheByUuid.erase(it);  // gone since it was cached: resolve again
+            }
         }
 
         RE::Actor* result = nullptr;
@@ -108,7 +115,7 @@ namespace SkyrimNetDiaries {
         // Cache only positive results, keyed by UUID.  Never cache a miss.
         if (result) {
             std::lock_guard<std::mutex> lock(g_actorCacheMutex);
-            g_actorCacheByUuid[actorUuid] = result;
+            g_actorCacheByUuid[actorUuid] = result->GetFormID();
         }
         return result;
     }

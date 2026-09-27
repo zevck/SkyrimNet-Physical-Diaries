@@ -67,8 +67,9 @@ namespace SkyrimNetDiaries {
 
     std::string BookManager::SelectJournalTemplate(const std::string& actorUuid, const std::string& actorName) {
         // Check if we already selected a template for this actor
+        // An empty name (a row created by UpdateLastKnownGameTime before any volume) is no choice.
         auto it = actorTemplates_.find(actorUuid);
-        if (it != actorTemplates_.end()) {
+        if (it != actorTemplates_.end() && !it->second.empty()) {
             SKSE::log::debug("Using cached journal template for {}: {}", actorName, it->second);
             return it->second;
         }
@@ -81,6 +82,7 @@ namespace SkyrimNetDiaries {
                 selectedTemplate = nightingaleTemplate_;
                 SKSE::log::debug("Selected Nightingale journal for {}", actorName);
                 actorTemplates_[actorUuid] = selectedTemplate;
+                DiaryDB::GetSingleton()->UpsertActorTemplate(actorUuid, selectedTemplate);
                 return selectedTemplate;
             }
         }
@@ -192,17 +194,15 @@ namespace SkyrimNetDiaries {
         }
     }
     
-    void BookManager::UpdateVolumeEntryCount(const std::string& actorUuid, int volumeNumber, int entryCount) {
-        auto it = books_.find(actorUuid);
-        if (it != books_.end()) {
-            for (auto& book : it->second) {
-                if (book.volumeNumber == volumeNumber) {
-                    SKSE::log::debug("Updated {} volume {} entry count: {} -> {}", book.actorName, volumeNumber, book.lastKnownEntryCount, entryCount);
-                    book.lastKnownEntryCount = entryCount;
-                    return;
-                }
-            }
-        }
+    void BookManager::SetVolumeText(DiaryBookData& vol, const std::vector<DiaryEntry>& entries) {
+        const int maxEntries = Config::GetSingleton()->GetEntriesPerVolume();
+        std::string text = FormatDiaryEntries(entries, vol.actorName, vol.startTime, vol.endTime, maxEntries);
+        const int count = static_cast<int>(entries.size());
+        DiaryDB::GetSingleton()->UpdateBookText(vol.actorUuid, vol.volumeNumber, text, count);
+        SKSE::log::debug("{} volume {}: text set from {} entries (was {})",
+                         vol.actorName, vol.volumeNumber, count, vol.lastKnownEntryCount);
+        vol.cachedBookText = std::move(text);
+        vol.lastKnownEntryCount = count;
     }
 
     void BookManager::UnregisterBook(const std::string& actorUuid) {
@@ -212,6 +212,24 @@ namespace SkyrimNetDiaries {
             books_.erase(it);
         }
         DiaryDB::GetSingleton()->DeleteActor(actorUuid);
+    }
+
+    void BookManager::UnregisterVolumesFrom(const std::string& actorUuid, int fromVolume) {
+        auto it = books_.find(actorUuid);
+        if (it == books_.end()) return;
+        auto& volumes = it->second;
+        auto* db = DiaryDB::GetSingleton();
+        int removed = 0;
+        for (auto vol = volumes.begin(); vol != volumes.end();) {
+            if (vol->volumeNumber >= fromVolume) {
+                db->DeleteVolume(actorUuid, vol->volumeNumber);
+                vol = volumes.erase(vol);
+                ++removed;
+            } else {
+                ++vol;
+            }
+        }
+        SKSE::log::info("Unregistered {} volume(s) from {} for {}", removed, fromVolume, actorUuid);
     }
 
     void BookManager::RegenerateAllDiaryTexts() {
@@ -234,38 +252,23 @@ namespace SkyrimNetDiaries {
 
                     std::string bookTitle = Localization::GetSingleton()->FormatBookName(bookData.actorName, bookData.volumeNumber);
 
-                    SKSE::log::debug("[Regen] '{}' vol={} stored startTime={:.2f} endTime={:.2f} -> queryStart={:.2f} queryEnd={:.2f} limit={}",
+                    SKSE::log::debug("[Regen] '{}' vol={} stored startTime={:.2f} endTime={:.2f} -> queryStart={:.2f} queryEnd={:.2f}",
                                     bookTitle, bookData.volumeNumber,
                                     bookData.startTime, bookData.endTime,
-                                    queryStart, queryEnd, MAX_ENTRIES_PER_VOLUME + 1);
+                                    queryStart, queryEnd);
 
-                    auto volumeEntries = SkyrimNetDiaries::Database::GetDiaryEntries(
-                        actorFormId, MAX_ENTRIES_PER_VOLUME + 1,
-                        queryStart, queryEnd, bookData.prevVolumeLastCreationTime,
-                        bookData.prevVolumeCountAtBoundary);
+                    // Sealed volumes never show more than MAX_ENTRIES_PER_VOLUME entries.
+                    auto volumeEntries = SkyrimNetDiaries::Database::GetVolumeEntries(
+                        actorFormId, queryStart, queryEnd, bookData.prevVolumeLastCreationTime,
+                        bookData.prevVolumeCountAtBoundary,
+                        bookData.endTime > 0.0 ? MAX_ENTRIES_PER_VOLUME : 0);
 
-                    SKSE::log::debug("[Regen] '{}' API returned {} entries; first={:.2f} last={:.2f}",
+                    SKSE::log::debug("[Regen] '{}' {} entries; first={:.2f} last={:.2f}",
                                     bookTitle, volumeEntries.size(),
                                     volumeEntries.empty() ? 0.0 : volumeEntries.front().entry_date,
                                     volumeEntries.empty() ? 0.0 : volumeEntries.back().entry_date);
 
-                    // Same deterministic cap as the slow path — sealed volumes must never
-                    // show more than MAX_ENTRIES_PER_VOLUME entries.
-                    if (bookData.endTime > 0.0 &&
-                        static_cast<int>(volumeEntries.size()) > MAX_ENTRIES_PER_VOLUME) {
-                        volumeEntries.resize(MAX_ENTRIES_PER_VOLUME);
-                    }
-
-                    std::string bookText = FormatDiaryEntries(volumeEntries, bookData.actorName,
-                                                              bookData.startTime, bookData.endTime,
-                                                              MAX_ENTRIES_PER_VOLUME);
-
-                    // Persist to DB and warm in-memory cache.
-                    int liveCount = static_cast<int>(volumeEntries.size());
-                    DiaryDB::GetSingleton()->UpdateBookText(
-                        uuid, bookData.volumeNumber, bookText, liveCount);
-                    bookData.cachedBookText      = bookText;
-                    bookData.lastKnownEntryCount = liveCount;
+                    SetVolumeText(bookData, volumeEntries);
 
                     totalRegenerated++;
                 }
@@ -548,16 +551,12 @@ namespace SkyrimNetDiaries {
             }
         }
 
-        auto liveEntries = Database::GetDiaryEntries(
-            vol->cachedActorFormId, MAX_ENTRIES + 1, queryStart, queryEnd,
-            vol->prevVolumeLastCreationTime, vol->prevVolumeCountAtBoundary);
-        int liveCount = static_cast<int>(liveEntries.size());
-
         // For sealed volumes, cap to MAX_ENTRIES so boundary tie-breaking is deterministic.
-        if (vol->endTime > 0.0 && liveCount > MAX_ENTRIES) {
-            liveEntries.resize(MAX_ENTRIES);
-            liveCount = MAX_ENTRIES;
-        }
+        auto liveEntries = Database::GetVolumeEntries(
+            vol->cachedActorFormId, queryStart, queryEnd,
+            vol->prevVolumeLastCreationTime, vol->prevVolumeCountAtBoundary,
+            vol->endTime > 0.0 ? MAX_ENTRIES : 0);
+        int liveCount = static_cast<int>(liveEntries.size());
 
         // Fast path: nothing changed and cache is warm with current-format text — nothing to do.
         // If the cached text is in the old format (no <font> tags, generated before font-tag
@@ -601,13 +600,7 @@ namespace SkyrimNetDiaries {
             }
         }
 
-        // Reformat and persist to DB + in-memory cache.
-        std::string bookText = FormatDiaryEntries(
-            liveEntries, vol->actorName, vol->startTime, vol->endTime, MAX_ENTRIES);
-        DiaryDB::GetSingleton()->UpdateBookText(vol->actorUuid, vol->volumeNumber, bookText, liveCount);
-        UpdateVolumeEntryCount(vol->actorUuid, vol->volumeNumber, liveCount);
-        vol->lastKnownEntryCount = liveCount;
-        vol->cachedBookText      = std::move(bookText);
+        SetVolumeText(*vol, liveEntries);
     }
 
 } // namespace SkyrimNetDiaries

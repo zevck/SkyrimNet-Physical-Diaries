@@ -17,6 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "BookCreation.h"
 #include "BookManager.h"
 #include "BookTextHook.h"
 #include "Config.h"
@@ -142,6 +143,14 @@ namespace {
         case SKSE::MessagingInterface::kPreLoadGame: {
             ++g_loadGeneration;
             SkyrimNetDiaries::TimelineGate::Reset();
+            // Nothing from the previous load may leak into this one: queued book
+            // creations, the actor cache and FormID claims, and the previous save's
+            // DiaryDB (reopened for this save by the post-load sync; SaveCallback
+            // reopens it itself if a save happens first).
+            SkyrimNetDiaries::CancelPendingCreations();
+            SkyrimNetDiaries::BookManager::ClearActorCache();
+            SkyrimNetDiaries::DiaryDB::GetSingleton()->Close();
+            SkyrimNetDiaries::SaveFolder::Clear();
             // Diary events wait for this load's post-load sync (see SetPostLoadSyncReady).
             SkyrimNetDiaries::SetPostLoadSyncReady(false);
             break;
@@ -163,10 +172,6 @@ namespace {
                 break;
             }
             SKSE::log::info("✓ SkyrimNet API ready");
-
-            // Clear the actor reference cache — pointers from the previous load session
-            // may be stale (or nullptr from failed lookups).  A fresh search runs on this load.
-            SkyrimNetDiaries::BookManager::ClearActorCache();
 
             // The post-load setup waits for two things, polled every 100 ms:
             //   1. SkyrimNet's database (IsMemorySystemReady), for up to a minute.
@@ -221,6 +226,10 @@ namespace {
                 DiaryTheftHandler::RegisterStolenDecorator();
 
                 auto invalidActors = SkyrimNetDiaries::BookManager::GetSingleton()->LoadFromDB();
+
+                // Match SkyrimNet's history: volumes reaching past this save lose the
+                // entries a Clear deleted (before books are re-added below).
+                SkyrimNetDiaries::ReconcileWithTimeline();
 
                 // For volumes whose DPF form still exists in process memory but whose
                 // inventory entry was wiped by a reload-without-save, re-add the book.

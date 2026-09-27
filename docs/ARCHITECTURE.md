@@ -92,7 +92,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 
 **`kDataLoaded`**: warn with a message box if `Dynamic Persistent Forms.esp` is missing; verify all four templates resolve by EditorID and show a message box naming the likely causes if not; `TimelineGate::OnDataLoaded()` (finds SkyrimNet's prompt text); `Localization::ReadGMSTs()`.
 
-**`kPreLoadGame`**: bump the load generation (an older setup still waiting gives up), `TimelineGate::Reset()`, and `SetPostLoadSyncReady(false)` so diary events wait for this load's sync. **`kNewGame`** sets it back to true, since no `kPostLoadGame` follows.
+**`kPreLoadGame`**: bump the load generation (an older setup still waiting gives up), `TimelineGate::Reset()`, `CancelPendingCreations()`, `BookManager::ClearActorCache()` (actor cache and FormID claims), close DiaryDB and clear the save folder, and `SetPostLoadSyncReady(false)` so diary events wait for this load's sync. **`kNewGame`** sets it back to true, since no `kPostLoadGame` follows.
 
 **`kPostLoadGame`**:
 1. `BookManager::SanitizeLoadedBookForms()`: clear the invalid `sourceFiles` pointer DPF leaves on some clones (VR). Runs first and does not depend on SkyrimNet.
@@ -101,7 +101,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 4. The post-load sync polls every 100 ms (a sleeper thread re-queues a game-thread task) until `Database::IsMemorySystemReady()` (up to 60 s) **and** `TimelineGate::IsSettled()` (no limit while SkyrimNet's keep/clear prompt is open). Then:
    - Detect the save folder from `SkyrimNet.log` and `DiaryDB::Open()` it.
    - `DiaryTheftHandler::RegisterStolenDecorator()`: re-register the `snpd_diary_stolen` decorator through the Papyrus VM. SkyrimNet drops all decorator registrations on load, and the Papyrus `OnInit` that also registers it runs only on a new game.
-   - `LoadFromDB()`, then `QueueInventoryCheck()`.
+   - `LoadFromDB()`, then `ReconcileWithTimeline()` (volumes reaching past the loaded save are matched against the history SkyrimNet kept), then `QueueInventoryCheck()`.
    - `DiaryTheftHandler::ReconcileAfterLoad()`: clear stolen volumes for any actor whose `last_known_game_time` is later than the current game time (the player loaded an earlier save).
    - `SetPostLoadSyncReady(true)`, then queue immediate recreation for actors whose book forms were invalid, then `QueueSealedVolumeRecovery()` and `QueueBatchCatchUpScan()`.
 

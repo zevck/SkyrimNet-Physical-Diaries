@@ -14,9 +14,18 @@ The engine offers exactly one identifier that is globally unique and survives in
 
 ## Creation pipeline
 
-1. **`CreateDiaryBook`** chooses the template (`SelectJournalTemplate`), finds it by EditorID, and pushes a `PendingDiaryCreation` onto a global queue. It always returns `nullptr`: creation is asynchronous.
+1. **`CreateDiaryBook`** chooses the template (`SelectJournalTemplate`), finds it by EditorID, and pushes a `PendingDiaryCreation` (the whole request: actor, volume, entries, template, boundary data) onto a global queue. Creation is asynchronous.
 2. **`PumpDiaryCreateQueue`** dispatches the next request only when none is in flight: `DispatchStaticCall("DynamicPersistentForms", "Create", template, DPFCreateCallback)`.
-3. **`DPFCreateCallback::operator()`** runs on a Papyrus VM thread. It first releases the in-flight slot and queues the next pump, then claims the FormID (below). Everything else is queued as a game-thread task: configure the form, `RegisterBook`, write the rendered text to DiaryDB, warm the in-memory cache, then (another task) find the NPC and `AddObjectToContainer`.
+3. **`DPFCreateCallback::operator()`** runs on a Papyrus VM thread. It claims the FormID (below), then releases the in-flight slot, queuing a collision retry at the **front** of the queue in the same locked step so the next pump can't skip it, and queues the next pump.
+4. **`CompleteCreation`** runs on the game thread: configure the form, `RegisterBook`, write the text (`SetVolumeText`), then find the NPC and `AddObjectToContainer`. It looks the form up again by FormID rather than keeping a pointer across threads; the 5-second `kCantTake` timer does the same.
+
+### Pending creations and cancellation
+
+A volume only appears in `books_` once step 4 runs, which can be seconds after it was queued (a catch-up burst queues hundreds). Anything that decides "which volumes does this actor have" in that window would create them again, which is how an NPC ended up with two "volume 1" books. So:
+
+- **Pending count per UUID.** `CreateDiaryBook` counts a volume as pending until it is registered or given up on. `HasPendingCreations(uuid)` makes `UpdateDiaryForActorInternal` wait (it re-runs itself 500 ms later) and makes the catch-up scan skip the actor.
+- **Generation.** Every request carries the generation it was queued in. `CancelPendingCreations()`, called at `kPreLoadGame` and by MCM Reset, drops the queue, clears the pending counts, resets the in-flight slot and bumps the generation. A callback or completion from an older generation is discarded instead of registering an old volume into the new state, and it leaves the in-flight slot alone because the new session may already have a `Create()` in flight.
+- A failed dispatch releases the slot and pumps the next request, so the queue never stalls.
 
 ### The two DPF bugs this pipeline works around
 
@@ -31,7 +40,7 @@ Because of the second bug, **MCM Reset deliberately does not call `DPF.Dispose()
 
 ### Configuring a new form (game thread)
 
-From the template: `data.type` (must be a book tome, `0x00`. A note scroll, `0xFF`, ignores `[pagebreak]`) and `inventoryModel`. Then `weight = 0.5`, `value = 0`, flags cleared and `kCantTake` set, and the name from `Localization::FormatBookName`.
+From the template: `data.type` (must be a book tome, `0x00`. A note scroll, `0xFF`, ignores `[pagebreak]`), `inventoryModel` and `itemCardDescription`. Then `weight = 0.5`, `value = 0`, flags cleared and `kCantTake` set, and the name from `Localization::FormatBookName`.
 
 - **Don't touch `data.teaches`.** Clearing or nulling it crashed DPF's serializer on save. The template's clean value is left alone.
 - **Invalid `sourceFiles` (VR crash fix, untested on VR as of 2026-09-26).** On VR, DPF clones have been seen with `sourceFiles.array == 0x1`. That hard-crashes `TESForm::GetFile` whenever anything calls `GetDescription` (item card refresh, Description Framework, save serialization). On SE/AE the value is `nullptr`, which `GetFile` null-checks. `ClearBogusSourceFiles` resets any value inside the first 64 KB (never a real pointer) to `nullptr`, the SE/AE state. It leaves valid pointers alone, so SE/AE behaviour does not change. It runs on each new clone and, through `SanitizeLoadedBookForms`, on **every** book form at the start of `kPostLoadGame`. That covers the forms DPF restores from its co-save without our callback, **including ones DiaryDB no longer tracks** (Reset orphans, rebuilt volumes, loads where the DB failed to open).

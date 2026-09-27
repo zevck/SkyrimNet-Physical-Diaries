@@ -70,15 +70,13 @@ namespace SkyrimNetDiaries {
                        const std::string& journal04 = "",
                        const std::string& nightingaleJournal = "");
 
-        // Queue creation of a new diary book for an actor (async; always returns
-        // nullptr).  Defined in BookCreation.cpp.
-        RE::TESObjectBOOK* CreateDiaryBook(const std::string& actorUuid, const std::string& actorName,
-                                           double startTime = 0.0, double endTime = 0.0, int volumeNumber = 1,
-                                           RE::FormID targetActorFormID = 0,
-                                           const std::vector<DiaryEntry>& entries = {},
-                                           const std::string& bioTemplateName = "",
-                                           double prevVolumeLastCreationTime = 0.0,
-                                           int prevVolumeCountAtBoundary = 0);
+        // Queues creation of one volume's book (async: DPF creates the form, then the
+        // volume is registered and the book added to the NPC).  `entries` are the
+        // volume's entries, oldest first.  Defined in BookCreation.cpp.
+        void CreateDiaryBook(const std::string& actorUuid, const std::string& actorName,
+                             double startTime, int volumeNumber, RE::FormID targetActorFormID,
+                             const std::vector<DiaryEntry>& entries, const std::string& bioTemplateName,
+                             double prevVolumeLastCreationTime, int prevVolumeCountAtBoundary);
 
         // Get latest volume for an actor by UUID
         DiaryBookData* GetBookForActor(const std::string& actorUuid);
@@ -105,11 +103,15 @@ namespace SkyrimNetDiaries {
         // Update a book's endTime (when diary is stolen/removed)
         void UpdateBookEndTime(const std::string& actorUuid, int volumeNumber, double endTime);
         
-        // Update a volume's entry count for deletion detection
-        void UpdateVolumeEntryCount(const std::string& actorUuid, int volumeNumber, int entryCount);
+        // Renders `entries` into the volume (bounded by its startTime/endTime), writes the
+        // text and entry count to DiaryDB, and updates cachedBookText / lastKnownEntryCount.
+        void SetVolumeText(DiaryBookData& vol, const std::vector<DiaryEntry>& entries);
 
         // Unregister a book (when it becomes obsolete due to deletions)
         void UnregisterBook(const std::string& actorUuid);
+
+        // Drops the actor's volumes numbered fromVolume and up (memory and DiaryDB).
+        void UnregisterVolumesFrom(const std::string& actorUuid, int fromVolume);
 
         // Regenerate all diary texts from database (called on game load)
         void RegenerateAllDiaryTexts();

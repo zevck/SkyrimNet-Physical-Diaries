@@ -108,21 +108,9 @@ namespace SkyrimNetDiaries::Serialization {
                     BookManager::GetSingleton()->Load(a_intfc, version);
                 }
                 else if (type == kSerializationTypeFolder) {
-                    // Load save folder name
-                    std::uint32_t folderLen;
-                    if (!a_intfc->ReadRecordData(&folderLen, sizeof(folderLen))) {
-                        SKSE::log::error("Failed to read folder name length");
-                        continue;
-                    }
-
-                    std::string folder(folderLen, '\0');
-                    if (!a_intfc->ReadRecordData(folder.data(), folderLen)) {
-                        SKSE::log::error("Failed to read folder name");
-                        continue;
-                    }
-                    SaveFolder::Set(folder);
-
-                    SKSE::log::debug("Restored save folder from co-save: {}", folder);
+                    // Legacy: the save folder is always detected from SkyrimNet.log after
+                    // the load, so the stored name is not used (SKSE skips the unread data).
+                    SKSE::log::debug("Ignoring legacy SNDF save-folder record");
                 }
             }
         }

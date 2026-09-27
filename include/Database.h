@@ -35,6 +35,16 @@ namespace SkyrimNetDiaries {
         double importance_score;
     };
 
+    // Chronological order: entry_date, then creation_time (real-world write time)
+    // to break ties between entries dated the same in-game moment.
+    inline bool EntryOlder(const DiaryEntry& a, const DiaryEntry& b) {
+        if (a.entry_date != b.entry_date) return a.entry_date < b.entry_date;
+        return a.creation_time < b.creation_time;
+    }
+
+    // Limit that means "every entry" for GetDiaryEntries.
+    inline constexpr int kFetchAllEntries = 10000;
+
     class Database {
     public:
         Database() = default;
@@ -46,14 +56,28 @@ namespace SkyrimNetDiaries {
         // Check if SkyrimNet memory system is ready
         static bool IsMemorySystemReady();
         
-        // Query diary entries for a specific actor FormID (using API).
-        // prevVolumeLastCreationTime: when > 0, entries with creation_time <= this value are excluded
-        // (prevents the last entry of the previous volume from appearing in this volume when they
-        // share the same entry_date at the boundary).
-        static std::vector<DiaryEntry> GetDiaryEntries(uint32_t formId, int limit = 10000,
+        // Diary entries for a FormID (0 = every actor) within [startTime, endTime]
+        // (0 = unbounded), returned oldest first.
+        //
+        // `limit` is applied by SkyrimNet to the NEWEST entries, so a limited query
+        // returns the latest `limit` entries in the range, not the first.  Use
+        // GetVolumeEntries whenever "the first N entries" matters.
+        //
+        // prevVolumeLastCreationTime / prevVolumeCountAtBoundary remove the previous
+        // volume's entries that share this volume's first entry_date (see
+        // docs/VOLUMES_AND_SYNC.md#volume-boundaries).
+        static std::vector<DiaryEntry> GetDiaryEntries(uint32_t formId, int limit = kFetchAllEntries,
                                                         double startTime = 0.0, double endTime = 0.0,
                                                         double prevVolumeLastCreationTime = 0.0,
                                                         int prevVolumeCountAtBoundary = 0);
+
+        // A volume's entries, oldest first: the whole [startTime, endTime] range minus
+        // the previous volume's boundary entries, then capped to the first maxEntries
+        // (0 = no cap).
+        static std::vector<DiaryEntry> GetVolumeEntries(uint32_t formId, double startTime, double endTime,
+                                                         double prevVolumeLastCreationTime,
+                                                         int prevVolumeCountAtBoundary,
+                                                         int maxEntries = 0);
         
         // Get bio template name for an actor FormID
         static std::string GetBioTemplateName(uint32_t formId);

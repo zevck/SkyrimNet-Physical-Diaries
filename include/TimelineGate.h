@@ -46,4 +46,8 @@ namespace SkyrimNetDiaries::TimelineGate {
     // player chose Clear and SkyrimNet has finished deleting.
     bool IsSettled();
 
+    // What happened to SkyrimNet's history on this load, for logging:
+    // "no prompt", "unanswered", "Keep" or "Clear".
+    std::string_view Outcome();
+
 } // namespace SkyrimNetDiaries::TimelineGate

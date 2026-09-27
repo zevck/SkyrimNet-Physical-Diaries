@@ -156,14 +156,8 @@ namespace SkyrimNetDiaries {
         
         auto entries = ParseDiaryJSON(jsonResponse);
 
-        // Sort oldest-first by (entry_date, creation_time).
-        // creation_time (real-world DB write timestamp) breaks ties for entries that share
-        // the same in-game date, matching the volume-splitting order in CreateAllVolumesForActor.
-        std::sort(entries.begin(), entries.end(),
-                  [](const DiaryEntry& a, const DiaryEntry& b) {
-                      if (a.entry_date != b.entry_date) return a.entry_date < b.entry_date;
-                      return a.creation_time < b.creation_time;
-                  });
+        // Oldest first, matching the volume-splitting order in CreateAllVolumesForActor.
+        std::sort(entries.begin(), entries.end(), EntryOlder);
 
         // Exclude entries belonging to the previous volume.  When two consecutive volumes share
         // the same entry_date at their boundary, the previous volume's last entry(ies) would
@@ -196,6 +190,19 @@ namespace SkyrimNetDiaries {
 
         SKSE::log::debug("Retrieved {} diary entries for FormID 0x{:X}", entries.size(), formId);
         
+        return entries;
+    }
+
+    std::vector<DiaryEntry> Database::GetVolumeEntries(uint32_t formId, double startTime, double endTime,
+                                                       double prevVolumeLastCreationTime,
+                                                       int prevVolumeCountAtBoundary, int maxEntries) {
+        // Fetch the whole range: SkyrimNet's limit keeps the newest entries, which would
+        // drop the volume's oldest ones.
+        auto entries = GetDiaryEntries(formId, kFetchAllEntries, startTime, endTime,
+                                       prevVolumeLastCreationTime, prevVolumeCountAtBoundary);
+        if (maxEntries > 0 && static_cast<int>(entries.size()) > maxEntries) {
+            entries.resize(maxEntries);
+        }
         return entries;
     }
 

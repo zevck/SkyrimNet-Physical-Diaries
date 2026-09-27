@@ -33,4 +33,13 @@ namespace SkyrimNetDiaries {
     // Claims are per-session; cleared from BookManager::ClearActorCache on each load.
     void ClearBookFormIdClaims();
 
+    // True while any of the actor's volumes are queued or being created, i.e. not
+    // yet in books_.  Anything that decides "which volumes does this actor have"
+    // must wait for these, or it creates the same volumes twice.
+    bool HasPendingCreations(const std::string& actorUuid);
+
+    // kPreLoadGame and MCM Reset: drops queued creations and discards results of
+    // any Create() still in flight, so they can't register into the new state.
+    void CancelPendingCreations();
+
 } // namespace SkyrimNetDiaries

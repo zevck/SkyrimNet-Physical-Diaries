@@ -31,15 +31,29 @@ namespace SkyrimNetDiaries {
     // volumes.  Game thread only.
     void UpdateDiaryForActorInternal(RE::FormID formId);
 
-    // False from kPreLoadGame until the post-load sync has run.  While false,
-    // UpdateDiaryForActorInternal ignores diary events: DiaryDB isn't loaded yet, so
-    // it would take every actor for new and create duplicate volumes.  The post-load
-    // recovery and catch-up scans pick those entries up instead.
+    // False from kPreLoadGame until the post-load sync has run.  While false, diary
+    // events wait (DeferUntilSyncReady): DiaryDB isn't loaded yet, so every actor
+    // would look new and get duplicate volumes.
     void SetPostLoadSyncReady(bool ready);
+    bool IsPostLoadSyncReady();
+
+    // Runs handler(formId) on the game thread once the post-load sync has run,
+    // polling every 500 ms.  Dropped if another load starts first (that load's
+    // recovery and catch-up scans pick the entry up).
+    void DeferUntilSyncReady(RE::FormID formId, void (*handler)(RE::FormID));
+
+    // Post-load, once SkyrimNet has settled its timeline (TimelineGate): checks every
+    // volume that ends after the loaded save's game time against the entries
+    // SkyrimNet still has.  After Clear those entries are gone, so the volume is
+    // re-rendered with its end moved back, or dropped (with its book taken back from
+    // the NPC) when nothing is left.  After Keep they are all there and nothing
+    // changes.  Run after LoadFromDB and before QueueInventoryCheck.
+    void ReconcileWithTimeline();
 
     // kPostLoadGame (revert + KEEP): queues an update for every actor whose latest
-    // volume is missing entries SkyrimNet still has.
-    void QueueSealedVolumeRecovery(const std::unordered_set<std::string>& skipUuids = {});
+    // volume is missing entries SkyrimNet still has.  Skips actors in skipUuids and
+    // adds the ones it queues, so the catch-up scan can skip them too.
+    void QueueSealedVolumeRecovery(std::unordered_set<std::string>& skipUuids);
 
     // kPostLoadGame: pages through all diary entries to find actors that have
     // none of our volumes yet, then creates theirs, one actor per task.

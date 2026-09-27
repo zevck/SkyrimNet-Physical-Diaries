@@ -173,6 +173,15 @@ namespace SkyrimNetDiaries::TimelineGate {
         g_loggedWaiting = false;
     }
 
+    std::string_view Outcome() {
+        switch (g_prompt.load()) {
+        case Prompt::kShown:   return "unanswered";
+        case Prompt::kKept:    return "Keep";
+        case Prompt::kCleared: return "Clear";
+        default:               return "no prompt";
+        }
+    }
+
     bool IsSettled() {
         const auto now = Clock::now();
         if (!g_checked) {

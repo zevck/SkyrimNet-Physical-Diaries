@@ -29,6 +29,14 @@ namespace PapyrusAPI {
 
     // Shared by both diary-event natives.
     void UpdateDiaryForFormID(RE::FormID formId) {
+        // During a load, wait for the post-load sync: until then DiaryDB may still be
+        // the previous save's, so even the theft clear below must not run yet.
+        if (!SkyrimNetDiaries::IsPostLoadSyncReady()) {
+            SKSE::log::info("[PapyrusAPI] Diary event for FormID 0x{:X} waits for the post-load sync", formId);
+            SkyrimNetDiaries::DeferUntilSyncReady(formId, UpdateDiaryForFormID);
+            return;
+        }
+
         // Clear theft tracking here in C++ so it always runs regardless of whether the
         // Papyrus caller was able to resolve the Actor object (NPCs not in a loaded cell
         // will return None from Game.GetForm, which silently skips SetTheftCleared).
