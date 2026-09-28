@@ -63,6 +63,7 @@ namespace DynamicForms {
     {
         std::lock_guard lock{ g_mutex };
         const auto formId = a_record.formId;
+        if (a_record.retired) g_anyRetired = true;
         g_tracked.insert_or_assign(formId, std::move(a_record));
     }
 

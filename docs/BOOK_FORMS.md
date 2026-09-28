@@ -75,6 +75,7 @@ What's left are forms nothing can see: a few hundred bytes each in the save. A c
 Only certain evidence retires a book:
 - **MCM Reset** (`ResetAllDiariesInternal`): every tracked form, after memory is cleared.
 - **`UnregisterVolumesFrom`**: volumes `ReconcileWithTimeline` drops after a Clear.
+- **`LoadFromDB`**, migrating from 1.x with DPF still installed: the old DPF diaries (see [Migration](#migration-from-dpf-200)).
 
 ---
 
@@ -106,7 +107,7 @@ Only hits are cached (`g_actorCacheByUuid`, keyed by UUID), so a miss retries ne
 
 - The first load of an older save has no `'SNBF'` record and none of its DiaryDB rows match a tracked form, so every volume is recreated with the same content and a new `0xFF` FormID. Catch-up and recovery already handle this.
 - Without `Dynamic Persistent Forms.esp` the old forms don't exist, so the engine drops their inventory entries: **copies the player held (stolen or dropped) are lost once.** Theft records clear through the normal "the NPC writes" path. Skyrim may warn once per save that it relies on content no longer present.
-- A user who keeps DPF for another mod gets the old diary forms restored by DPF in older saves, as blank books nothing claims.
+- A user who keeps DPF for another mod still has the old diary forms (at every game start DPF recreates every form it ever made, from one global cache file shared by all saves, until a New Game deletes them; SNPD 1.x never called `Dispose`, which caused duplicate FormIDs). `LoadFromDB` recognises them: a row with no book in the save whose old FormID is still a DPF clone of a template (plugin FormID, template model) is tracked as retired, so the sweep clears its copies everywhere, as after a Reset.
 - DiaryDB's schema is unchanged apart from the unused `persisted_in_save` column, which old DBs keep. `stolen_volumes` and `actor_templates` carry over.
 
 ---

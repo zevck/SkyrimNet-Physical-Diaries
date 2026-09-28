@@ -53,7 +53,7 @@ Found under **SkyrimNet Physical Diaries** in the Mod Configuration Menu.
 
 Install with a mod manager as normal. Load order: place after SkyrimNet.
 
-**Updating from 1.x:** Dynamic Persistent Forms is no longer needed; remove it unless another mod uses it. On the first load of an older save every diary is rebuilt with the same entries. Diary copies you were carrying (stolen or picked up) are lost once, and Skyrim may warn that the save relies on content that is no longer present. Saves made with 2.0.0 can't go back to an older version.
+**Updating from 1.x:** Dynamic Persistent Forms is no longer needed; remove it unless another mod uses it (if you keep it, the old diaries are cleared automatically). On the first load of an older save every diary is rebuilt with the same entries. Diary copies you were carrying (stolen or picked up) are lost once, and Skyrim may warn that the save relies on content that is no longer present. Saves made with 2.0.0 can't go back to an older version.
 
 Diary theft awareness needs SkyrimNet Beta 25 or later. The mod ships a SkyrimNet plugin (`SKSE/Plugins/SkyrimNet/external/zevick.physical-diaries/`) that tells an NPC their diary was stolen when they write their next entry. It appears under **Plugins > Installed Plugins** in the SkyrimNet dashboard with an **External** badge. No prompt editing is needed; if you added the old snippet to `diary_entry.prompt` yourself, remove it.
 

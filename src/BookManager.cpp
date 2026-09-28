@@ -77,6 +77,22 @@ namespace SkyrimNetDiaries {
     }
 
     namespace {
+        // A 1.x diary: a Dynamic Persistent Forms clone of one of the templates (a plugin
+        // FormID, not 0xFF, and the template's model: its name can belong to another
+        // NPC, since DPF reused FormIDs).  While DPF stays installed it recreates these
+        // at every game start, from a cache file shared by all saves.
+        bool IsDpfDiary(const RE::TESObjectBOOK* book) {
+            if (!book || (book->GetFormID() >> 24) == 0xFF) return false;
+            const char* model = book->GetModel();
+            if (!model || !*model) return false;
+            std::vector<const char*> templates(std::begin(kJournalTemplates), std::end(kJournalTemplates));
+            templates.push_back(kNightingaleTemplate);
+            return std::ranges::any_of(templates, [model](const char* editorId) {
+                const auto* tmpl = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>(editorId);
+                return tmpl && tmpl->GetModel() && _stricmp(tmpl->GetModel(), model) == 0;
+            });
+        }
+
         // Karliah, Gallus and Mercer Frey (Skyrim.esm NPC_ records) get the Nightingale
         // journal.  Matched by the actor's base form, never by name: names are
         // localized, and SkyrimNet display names can differ from the engine's.
@@ -420,6 +436,20 @@ namespace SkyrimNetDiaries {
                 // the volume has no book here.  It is recreated from SkyrimNet's entries.
                 SKSE::log::info("[LoadFromDB] {} vol {}: no book in this save — removing row and queuing recreation",
                                 row.actorName, row.volumeNumber);
+                // Migrating from 1.x with DPF still installed: the old diary still
+                // exists.  Retire it, so the sweep clears its copies like a Reset's.
+                if (auto* old = RE::TESForm::LookupByID<RE::TESObjectBOOK>(static_cast<RE::FormID>(row.bookFormId));
+                    IsDpfDiary(old)) {
+                    SKSE::log::info("[LoadFromDB] {} vol {}: its 1.x DPF book 0x{:X} still exists — retired",
+                                    row.actorName, row.volumeNumber, row.bookFormId);
+                    DynamicForms::Track({ .formId = old->GetFormID(),
+                                          .formType = RE::FormType::Book,
+                                          .key = VolumeKey(row.actorUuid, row.volumeNumber),
+                                          .templateEditorId = row.journalTemplate,
+                                          .displayName = old->GetFullName() ? old->GetFullName() : "",
+                                          .retired = true });
+                    RetireBook(old->GetFormID(), row.actorUuid);
+                }
                 db->DeleteVolume(row.actorUuid, row.volumeNumber);
                 invalidActors.push_back(row.actorUuid);
                 continue;
