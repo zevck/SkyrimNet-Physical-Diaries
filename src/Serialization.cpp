@@ -26,19 +26,18 @@
 namespace SkyrimNetDiaries::Serialization {
 
     namespace {
-        constexpr std::uint32_t kSerializationVersion = 3;
-        constexpr std::uint32_t kSerializationTypeBooks = 'SNDB'; // SkyrimNet Diary Books
-        // Retired 'SNDC' records may still exist in older saves; LoadCallback skips them.
-        constexpr std::uint32_t kSerializationTypeFolder = 'SNDF'; // SkyrimNet Diary Folder (save-specific database name)
+        // The co-save carries no data: DiaryDB is the source of truth, and the save
+        // folder is detected from SkyrimNet.log.  The callbacks are still needed for
+        // their timing.  Older saves hold 'SNDB', 'SNDF' and 'SNDC' records; with no
+        // load callback SKSE skips them.
+        constexpr std::uint32_t kSerializationId = 'SNDB';
 
-        void SaveCallback(SKSE::SerializationInterface* a_intfc) {
+        void SaveCallback([[maybe_unused]] SKSE::SerializationInterface* a_intfc) {
             try {
-                // Ensure the DiaryDB is open before writing the sentinel.
-                // On a fresh/new game kPostLoadGame never fires, so the DB may not have been
-                // opened yet.  Detect the save folder now and flush all in-memory books so
-                // nothing is lost when the save is later reloaded.
-                // Not during a load's post-load wait: SkyrimNet.log may still name the
-                // previous save's folder then, and the sync opens the right DB itself.
+                // A new game never gets a post-load sync, so its first save opens
+                // DiaryDB here and flushes the volumes created so far.  Not during a
+                // load's post-load wait: SkyrimNet.log may still name the previous
+                // save's folder then, and the sync opens the right DB itself.
                 auto* db = DiaryDB::GetSingleton();
                 if (!db->IsOpen() && IsPostLoadSyncReady()) {
                     if (SaveFolder::Get().empty()) {
@@ -51,33 +50,6 @@ namespace SkyrimNetDiaries::Serialization {
                 if (db->IsOpen()) {
                     BookManager::GetSingleton()->FlushToDB();
                 }
-
-                // Save book data
-                if (!a_intfc->OpenRecord(kSerializationTypeBooks, kSerializationVersion)) {
-                    SKSE::log::error("Failed to open book serialization record");
-                    return;
-                }
-                BookManager::GetSingleton()->Save(a_intfc);
-
-                // Save current save folder name
-                if (!SaveFolder::Get().empty()) {
-                    if (!a_intfc->OpenRecord(kSerializationTypeFolder, kSerializationVersion)) {
-                        SKSE::log::error("Failed to open folder serialization record");
-                        return;
-                    }
-
-                    std::uint32_t folderLen = static_cast<std::uint32_t>(SaveFolder::Get().length());
-                    if (!a_intfc->WriteRecordData(&folderLen, sizeof(folderLen))) {
-                        SKSE::log::error("Failed to write folder name length");
-                        return;
-                    }
-                    if (!a_intfc->WriteRecordData(SaveFolder::Get().c_str(), folderLen)) {
-                        SKSE::log::error("Failed to write folder name");
-                        return;
-                    }
-
-                    SKSE::log::debug("Saved current save folder: {}", SaveFolder::Get());
-                }
             } catch (const std::exception& e) {
                 SKSE::log::error("SaveCallback exception: {}", e.what());
             } catch (...) {
@@ -85,49 +57,19 @@ namespace SkyrimNetDiaries::Serialization {
             }
         }
 
-        void LoadCallback(SKSE::SerializationInterface* a_intfc) {
-            try {
-                // The save folder is detected from SkyrimNet.log by the post-load sync.
-                std::uint32_t type;
-                std::uint32_t version;
-                std::uint32_t length;
-
-                while (a_intfc->GetNextRecordInfo(type, version, length)) {
-                    if (version > kSerializationVersion) {
-                        SKSE::log::error("Serialization version too new for type {}: expected <={}, got {}", type, kSerializationVersion, version);
-                        continue;
-                    }
-
-                    if (type == kSerializationTypeBooks) {
-                        BookManager::GetSingleton()->Load(a_intfc, version);
-                    }
-                    else if (type == kSerializationTypeFolder) {
-                        // Legacy: the save folder is always detected from SkyrimNet.log after
-                        // the load, so the stored name is not used (SKSE skips the unread data).
-                        SKSE::log::debug("Ignoring legacy SNDF save-folder record");
-                    }
-                }
-            } catch (const std::exception& e) {
-                SKSE::log::error("LoadCallback exception: {}", e.what());
-            } catch (...) {
-                SKSE::log::error("LoadCallback: unknown exception");
-            }
-        }
-
         void RevertCallback([[maybe_unused]] SKSE::SerializationInterface* a_intfc) {
-            // Called when starting a new game - clear all books and tracking
+            // A new game or a load: clear in-memory volumes (DiaryDB on disk stays).
             BookManager::GetSingleton()->Revert();
             SaveFolder::Clear();
-            SKSE::log::info("Reverted all diary data and caches (new game)");
+            SKSE::log::info("Reverted all diary data and caches");
         }
 
     } // namespace
 
     void Register() {
         auto serialization = SKSE::GetSerializationInterface();
-        serialization->SetUniqueID(kSerializationTypeBooks);
+        serialization->SetUniqueID(kSerializationId);
         serialization->SetSaveCallback(SaveCallback);
-        serialization->SetLoadCallback(LoadCallback);
         serialization->SetRevertCallback(RevertCallback);
     }
 

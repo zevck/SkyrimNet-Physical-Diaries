@@ -291,7 +291,7 @@ namespace {
                     }
 
                     // Pass skip set so these two paths don't re-queue the same actors.
-                    SkyrimNetDiaries::QueueSealedVolumeRecovery(skipUuids);
+                    SkyrimNetDiaries::QueueNewEntryRecovery(skipUuids);
                     SkyrimNetDiaries::QueueBatchCatchUpScan(std::move(skipUuids));
                 } catch (const std::exception& e) {
                     SKSE::log::error("Exception in the post-load sync: {}", e.what());

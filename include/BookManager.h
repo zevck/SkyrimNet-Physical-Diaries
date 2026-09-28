@@ -142,12 +142,10 @@ namespace SkyrimNetDiaries {
 
         // Called by BookTextHook immediately before a diary volume's text is injected
         // into the book UI.  Queries live entry count, reformats if it changed, and
-        // updates the sealed endTime if entries were deleted.
+        // moves the volume's endTime back if entries were deleted.
         void RefreshVolumeOnOpen(DiaryBookData* vol);
 
-        // Serialization (co-save — legacy; data now lives in DiaryDB)
-        void Save(SKSE::SerializationInterface* a_intfc);
-        void Load(SKSE::SerializationInterface* a_intfc, std::uint32_t version = 1);
+        // New game or load: clears the in-memory volumes (DiaryDB stays).
         void Revert();
 
     private:
@@ -161,6 +159,9 @@ namespace SkyrimNetDiaries {
 
         std::unordered_map<std::string, std::string> actorTemplates_;  // UUID → template choice (persists across volumes)
         std::unordered_map<std::string, std::vector<DiaryBookData>> books_; // UUID → all volumes
+        // Book FormID → (UUID, volume number): GetBookForFormID runs on every book open,
+        // container change and description read.  Kept in step with every books_ edit.
+        std::unordered_map<RE::FormID, std::pair<std::string, int>> formIndex_;
     };
 
 } // namespace SkyrimNetDiaries

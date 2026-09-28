@@ -2,7 +2,7 @@
 
 How SkyrimNet's diary entries become volumes, how volumes stay in step with SkyrimNet when entries are added or deleted, and how save reverts are handled.
 
-Code: `src/VolumeSync.cpp` (`CreateAllVolumesForActor`, `UpdateDiaryForActorInternal`, `QueueSealedVolumeRecovery`, `QueueBatchCatchUpScan` / `RunDiscoveryBatch`), `src/Database.cpp` (`GetDiaryEntries`), `src/BookManager.cpp` (`RefreshVolumeOnOpen`), `src/TimelineGate.cpp` (waiting for SkyrimNet's keep/clear decision).
+Code: `src/VolumeSync.cpp` (`CreateAllVolumesForActor`, `UpdateDiaryForActorInternal`, `QueueNewEntryRecovery`, `QueueBatchCatchUpScan` / `RunDiscoveryBatch`), `src/Database.cpp` (`GetDiaryEntries`), `src/BookManager.cpp` (`RefreshVolumeOnOpen`), `src/TimelineGate.cpp` (waiting for SkyrimNet's keep/clear decision).
 
 ---
 
@@ -60,7 +60,7 @@ It waits rather than runs in two cases, re-running itself 500 ms later on the ga
 
 Rendering writes the text to DiaryDB (`UpdateBookText`) and to `cachedBookText`, and updates `lastKnownEntryCount`.
 
-"Sealed" means three things in this code. Here, a volume is sealed when it hits the entry limit. In `RefreshVolumeOnOpen`, a volume is sealed if a newer volume exists. In `QueueSealedVolumeRecovery`, it means `endTime > 0`, which is true of almost every volume, including the latest (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
+**Sealed** means only this: the volume hit the entry limit and later entries went into a new volume. Elsewhere the code says what it checks: an **earlier volume** is any volume with a newer one after it (`RefreshVolumeOnOpen` bounds its query by `endTime`), and the **latest volume** is the one new entries can still go into.
 
 ---
 
@@ -68,9 +68,9 @@ Rendering writes the text to DiaryDB (`UpdateBookText`) and to `cachedBookText`,
 
 Both run at the end of the `kPostLoadGame` setup (see [ARCHITECTURE.md](ARCHITECTURE.md#startup-and-load-sequence)). They share a skip set: recovery skips actors already queued for recreation and adds every actor it queues, so the catch-up scan never also creates volumes for them. The catch-up scan additionally skips actors with pending creations.
 
-**`QueueSealedVolumeRecovery`**, per actor with volumes, looking at the latest volume:
+**`QueueNewEntryRecovery`**, per actor with volumes, looking at the latest volume:
 - `endTime > 0` → ask SkyrimNet for one entry after `endTime + 0.001`. If one exists → queue `UpdateDiaryForActorInternal`. This catches entries written while SNPD was not listening: the KEEP choice on a revert, or entries created from the SkyrimNet dashboard while the game was paused.
-- `endTime == 0` (legacy rows only) → compare the live entry count with `lastKnownEntryCount`.
+- `endTime == 0` (only rows from early versions; SNPD sets `endTime` on every volume it creates) → compare the live entry count with `lastKnownEntryCount`.
 
 **`QueueBatchCatchUpScan`** finds actors who have entries but no volumes (first install on an existing save, or after Reset):
 1. Discovery: `RunDiscoveryBatch` asks for 50 entries across all actors (`formId = 0`) per game-thread task, paging backward by the oldest timestamp seen, and collects the distinct UUIDs. A page made up only of boundary duplicates ends the scan, which prevents an infinite loop.
@@ -120,9 +120,9 @@ It replaces the old game-time rebuild ("not saved and `endTime` after now"), whi
 
 ### KEEP and CLEAR outside a load
 
-**KEEP (SkyrimNet kept entries SNPD never saw)** is also handled eagerly at load by `QueueSealedVolumeRecovery`, above.
+**KEEP (SkyrimNet kept entries SNPD never saw)** is also handled eagerly at load by `QueueNewEntryRecovery`, above.
 
-**Deletions SNPD didn't see happen** (for example from the SkyrimNet dashboard) are handled lazily in `RefreshVolumeOnOpen`, which re-renders and **moves the sealed `endTime` back**. That `endTime` move is essential: without it, `QueueSealedVolumeRecovery` would look past the deleted entry's timestamp on the next load and create a duplicate volume. The two are coupled; don't change one without the other. Lazy is fine for CLEAR (nothing is wrong until someone reads the book), but `lastKnownEntryCount` stays stale until that volume is opened.
+**Deletions SNPD didn't see happen** (for example from the SkyrimNet dashboard) are handled lazily in `RefreshVolumeOnOpen`, which re-renders and **moves the volume's `endTime` back**. That `endTime` move is essential: without it, `QueueNewEntryRecovery` would look past the deleted entry's timestamp on the next load and create a duplicate volume. The two are coupled; don't change one without the other. Lazy is fine for CLEAR (nothing is wrong until someone reads the book), but `lastKnownEntryCount` stays stale until that volume is opened.
 
 Backwards time travel also clears stolen-volume records at load (see [THEFT.md](THEFT.md#save-reverts)).
 

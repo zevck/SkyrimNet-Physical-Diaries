@@ -135,12 +135,13 @@ namespace SkyrimNetDiaries {
     }
 
     DiaryBookData* BookManager::GetBookForFormID(RE::FormID formId) {
-        // Search all actors' volumes for matching FormID
-        for (auto& [uuid, volumes] : books_) {
-            for (auto& book : volumes) {
-                if (book.bookFormId == formId) {
-                    return &book;
-                }
+        const auto entry = formIndex_.find(formId);
+        if (entry == formIndex_.end()) return nullptr;
+        const auto actor = books_.find(entry->second.first);
+        if (actor == books_.end()) return nullptr;
+        for (auto& book : actor->second) {
+            if (book.volumeNumber == entry->second.second && book.bookFormId == formId) {
+                return &book;
             }
         }
         return nullptr;
@@ -153,6 +154,7 @@ namespace SkyrimNetDiaries {
         }
         auto& volumes = books_[data.actorUuid];
         auto& registered = volumes.emplace_back(std::move(data));
+        formIndex_[registered.bookFormId] = { registered.actorUuid, registered.volumeNumber };
         SKSE::log::info("Registered book for actor {}: FormID 0x{:X}, Volume {} (template: {}, subfolder: {})",
                        registered.actorUuid, registered.bookFormId, registered.volumeNumber,
                        registered.journalTemplate, registered.bioTemplateName);
@@ -217,6 +219,7 @@ namespace SkyrimNetDiaries {
         for (auto vol = volumes.begin(); vol != volumes.end();) {
             if (vol->volumeNumber >= fromVolume) {
                 db->DeleteVolume(actorUuid, vol->volumeNumber);
+                formIndex_.erase(vol->bookFormId);
                 vol = volumes.erase(vol);
                 ++removed;
             } else {
@@ -271,25 +274,11 @@ namespace SkyrimNetDiaries {
         }
     }
 
-    void BookManager::Save(SKSE::SerializationInterface* a_intfc) {
-        // Volume data is now stored in DiaryDB (SQLite) — persists across reverts.
-        // Write a sentinel so the co-save record stays well-formed.
-        std::uint32_t sentinel = 0;
-        a_intfc->WriteRecordData(&sentinel, sizeof(sentinel)); // totalVolumes = 0
-        a_intfc->WriteRecordData(&sentinel, sizeof(sentinel)); // actorTemplateCount = 0
-        SKSE::log::debug("[BookManager] Save: sentinel written (real data lives in DiaryDB)");
-    }
-
-    void BookManager::Load(SKSE::SerializationInterface* /*a_intfc*/, std::uint32_t /*version*/) {
-        // Volume data is loaded from DiaryDB in LoadFromDB() (called from kPostLoadGame).
-        // The sentinel written by Save() is intentionally ignored.
-        SKSE::log::debug("[BookManager] Load: skipping co-save (real data loaded from DiaryDB)");
-    }
-
     void BookManager::Revert() {
         // Clear in-memory maps only; DiaryDB on disk is intentionally preserved
         // so that volume metadata survives the revert and loads correctly.
         books_.clear();
+        formIndex_.clear();
         actorTemplates_.clear();
         SKSE::log::debug("[BookManager] Revert: in-memory data cleared (DiaryDB preserved on disk)");
     }
@@ -388,6 +377,7 @@ namespace SkyrimNetDiaries {
         // session survive and cause the catch-up scan to think every actor already
         // has books — so nothing gets recreated after a reload-without-save.
         books_.clear();
+        formIndex_.clear();
         actorTemplates_.clear();
 
         if (!db->IsOpen()) {
@@ -438,6 +428,7 @@ namespace SkyrimNetDiaries {
                 }
             }
 
+            formIndex_[data.bookFormId] = { data.actorUuid, data.volumeNumber };
             books_[data.actorUuid].push_back(std::move(data));
         }
 
@@ -480,13 +471,13 @@ namespace SkyrimNetDiaries {
 
         // For the active (latest) volume use 0.0 so entries written after the
         // last update are visible even if UpdateDiaryForActorInternal hasn't run yet.
-        // For sealed older volumes, respect vol->endTime as the upper-time cutoff.
+        // For an earlier volume (a newer one exists), vol->endTime is the upper cutoff.
         double queryEnd = 0.0;
         {
             auto* allVols = GetAllVolumesForActor(vol->actorUuid);
             if (allVols && !allVols->empty() &&
                 allVols->back().volumeNumber != vol->volumeNumber) {
-                // A newer volume exists → this one is sealed.
+                // A newer volume exists: stop at this one's end.
                 queryEnd = vol->endTime;
             }
         }
@@ -516,7 +507,7 @@ namespace SkyrimNetDiaries {
                 vol->actorName, vol->volumeNumber, liveCount);
         }
 
-        // Entries were deleted — update sealed endTime so QueueSealedVolumeRecovery
+        // Entries were deleted — move endTime back so QueueNewEntryRecovery
         // doesn't probe beyond the now-missing entry's timestamp and spawn a duplicate volume.
         if (liveCount < vol->lastKnownEntryCount) {
             SKSE::log::info("[SNPD] {} vol {} shrank {} → {} entries on open",
@@ -524,7 +515,7 @@ namespace SkyrimNetDiaries {
             if (vol->endTime > 0.0 && !liveEntries.empty()) {
                 double newEnd = liveEntries.back().entry_date;
                 if (newEnd != vol->endTime) {
-                    SKSE::log::debug("[SNPD]   sealed endTime updated {:.2f} → {:.2f}", vol->endTime, newEnd);
+                    SKSE::log::debug("[SNPD]   endTime updated {:.2f} → {:.2f}", vol->endTime, newEnd);
                     DiaryDB::GetSingleton()->UpdateEndTime(vol->actorUuid, vol->volumeNumber, newEnd);
                     vol->endTime = newEnd;
                 }

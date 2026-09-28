@@ -23,6 +23,8 @@
 #include "Database.h"
 #include "DiaryDB.h"
 #include "Localization.h"
+#include <chrono>
+#include <condition_variable>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -127,16 +129,52 @@ namespace SkyrimNetDiaries {
         // creation crashed before DPF had finished registering the form.
         constexpr auto kCantTakeDuration = std::chrono::seconds(5);
 
-        void ClearCantTakeLater(RE::FormID bookId, std::string bookName) {
-            std::thread([bookId, bookName = std::move(bookName)]() {
-                std::this_thread::sleep_for(kCantTakeDuration);
-                SKSE::GetTaskInterface()->AddTask([bookId, bookName]() {
-                    if (auto* book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(bookId)) {
-                        book->data.flags.reset(RE::OBJ_BOOK::Flag::kCantTake);
-                        SKSE::log::debug("Removed kCantTake flag from '{}' - book is now safe to take", bookName);
+        // One timer thread for every pending kCantTake clear (a catch-up burst creates
+        // hundreds of books).  Deadlines are queued in order, since the delay is fixed.
+        struct CantTakeTimer {
+            struct Pending { std::chrono::steady_clock::time_point due; RE::FormID bookId; std::string bookName; };
+            std::mutex mutex;
+            std::condition_variable wake;
+            std::deque<Pending> queue;
+            bool started = false;
+
+            void Add(RE::FormID bookId, std::string bookName) {
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    queue.push_back({ std::chrono::steady_clock::now() + kCantTakeDuration, bookId, std::move(bookName) });
+                    if (!started) {
+                        started = true;
+                        std::thread([this]() { Run(); }).detach();
                     }
-                });
-            }).detach();
+                }
+                wake.notify_one();
+            }
+
+            void Run() {
+                std::unique_lock<std::mutex> lock(mutex);
+                while (true) {
+                    wake.wait(lock, [this]() { return !queue.empty(); });
+                    const auto due = queue.front().due;
+                    if (wake.wait_until(lock, due, [&]() { return queue.empty() || queue.front().due != due; })) {
+                        continue;  // the front changed while waiting
+                    }
+                    Pending next = std::move(queue.front());
+                    queue.pop_front();
+                    lock.unlock();
+                    SKSE::GetTaskInterface()->AddTask([bookId = next.bookId, bookName = std::move(next.bookName)]() {
+                        if (auto* book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(bookId)) {
+                            book->data.flags.reset(RE::OBJ_BOOK::Flag::kCantTake);
+                            SKSE::log::debug("Removed kCantTake flag from '{}' - book is now safe to take", bookName);
+                        }
+                    });
+                    lock.lock();
+                }
+            }
+        };
+
+        void ClearCantTakeLater(RE::FormID bookId, std::string bookName) {
+            static CantTakeTimer timer;
+            timer.Add(bookId, std::move(bookName));
         }
 
         // Game thread: configure the new form from its template, register the volume,

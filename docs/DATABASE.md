@@ -1,6 +1,6 @@
 # Database and Persistence
 
-SNPD keeps its state in a per-save SQLite database (DiaryDB). The SKSE co-save holds only a sentinel and the save-folder name. **DiaryDB is the source of truth**, but only for SNPD's own data (volume boundaries, book FormIDs, rendered text, theft records). Diary content always comes from SkyrimNet.
+SNPD keeps its state in a per-save SQLite database (DiaryDB). The SKSE co-save holds nothing (the callbacks are used only for their timing). **DiaryDB is the source of truth**, but only for SNPD's own data (volume boundaries, book FormIDs, rendered text, theft records). Diary content always comes from SkyrimNet.
 
 Code: `src/DiaryDB.cpp`, `include/DiaryDB.h` (singleton `SkyrimNetDiaries::DiaryDB`); co-save callbacks in `src/Serialization.cpp`; save-folder detection in `src/SaveFolder.cpp`.
 
@@ -42,15 +42,15 @@ There is no version table. New columns are added in `EnsureSchema()` with `ALTER
 
 ## Co-save records
 
-Unique ID `'SNDB'`, record version 3.
+None. SNPD registers co-save callbacks under the unique ID `'SNDB'` only for their timing: `SaveCallback` opens DiaryDB on a new game's first save and flushes the volumes, and `RevertCallback` clears the in-memory volumes. It writes no records and registers no load callback, so SKSE skips the records older saves carry:
 
-| Record | Contents | Status |
+| Record | Was | Retired |
 |---|---|---|
-| `SNDB` | Two zero `uint32`s. `BookManager::Save`/`Load` write and ignore it. | Sentinel from when volumes lived in the co-save |
-| `SNDF` | Save-folder name | Written for compatibility, ignored on load: the folder is always detected from `SkyrimNet.log` |
-| `SNDC` | FormID → UUID cache | **Retired 2026-09-26.** Its only reader was a log-only event sink. Older saves still have the record; `LoadCallback` has no branch for it and SKSE skips unread records. |
+| `SNDB` | Two zero `uint32`s, a sentinel from when volumes lived in the co-save | 2026-09-27 |
+| `SNDF` | Save-folder name; ignored on load for some time, since the folder is always detected from `SkyrimNet.log` | 2026-09-27 |
+| `SNDC` | FormID → UUID cache, read only by a log-only event sink | 2026-09-26 |
 
-In short, the co-save does no real work any more. Removing it changes the save format, so it is left for a deliberate change (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
+A save made with 1.2.0 and loaded in an older SNPD just has no records; the older version already detects the folder from `SkyrimNet.log`.
 
 ## MCM Reset (`ResetAllDiariesInternal`)
 

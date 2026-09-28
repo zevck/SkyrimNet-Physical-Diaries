@@ -59,7 +59,7 @@ namespace SkyrimNetDiaries {
     // kPostLoadGame (revert + KEEP): queues an update for every actor whose latest
     // volume is missing entries SkyrimNet still has.  Skips actors in skipUuids and
     // adds the ones it queues, so the catch-up scan can skip them too.
-    void QueueSealedVolumeRecovery(std::unordered_set<std::string>& skipUuids);
+    void QueueNewEntryRecovery(std::unordered_set<std::string>& skipUuids);
 
     // kPostLoadGame: pages through all diary entries to find actors that have
     // none of our volumes yet, then creates theirs, one actor per task.

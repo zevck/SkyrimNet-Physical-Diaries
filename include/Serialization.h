@@ -21,7 +21,8 @@
 
 #include "PCH.h"
 
-// SKSE co-save callbacks.  The records are legacy: DiaryDB is the source of truth.
+// SKSE co-save callbacks, used only for their timing (no records are written):
+// DiaryDB is the source of truth.
 // See docs/DATABASE.md.
 namespace SkyrimNetDiaries::Serialization {
 

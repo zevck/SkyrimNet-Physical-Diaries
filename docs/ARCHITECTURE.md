@@ -68,7 +68,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 | Book creation | `src/BookCreation.cpp`, `include/BookCreation.h` | `CreateDiaryBook`, the serial DPF create queue, `DPFCreateCallback`, the FormID claim table, the `sourceFiles` fix. See [BOOK_FORMS.md](BOOK_FORMS.md). |
 | Actor lookup | `src/ActorLookup.cpp`, `include/ActorLookup.h` | `FindActorForBook`: volume → owning NPC by UUID, with a per-session cache |
 | Text rendering | `src/BookText.cpp`, `include/BookText.h` | `FormatDiaryEntries`, text sanitizing, game-date formatting. See [BOOK_TEXT.md](BOOK_TEXT.md). |
-| Save folder, co-save | `src/SaveFolder.cpp`, `src/Serialization.cpp` (+ headers) | Detecting the SkyrimNet save folder from `SkyrimNet.log`; the legacy co-save callbacks. See [DATABASE.md](DATABASE.md). |
+| Save folder, co-save | `src/SaveFolder.cpp`, `src/Serialization.cpp` (+ headers) | Detecting the SkyrimNet save folder from `SkyrimNet.log`; the co-save callbacks (used for their timing; no records). See [DATABASE.md](DATABASE.md). |
 | Timeline gate | `src/TimelineGate.cpp`, `include/TimelineGate.h` | Holds the post-load sync until SkyrimNet's keep/clear timeline prompt is answered (MinHook detour on `MessageBoxData::QueueMessage`). See [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#waiting-for-the-decision-timelinegate). |
 | Inter-plugin API | `src/InterPluginAPI.cpp`, `include/InterPluginAPI.h` | Answers `SNPD_QUERY_*` SKSE messages. See [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md#inter-plugin-api-skse-messaging). |
 | Persistence | `src/DiaryDB.cpp`, `include/DiaryDB.h` | Per-save SQLite: volumes, actor templates, stolen volumes. See [DATABASE.md](DATABASE.md). |
@@ -101,9 +101,9 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
    - **If the DB didn't open, DPF isn't installed, or the memory system never became ready**, `PauseDiaryBooks()` and stop: with this save's volumes not loaded, every NPC would look new and get a second set of books. Diary events are ignored (logged at debug) until the next load or new game, and the error names the cause.
    - `LoadFromDB()`, then `ReconcileWithTimeline()` (volumes reaching past the loaded save are matched against the history SkyrimNet kept), then `QueueInventoryCheck()`.
    - `DiaryTheftHandler::ReconcileAfterLoad()`: drop theft records made after the loaded save's game time (`stolen_at > now`), then reload the in-memory stolen set the decorator reads.
-   - `SetPostLoadSyncReady(true)`, then queue immediate recreation for actors whose book forms were invalid, then `QueueSealedVolumeRecovery()` and `QueueBatchCatchUpScan()`.
+   - `SetPostLoadSyncReady(true)`, then queue immediate recreation for actors whose book forms were invalid, then `QueueNewEntryRecovery()` and `QueueBatchCatchUpScan()`.
 
-**Save**: SKSE sends `kSaveGame` first, which marks every volume `persisted_in_save` (in DiaryDB and in memory). Then the co-save `SaveCallback` runs: it opens the DB if it isn't open (a new game that never got a `kPostLoadGame`; not during a load's post-load wait, when `SkyrimNet.log` may still name the previous save), runs `FlushToDB()` (which carries the in-memory persisted flag, so a DB opened only here still gets it), and writes the `SNDB` sentinel and `SNDF` folder records. See [DATABASE.md](DATABASE.md#co-save-records).
+**Save**: SKSE sends `kSaveGame` first, which marks every volume `persisted_in_save` (in DiaryDB and in memory). Then the co-save `SaveCallback` runs: it opens the DB if it isn't open (a new game that never got a `kPostLoadGame`; not during a load's post-load wait, when `SkyrimNet.log` may still name the previous save), and runs `FlushToDB()` (which carries the in-memory persisted flag, so a DB opened only here still gets it). No co-save records are written. See [DATABASE.md](DATABASE.md#co-save-records).
 
 **New game or load**: `RevertCallback` clears in-memory state. `diary.db` on disk is kept on purpose.
 

@@ -5,7 +5,7 @@ set(VCPKG_TARGET_TRIPLET "x64-windows-static" CACHE STRING "" FORCE)
 
 project(
     SkyrimNetPhysicalDiaries
-    VERSION 1.0.0
+    VERSION 1.2.0
     LANGUAGES CXX
 )
 

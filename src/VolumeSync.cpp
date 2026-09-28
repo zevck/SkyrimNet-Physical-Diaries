@@ -436,12 +436,11 @@ namespace SkyrimNetDiaries {
     }
 
     // =============================================================================
-    // QueueSealedVolumeRecovery — detect entries written after a sealed volume
-    // (the revert+KEEP scenario: SkyrimNet retains entries our DB didn't track).
-    // For each actor whose latest volume is sealed, probes SkyrimNet for any entry
-    // strictly after the seal timestamp. If found, queues UpdateDiaryForActorInternal.
+    // QueueNewEntryRecovery: at load, finds actors whose latest volume is missing
+    // entries SkyrimNet has (written while SNPD wasn't listening: KEEP on a revert,
+    // dashboard edits) and queues an update for them.
     // =============================================================================
-    void QueueSealedVolumeRecovery(std::unordered_set<std::string>& skipUuids) {
+    void QueueNewEntryRecovery(std::unordered_set<std::string>& skipUuids) {
         const auto& allBooks = SkyrimNetDiaries::BookManager::GetSingleton()->GetAllBooks();
         int recoveryCount = 0;
 
@@ -467,7 +466,8 @@ namespace SkyrimNetDiaries {
                     needsUpdate = true;
                 }
             } else {
-                // Legacy rows without an end: compare the entry count from the volume's
+                // endTime is set on every volume SNPD creates today; only rows from
+                // early versions lack one.  Compare the entry count from the volume's
                 // start with the count it was last rendered with.
                 const int liveCount = static_cast<int>(SkyrimNetDiaries::Database::GetDiaryEntries(
                     actorFormId, kFetchAllEntries, latest->startTime, 0.0).size());
@@ -487,7 +487,7 @@ namespace SkyrimNetDiaries {
         }
 
         if (recoveryCount > 0) {
-            SKSE::log::info("[Recovery] Queued {} actor(s) for sealed-volume recovery", recoveryCount);
+            SKSE::log::info("[Recovery] Queued {} actor(s) with entries newer than their latest volume", recoveryCount);
         }
     }
 

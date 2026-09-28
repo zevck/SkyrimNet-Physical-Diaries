@@ -81,7 +81,7 @@ namespace SkyrimNetDiaries {
         bool UpdateBookText(const std::string& actorUuid, int volumeNumber,
                             const std::string& text, int entryCount);
 
-        // Update only end_time (called when a volume is sealed).
+        // Update only end_time (a volume's last entry moved: update, seal or deletion).
         bool UpdateEndTime(const std::string& actorUuid, int volumeNumber,
                            double endTime);
 

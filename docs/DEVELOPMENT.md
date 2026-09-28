@@ -15,7 +15,7 @@ Prerequisites: MSVC x64 with C++23, CMake ≥ 3.21 and vcpkg with the `VCPKG_ROO
 v9 changes that SNPD relies on (keep them when updating CommonLib again):
 - The entry point is `SKSE_PLUGIN_LOAD(...)`; v9 removed the `SKSEAPI` macro.
 - `SKSE::Init(a_skse, { .log = false })`. By default v9 installs its own logger on the same `SkyrimNetPhysicalDiaries.log` file, replacing the one `InitializeLog` set up.
-- `BookTextHook::Install` allocates its trampoline itself (SKSE's branch pool, else `trampoline.create`). v9's `SKSE::AllocTrampoline` is deprecated and silently allocates nothing when SKSE provides no `TrampolineInterface`, which would crash on the hook write.
+- All three engine hooks (`OpenBookMenu`, `GetDescription`, `QueueMessage`) are MinHook detours; SNPD allocates no SKSE trampoline. (v9's `SKSE::AllocTrampoline` is deprecated and silently allocates nothing without a `TrampolineInterface`, should one ever be needed.)
 
 **Use `Build_Local.ps1`** (repo root, modeled on SkyrimNet's). It builds only the plugin, incrementally; compiles Papyrus with Pyro; and deploys to every configured test instance. It ends with a PASS/FAIL banner, and the same result is written to `%TEMP%\snpd-build-result.json`.
 
@@ -37,7 +37,7 @@ cmake --build build --config Release --target SkyrimNetPhysicalDiaries
 
 | Fact | Where |
 |---|---|
-| Plugin version is `1.0.0` in both `CMakeLists.txt` and `vcpkg.json`, though v1.1.0 has shipped | Keep them in sync when you bump it |
+| Plugin version is in both `CMakeLists.txt` and `vcpkg.json` (1.2.0 as of 2026-09-27) | Keep them in sync when you bump it |
 | vcpkg triplet forced to `x64-windows-static`; static MSVC runtime | `CMakeLists.txt` top |
 | vcpkg deps: `sqlite3`, `nlohmann-json`, `spdlog`, `fmt`, `minhook` (+ CommonLib's) | `vcpkg.json` |
 | Plugin declared with `add_commonlibsse_plugin(... USE_ADDRESS_LIBRARY ...)`, which also generates `SKSEPlugin_Version`/`Query`. Don't declare them by hand. | `CMakeLists.txt`, bottom of `main.cpp` |
@@ -108,7 +108,7 @@ Check these whenever CommonLib or the game runtime changes.
 | Touchpoint | Where | Notes |
 |---|---|---|
 | Global form map | `BookManager::SanitizeLoadedBookForms` | `TESForm::GetAllForms()` (same relocation IDs `LookupByID` uses) |
-| `BookMenu::OpenBookMenu` entry hook | `BookTextHook::Install` | `RELOCATION_ID(50122, 51053)` = **(SE, AE)**. VR reuses the SE id through the VR Address Library (`RelocationID` sets `_vrID = a_seID`). A hand-written 5-byte `write_branch` detour; the "call original" stub is built by decoding the prologue (`EB`, `E9`, `FF 25`, plain prologues with a REX PUSH/POP check). If the prologue changes shape, this breaks. A detour library would be sturdier. |
+| `BookMenu::OpenBookMenu` entry hook | `BookTextHook::Install` | `RELOCATION_ID(50122, 51053)` = **(SE, AE)**. VR reuses the SE id through the VR Address Library (`RelocationID` sets `_vrID = a_seID`). A MinHook detour. |
 | `OpenBookMenu` signature | `OpenBookMenuHook::func_t` | `(const BSString&, const ExtraDataList*, TESObjectREFR*, TESObjectBOOK*, const NiPoint3&, const NiMatrix3&, float, bool)`, plus a ninth `NiAVObject*` **on VR only** (CommonLib doesn't declare it; see [BOOK_TEXT.md](BOOK_TEXT.md#delivery-the-openbookmenu-hook)) |
 | `TESObjectBOOK` fields | `ConfigureDiaryForm`, `CompleteCreation`, `ClearBogusSourceFiles` | `data.type`, `data.flags` (`kCantTake`), `inventoryModel`, `itemCardDescription`, `sourceFiles`, `weight`, `value`, `teaches` (never written) |
 | Papyrus VM dispatch | `PumpDiaryCreateQueue` | `DispatchStaticCall` + `IStackCallbackFunctor` (`CanSave`, `SetObject`, `operator()`) |
