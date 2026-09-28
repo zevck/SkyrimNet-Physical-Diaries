@@ -35,7 +35,17 @@
 // This replaces Dynamic Book Framework's SetBookTextHook which performs the
 // same job but gates itself out on VR ("Unsupported Skyrim version").
 // RELOCATION_ID(50122, 51053) is (SE id, AE id); VR reuses the SE id through
-// the VR Address Library, so one hook covers SE, AE and VR with no version check.
+// the VR Address Library, so one hook covers SE, AE and VR.
+//
+// VR's OpenBookMenu takes a NINTH argument that SE/AE don't have: an
+// NiAVObject* (on the stack at [rsp+0x48] on entry).  When it is non-null the
+// book menu is placed from that object's world transform (the world-activate
+// caller passes the reference's 3D), and its refcount is bumped.  The thunk
+// takes and forwards it on every runtime; SE/AE callers don't pass one and
+// their OpenBookMenu never reads it, so there it is an ignored stack slot.
+// Dropping it (as before 2026-09-27) handed VR a junk pointer: crashes in
+// `lock inc [rbx+0x08]`, invisible vanilla books, wrong book placement.
+// See docs/BOOK_TEXT.md.
 // ---------------------------------------------------------------------------
 
 namespace
@@ -166,7 +176,7 @@ namespace
 
     struct OpenBookMenuHook
     {
-        // Matches the static member signature of BookMenu::OpenBookMenu
+        // BookMenu::OpenBookMenu, plus VR's ninth argument (see the file header).
         using func_t = void (*)(const RE::BSString&,
                                 const RE::ExtraDataList*,
                                 RE::TESObjectREFR*,
@@ -174,92 +184,23 @@ namespace
                                 const RE::NiPoint3&,
                                 const RE::NiMatrix3&,
                                 float,
-                                bool);
+                                bool,
+                                RE::NiAVObject*);
 
         static inline func_t func{ nullptr };
 
-        // SEH-guarded call to the original OpenBookMenu.
-        //
-        // In VR, books can be opened by physically grabbing them (HIGGS).  Some
-        // world references — particularly physics-enabled placed books — can have
-        // a dead/recycled handle by the time their activation reaches OpenBookMenu.
-        // The engine doesn't null-check and faults on `lock inc [rbx+0x08]` with
-        // rbx = 0xFFFFFFFF (the invalid-handle sentinel), producing a hard CTD.
-        //
-        // We can't reliably detect that dead-handle state in advance (GetHandle()
-        // just wraps the live pointer), so we guard the call: on a normal open no
-        // exception occurs and this is fully transparent; on the access violation
-        // we swallow it and the book simply fails to open instead of crashing the
-        // game.  The faulting instruction is a write that never landed, so no
-        // memory was corrupted — bailing out is clean.
-        //
-        // MUST contain no C++ objects requiring unwinding (SEH constraint), so it
-        // only forwards already-constructed arguments.  Returns true if the call
-        // completed, false if an access violation was caught.
-        static bool CallOriginalGuarded(const RE::BSString&     a_desc,
-                                        const RE::ExtraDataList* a_extra,
-                                        RE::TESObjectREFR*       a_ref,
-                                        RE::TESObjectBOOK*       a_book,
-                                        const RE::NiPoint3&      a_pos,
-                                        const RE::NiMatrix3&     a_rot,
-                                        float                    a_scale,
-                                        bool                     a_useDefaultPos)
-        {
-            __try {
-                func(a_desc, a_extra, a_ref, a_book, a_pos, a_rot, a_scale, a_useDefaultPos);
-                return true;
-            } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION
-                            ? EXCEPTION_EXECUTE_HANDLER
-                            : EXCEPTION_CONTINUE_SEARCH) {
-                return false;
-            }
-        }
-
-        static void thunk(const RE::BSString&    a_desc,
+        static void thunk(const RE::BSString&      a_desc,
                           const RE::ExtraDataList* a_extra,
-                          RE::TESObjectREFR*    a_ref,
-                          RE::TESObjectBOOK*   a_book,
-                          const RE::NiPoint3&  a_pos,
-                          const RE::NiMatrix3& a_rot,
-                          float                a_scale,
-                          bool                 a_useDefaultPos)
+                          RE::TESObjectREFR*       a_ref,
+                          RE::TESObjectBOOK*       a_book,
+                          const RE::NiPoint3&      a_pos,
+                          const RE::NiMatrix3&     a_rot,
+                          float                    a_scale,
+                          bool                     a_useDefaultPos,
+                          RE::NiAVObject*          a_vrNode)
         {
-            // Diagnostic: capture the full parameter state at entry.  This line is
-            // flushed before control enters the engine's OpenBookMenu, so if the
-            // engine then faults (the VR/HIGGS dead-handle CTD), the crash log's
-            // preceding lines show exactly which book/reference triggered it and
-            // whether a_ref was present.  Helps root-cause setup-specific reports.
-            SKSE::log::debug("[BookTextHook] thunk entry: book=0x{:X} ref={} refFormId=0x{:X} useDefaultPos={}",
-                a_book ? a_book->GetFormID() : 0,
-                a_ref ? "yes" : "null",
-                a_ref ? a_ref->GetFormID() : 0,
-                a_useDefaultPos);
-
-            // VR world-open crash workaround.
-            //
-            // Opening a book from the WORLD (activate / HIGGS hand-grab) passes the
-            // book's world reference as a_ref.  On VR the engine's OpenBookMenu
-            // faults inside its reference-handle refcount (`lock inc [rbx+0x08]`,
-            // rbx = 0xFFFFFFFF) for these world references — a hard CTD on every
-            // world book.  Opening from the INVENTORY passes a_ref = null and does
-            // not hit that path (this is the only path that was tested pre-release).
-            //
-            // Routing VR world-opens through the null-ref path makes them behave
-            // like inventory opens: the book still opens and diary text injection
-            // is unaffected (it never depended on a_ref), and our diaries are
-            // kCantTake so they lose nothing.  The only cost is that vanilla books
-            // opened from the world lose their "take" association on VR — an
-            // acceptable trade against a guaranteed crash.  SSE is untouched.
-            //
-            // Also force useDefaultPos: without the ref, VR places the 3D book off-screen.
-            // Null ref + default position is the working inventory-open path
-            // (see docs/BOOK_TEXT.md).
-            RE::TESObjectREFR* safeRef = a_ref;
-            bool safeUseDefaultPos = a_useDefaultPos;
-            if (a_ref && REL::Module::IsVR()) {
-                safeRef = nullptr;
-                safeUseDefaultPos = true;
-            }
+            SKSE::log::debug("[BookTextHook] thunk entry: book=0x{:X} ref=0x{:X} useDefaultPos={}",
+                a_book ? a_book->GetFormID() : 0, a_ref ? a_ref->GetFormID() : 0, a_useDefaultPos);
 
             if (a_book) {
                 // Prepare the diary text under try/catch: this runs inside the engine's
@@ -293,32 +234,13 @@ namespace
                 }
 
                 if (!textToInject.empty()) {
-                    // Stack-local BSString — must NOT be static.  A shared static
-                    // BSString was responsible for an EXCEPTION_ACCESS_VIOLATION in
-                    // BookMenu::OpenBookMenu on at least one VR user (RBX = 0x43534544
-                    // "DESC", consistent with reading uninitialized memory through a
-                    // dangling reference): nested book opens or other mods with hooks
-                    // on the same code path could re-enter thunk and mutate the static
-                    // BSString's internal buffer mid-call, leaving the engine holding
-                    // a stale pointer.  A stack-local instance per call eliminates the
-                    // cross-call aliasing entirely.
                     RE::BSString injectedText{ textToInject.c_str() };
-
-                    if (!CallOriginalGuarded(injectedText, a_extra, safeRef, a_book,
-                                             a_pos, a_rot, a_scale, safeUseDefaultPos)) {
-                        SKSE::log::warn("[BookTextHook] OpenBookMenu faulted (caught) for diary "
-                                        "formId=0x{:X} — book not opened, game continues",
-                                        a_book->GetFormID());
-                    }
+                    func(injectedText, a_extra, a_ref, a_book, a_pos, a_rot, a_scale, a_useDefaultPos, a_vrNode);
                     return;
                 }
             }
 
-            if (!CallOriginalGuarded(a_desc, a_extra, safeRef, a_book,
-                                     a_pos, a_rot, a_scale, safeUseDefaultPos)) {
-                SKSE::log::warn("[BookTextHook] OpenBookMenu faulted (caught) — book not opened, "
-                                "game continues (likely a dead reference handle from a VR/HIGGS grab)");
-            }
+            func(a_desc, a_extra, a_ref, a_book, a_pos, a_rot, a_scale, a_useDefaultPos, a_vrNode);
         }
 
         static void Install()

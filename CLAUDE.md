@@ -14,9 +14,9 @@ SKSE plugin (CommonLibSSE-NG, C++23; one DLL for SE, AE and VR) that turns the d
 - A Papyrus change is done only when the `.pex` is compiled into `Scripts/` **and** shipped. See [docs/PAPYRUS_AND_API.md](docs/PAPYRUS_AND_API.md).
 - **Build and deploy with `.\Build_Local.ps1`**: incremental plugin build, Pyro (`skyrimse.ppj`, same as the VS Code task), and deploy to the `Physical Diaries - Dev` mod folder in each test instance (one per runtime: SE, AE, VR). Paths are in the gitignored `Build_Config_Local.ps1`. PASS/FAIL is also written to `%TEMP%\snpd-build-result.json`. Never `/t:Rebuild`: it rebuilds all of CommonLib. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#build).
 
-## Open work (as of 2026-09-26)
+## Open work (as of 2026-09-27)
 
-- VR fixes are committed but untested on VR: clearing the invalid `sourceFiles` pointer DPF leaves on clones (`ClearBogusSourceFiles`, plus a sweep of every book at `kPostLoadGame`, in `BookCreation.cpp`) and forcing `useDefaultPos` for VR world-opens (`BookTextHook.cpp`).
+- VR, untested on VR: the book hook now passes VR's ninth `OpenBookMenu` argument (an `NiAVObject*`; dropping it caused the VR book crashes and invisible books, see [docs/BOOK_TEXT.md](docs/BOOK_TEXT.md#delivery-the-openbookmenu-hook)), and `ClearBogusSourceFiles` clears the invalid `sourceFiles` pointer DPF leaves on clones.
 
 Ask before committing.
 

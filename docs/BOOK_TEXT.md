@@ -44,11 +44,13 @@ Applied to each entry's content:
 
 `BookTextHook::Install()` patches the entry of `BookMenu::OpenBookMenu` (`RELOCATION_ID(50122, 51053)`, see [DEVELOPMENT.md](DEVELOPMENT.md#engine-touchpoints)). The first argument is the text the menu will render. For our books the thunk swaps it out:
 
-1. **VR only, opening from the world** (activate or HIGGS grab, `a_ref != null`): pass a null reference **and** force `a_useDefaultPos = true`. On VR the engine crashed inside the reference-handle refcount for world references. Nulling the reference alone fixed the crash but left the book invisible, because VR places the 3D book using the reference's transform. Together the two copy the working inventory-open path. The cost: vanilla books opened from the world on VR lose their "take" association. SNPD books are `kCantTake` anyway. Not yet tested on VR.
-2. `GetBookForFormID(a_book)`. Not ours → call the original unchanged.
-3. `RefreshVolumeOnOpen` (see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#on-open-refreshvolumeonopen)).
-4. `Utf8ToWin1251(cachedBookText)` (below), put into a **stack-local** `RE::BSString`. It used to be `static`, and re-entrant opens (nested books, other hooks on the same path) changed its buffer mid-call, causing an access violation seen on VR.
-5. Call the original through `CallOriginalGuarded`, an SEH `__try` that catches access violations. VR/HIGGS can deliver dead reference handles that fault inside the engine; the book then fails to open instead of crashing the game. The function may contain no C++ objects that need unwinding.
+1. `GetBookForFormID(a_book)`. Not ours → call the original with every argument unchanged.
+2. `RefreshVolumeOnOpen` (see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#on-open-refreshvolumeonopen)).
+3. `Utf8ToWin1251(cachedBookText)` if the text has Cyrillic (below), put into a stack-local `RE::BSString`, and call the original with it in place of the description.
+
+**VR's `OpenBookMenu` has a ninth argument**, an `NiAVObject*` that SE and AE don't have (found in the unpacked VR 1.4.15 binary: all three callers store it at `[rsp+0x40]`; the world-activate caller passes the reference's 3D). When it is non-null the menu takes the book's placement from that object's world transform and bumps its refcount (`lock inc [rbx+0x08]`). The thunk takes and forwards nine arguments on every runtime; on SE/AE the ninth is an unused stack slot that the original never reads.
+
+Until 2026-09-27 the hook declared CommonLib's eight-argument signature, so on VR the original read a junk pointer from that stack slot. That one bug explains every VR report: a crash in `lock inc [rbx+0x08]` (junk that isn't a pointer), vanilla books opening invisible (junk that is a readable pointer, used as the placement transform), and the "static `BSString`" crash (`RBX = 0x43534544`, also junk). The workarounds built on the wrong diagnosis were removed: passing a null reference and forcing `useDefaultPos` for VR world-opens (which left the world book visible in front of the player and laid menu books flat), and an SEH guard that swallowed access violations halfway through the engine function, leaving its book-menu state half-written.
 
 This hook replaced Dynamic Book Framework, which refused to run on VR. **Setting a book's own description at runtime does not work**: `TESObjectBOOK`'s description is a `BGSLocalizedStringDL`, an ID into the plugin's string table, not a string buffer.
 

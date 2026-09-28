@@ -20,7 +20,7 @@ Fixed on 2026-09-26, for reference: `SkyrimNetDiaries_API.pex` had never shipped
 6. **The co-save does no real work.** `SNDB` is a two-zero sentinel. `SNDF` is written but ignored on load (the folder is always detected from `SkyrimNet.log`). Removing the co-save changes the save format; do it on purpose. See [DATABASE.md](DATABASE.md#co-save-records).
 7. **The version says 1.0.0** in `CMakeLists.txt` and `vcpkg.json`, but v1.1.0 has shipped.
 8. **Unused ESP record** `SNPD_DiaryStolenFaction` (from a faction-based theft design). ESP edit.
-9. **VR fixes untested on VR:** `ClearBogusSourceFiles` / `SanitizeLoadedBookForms` (`BookCreation.cpp`) and `useDefaultPos` (`BookTextHook.cpp`) need a VR test. Also find where DPF's `0x1` comes from.
+9. **VR fixes untested on VR:** the book hook's ninth argument (`BookTextHook.cpp`, see [BOOK_TEXT.md](BOOK_TEXT.md#delivery-the-openbookmenu-hook)) and `ClearBogusSourceFiles` / `SanitizeLoadedBookForms` (`BookCreation.cpp`) need a VR test. Also find where DPF's `0x1` `sourceFiles` comes from.
 10. **Hand-written inline hook.** `BookTextHook::Install` decodes the target's prologue itself. A detour library would be sturdier across runtime updates.
 11. `GetDiaryTheftStatus` always returns `"chronicled": false`, left over from an older design. Public API, so change it carefully.
 12. **`TimelineGate` is a stopgap.** It recognises SkyrimNet's keep/clear prompt by comparing message text and wraps its callback, because SkyrimNet's public API can't say whether its timeline check is still pending. When SkyrimNet adds that (e.g. `PublicIsTimelineCheckPending()`), use it and keep the hook only as the fallback for older SkyrimNet versions. See [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#waiting-for-the-decision-timelinegate).
