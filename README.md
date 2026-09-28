@@ -6,9 +6,7 @@ A companion mod for [SkyrimNet](https://github.com/MinLL/SkyrimNet-GamePlugin) t
   <img src="images/diaryexample.jpg">
 </p>
 
----
-
-## Features
+## 📖 Features
 
 ### Physical Diary Books
 Each NPC that writes diary entries will have a physical diary book in their inventory. The entries are formatted by in-game date and use a handwriting font.
@@ -22,44 +20,30 @@ Stealing an NPC's diary has consequences. The NPC will be aware their diary is m
 ### Automatic Updates
 When an NPC writes a new entry, their physical diary updates to include it. If they fill the current volume, a new one is created automatically. This happens in the background without any player action needed.
 
----
-
-## MCM Settings
+## 📝 MCM Settings
 
 Found under **SkyrimNet Physical Diaries** in the Mod Configuration Menu.
 
-**Settings**
-- **Entries Per Volume** — How many diary entries fit in one book before a new volume begins (default: 10, range: 1–50)
-- **Font Sizes** — Separate sliders for title, date, body text, and small text in the diary books
-- **Book Font** — Switch font faces for readability
+ **Settings**
+- **Entries Per Volume** - How many diary entries fit in one book before a new volume begins (default: 10, range: 1–50)
+- **Font Sizes** - Separate sliders for title, date, body text, and small text in the diary books
+- **Book Font** - Switch font faces for readability
 
 **Maintenance**
-- **Reset All Diaries** — Removes all physical diary books from NPCs and clears all tracking. Your SkyrimNet diary entries are untouched; books will regenerate automatically on next load.
-- **Debug Logging** — Toggle verbose logging for troubleshooting.
+- **Reset All Diaries** - Removes all physical diary books from NPCs and clears all tracking. Your SkyrimNet diary entries are untouched; books will regenerate automatically on next load.
+- **Debug Logging** - Toggle verbose logging for troubleshooting.
 
----
-
-## Requirements
+## 📋 Requirements
 
 - [SkyrimNet](https://github.com/MinLL/SkyrimNet-GamePlugin)
 - [SkyUI](https://www.nexusmods.com/skyrimspecialedition/mods/12604) (for MCM)
 - [SKSE](https://skse.silverlock.org/)
 - [Address Library](https://www.nexusmods.com/skyrimspecialedition/mods/32444) or [VR Address Library](https://www.nexusmods.com/skyrimspecialedition/mods/58101)
-- [powerofthree's Tweaks](https://www.nexusmods.com/skyrimspecialedition/mods/51073) **or** [Native EditorID Fix](https://www.nexusmods.com/skyrimspecialedition/mods/85260) (either one, so the mod can find its template books)
+- [powerofthree's Tweaks](https://www.nexusmods.com/skyrimspecialedition/mods/51073) **or** [powerofthree's Tweaks VR](https://www.nexusmods.com/skyrimspecialedition/mods/59510)
+> [!NOTE]
+> Dynamic Persistent Forms is no longer required as of version 2.0
 
----
-
-## Installation
-
-Install with a mod manager as normal. Load order: place after SkyrimNet.
-
-**Updating from 1.x:** Dynamic Persistent Forms is no longer needed; remove it unless another mod uses it (if you keep it, the old diaries are cleared automatically). On the first load of an older save every diary is rebuilt with the same entries. Diary copies you were carrying (stolen or picked up) are lost once, and Skyrim may warn that the save relies on content that is no longer present. Saves made with 2.0.0 can't go back to an older version.
-
-Diary theft awareness needs SkyrimNet Beta 25 or later. The mod ships a SkyrimNet plugin (`SKSE/Plugins/SkyrimNet/external/zevick.physical-diaries/`) that tells an NPC their diary was stolen when they write their next entry. It appears under **Plugins > Installed Plugins** in the SkyrimNet dashboard with an **External** badge. No prompt editing is needed; if you added the old snippet to `diary_entry.prompt` yourself, remove it.
-
----
-
-## Localization
+## 🌐 Localization
 
 The mod supports all 9 official Skyrim languages out of the box: English, French, German, Italian, Spanish, Polish, Russian, Traditional Chinese, and Japanese. Diary titles, dates, volume numbering, and MCM menus are all localized automatically based on your game language.
 
@@ -79,7 +63,7 @@ This will load `Locales/GERMAN.ini` for diary formatting. The value must match t
 
 Community translators can add support for any language without recompiling the plugin. Two files are needed:
 
-**1. Locale file** — `SKSE/Plugins/SkyrimNetPhysicalDiaries/Locales/{LANGUAGE}.ini`
+**1. Locale file** - `SKSE/Plugins/SkyrimNetPhysicalDiaries/Locales/{LANGUAGE}.ini`
 
 This controls how diary book titles, dates, and volume numbers are formatted. Example:
 
@@ -118,36 +102,27 @@ Loredas = Loredas
 ```
 
 Available placeholders:
-- `{Day}` — day of the week (e.g. Sundas)
-- `{d}` — day number (e.g. 17)
-- `{Month}` — month name (e.g. Last Seed)
-- `{y}` — year (e.g. 201)
-- `{Name}` — NPC name (in DiaryTitle)
-- `{n}` — volume number (in VolumeSuffix)
-- `{cn}` — volume number as Chinese numeral (二, 三, etc.)
+- `{Day}` - day of the week (e.g. Sundas)
+- `{d}` - day number (e.g. 17)
+- `{Month}` - month name (e.g. Last Seed)
+- `{y}` - year (e.g. 201)
+- `{Name}` - NPC name (in DiaryTitle)
+- `{n}` - volume number (in VolumeSuffix)
+- `{cn}` - volume number as Chinese numeral (二, 三, etc.)
+> [!NOTE]
+> If these sections are omitted, the plugin falls back to reading month/day names from the game's GMST records, then to English. Note that some mods (e.g. Seasons of Skyrim) override GMST month names, so including `[Months]` and `[Days]` in your locale file is recommended.
 
-If these sections are omitted, the plugin falls back to reading month/day names from the game's GMST records, then to English. Note that some mods (e.g. Seasons of Skyrim) override GMST month names, so including `[Months]` and `[Days]` in your locale file is recommended.
+**2. MCM translation file** (optional) - `Interface/Translations/SkyrimNet Physical Diaries_{LANGUAGE}.txt`
 
-**2. MCM translation file** (optional) — `Interface/Translations/SkyrimNet Physical Diaries_{LANGUAGE}.txt`
+This translates the in-game settings menu. Use the English file as a template. If you would like to correct or contribute any translations feel free to submit a PR.
 
-This translates the in-game settings menu. Use the English file as a template.
-
-
-If you would like to correct or contribute any translations feel free to submit a PR.
-
----
-
-## Notes
+## 🗒️ Notes
 
 - Diary books appear in NPC inventories after SkyrimNet generates the NPC's first diary entry. NPCs without any diary entries will have no books. You must generate SkyrimNet's diary entries yourself.
 - Player character diaries are supported and will appear in the player's inventory.
 - If books are missing after installing on an existing save, use **Reset All Diaries** followed by saving and reloading. Also ensure you have powerofthree's Tweaks or Native EditorID Fix installed so the mod can locate the templates.
 - Generic NPCs that share a name (e.g. multiple "Whiterun Guard") will share a single, pooled diary. SkyrimNet groups memories by actor name, so same-named NPCs are treated as one identity. To give these NPCs distinct diaries, use a mod that assigns unique names such as **Real Names Extended** — with unique names, each NPC gets its own diary.
 
----
+## 🔑 License
 
-## License
-
-SkyrimNet Physical Diaries is Copyright © 2026 Zevick, released under the GNU General Public License v3.0 or later (GPL-3.0-or-later). See [LICENSE.md](LICENSE.md) for the full text.
-
-SkyrimNet Physical Diaries links against [CommonLibSSE-NG](https://github.com/alandtse/CommonLibSSE-NG) (GPL-3.0), which is why it is distributed under the GPL. You are free to use, study, modify, and redistribute it under the terms of the GPL, provided derivative works remain open source under the same license.
+SkyrimNet Physical Diaries is released under the GNU General Public License v3.0 or later (GPL-3.0-or-later). See [LICENSE.md](LICENSE.md) for the full text.
