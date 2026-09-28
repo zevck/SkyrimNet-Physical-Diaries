@@ -1,6 +1,6 @@
 # Database and Persistence
 
-SNPD keeps its state in a per-save SQLite database (DiaryDB). The SKSE co-save holds nothing (the callbacks are used only for their timing). **DiaryDB is the source of truth**, but only for SNPD's own data (volume boundaries, book FormIDs, rendered text, theft records). Diary content always comes from SkyrimNet.
+SNPD keeps its state in a per-save SQLite database (DiaryDB). The SKSE co-save holds one record: what each diary book form in the save is. **DiaryDB is the source of truth**, but only for SNPD's own data (volume boundaries, rendered text, theft records); which form is a volume's book in a given save comes from that save's co-save record. Diary content always comes from SkyrimNet.
 
 Code: `src/DiaryDB.cpp`, `include/DiaryDB.h` (singleton `SkyrimNetDiaries::DiaryDB`); co-save callbacks in `src/Serialization.cpp`; save-folder detection in `src/SaveFolder.cpp`.
 
@@ -25,24 +25,30 @@ Created in `EnsureSchema()`.
 |---|---|
 | `actor_uuid`, `actor_name` | SkyrimNet identity |
 | `actor_form_id` | Actor FormID when the volume was made. Used only as a fallback, and only after a UUID back-check (see [BOOK_FORMS.md](BOOK_FORMS.md#finding-the-npc-findactorforbook)). |
-| `book_form_id` | The DPF book form. Checked on every load; a row whose form no longer resolves is deleted and recreated. |
+| `book_form_id` | The volume's book form (an `0xFF` runtime FormID). On every load it is matched against the save's co-save record: updated if the save has another form for the volume, the row deleted and recreated if the save has none (see [BOOK_FORMS.md](BOOK_FORMS.md#load)). |
 | `volume_number`, `start_time`, `end_time`, `prev_volume_last_creation_time`, `prev_volume_count_at_boundary` | Boundaries (see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#volume-boundaries)) |
 | `journal_template`, `bio_template_name` | Template EditorID; SkyrimNet bio template name (`player_special` for the player) |
 | `last_known_entry_count` | Entry count at the last render |
 | `book_text` | Rendered text. A cache: it can always be rebuilt from SkyrimNet. `UpsertVolume` with empty text keeps the stored text. |
-| `persisted_in_save` | 1 once a save has included the volume (`MarkAllVolumesPersisted` at `kSaveGame`, and `UpsertVolume` from the in-memory flag, which never lowers it). The upsert path matters on a new game's first save, where the DB is only opened in `SaveCallback` after `kSaveGame` ran. |
 
 **`actor_templates`**: `actor_uuid` (PK), `template_name`. The `last_known_game_time` column is no longer read or written (theft reverts use `stolen_at`, see [THEFT.md](THEFT.md#save-reverts)); it stays so older databases open unchanged.
 
 **`stolen_volumes`**: `(actor_uuid, volume_number)` PK, `stolen_at` (game seconds).
 
+Databases from before 2.0.0 also have a `persisted_in_save` column in `volumes`, which is no longer read or written (it existed because DPF forms survived a reload without saving).
+
 ## Schema changes
 
-There is no version table. New columns are added in `EnsureSchema()` with `ALTER TABLE … ADD COLUMN … DEFAULT …`, and the "duplicate column" error on databases that already have them is ignored (`persisted_in_save` and `actor_form_id` were added this way). Existing rows are not rewritten. Code must cope with the default value (for example `actor_form_id = 0` → resolve from the UUID). Follow the same pattern for new columns.
+There is no version table. New columns are added in `EnsureSchema()` with `ALTER TABLE … ADD COLUMN … DEFAULT …`, and the "duplicate column" error on databases that already have them is ignored (`actor_form_id` was added this way). Existing rows are not rewritten. Code must cope with the default value (for example `actor_form_id = 0` → resolve from the UUID). Follow the same pattern for new columns.
 
 ## Co-save records
 
-None. SNPD registers co-save callbacks under the unique ID `'SNDB'` only for their timing: `SaveCallback` opens DiaryDB on a new game's first save and flushes the volumes, and `RevertCallback` clears the in-memory volumes. It writes no records and registers no load callback, so SKSE skips the records older saves carry:
+Under the unique ID `'SNDB'`:
+
+- **`SNBF`** (version 2, since 2.0.0): every tracked book form, retired ones included, written by `DynamicForms::Save` at the start of `SaveCallback`. Per form: FormID (`uint32`), form type (`uint8`), flags (`uint8`, bit 0 = retired), then three strings (`uint32` length + bytes): key (`"<actor UUID>|v<volume>"`), template EditorID, display name. The save itself keeps only a form's flags, so the load callback uses this to fill each book in (see [BOOK_FORMS.md](BOOK_FORMS.md#the-co-save-record)).
+- `SaveCallback` also opens DiaryDB on a new game's first save and flushes the volumes; `RevertCallback` clears the in-memory volumes and the tracked forms.
+
+The load callback reads only `SNBF`, so the records older saves carry are skipped:
 
 | Record | Was | Retired |
 |---|---|---|
@@ -50,11 +56,11 @@ None. SNPD registers co-save callbacks under the unique ID `'SNDB'` only for the
 | `SNDF` | Save-folder name; ignored on load for some time, since the folder is always detected from `SkyrimNet.log` | 2026-09-27 |
 | `SNDC` | FormID → UUID cache, read only by a log-only event sink | 2026-09-26 |
 
-A save made with 1.2.0 and loaded in an older SNPD just has no records; the older version already detects the folder from `SkyrimNet.log`.
+A save made with 2.0.0 can't go back to an older SNPD: its books are `0xFF` forms the older version doesn't know, so they load as empty shells.
 
 ## MCM Reset (`ResetAllDiariesInternal`)
 
-Deletes every tracked actor from DiaryDB (`DeleteActor` + `ClearAllStolenVolumes`), clears memory, then on the game thread removes each book from every reference in the loaded cells (`TES::ForEachReference`). Books in unloaded cells are not reached. **DPF forms are deliberately not disposed** (see [BOOK_FORMS.md](BOOK_FORMS.md#the-two-dpf-bugs-this-pipeline-works-around)). The catch-up scan rebuilds every book on the next load. SkyrimNet's entries are never touched.
+Deletes every tracked actor from DiaryDB (`DeleteActor` + `ClearAllStolenVolumes`), clears memory, **retires** every book form, then on the game thread removes their copies from the loaded cells, their owner NPCs and merchant chests (`SweepRetiredBooks`); copies elsewhere are removed as their cells load. The forms themselves are never removed from the save (see [BOOK_FORMS.md](BOOK_FORMS.md#retirement)). The catch-up scan rebuilds every book on the next load. SkyrimNet's entries are never touched.
 
 ## Inspecting a live database
 
@@ -65,7 +71,7 @@ sqlite3 "<MO2>\overwrite\SKSE\Plugins\SkyrimNetPhysicalDiaries\SkyrimNet-<id>\di
 ```
 ```sql
 SELECT actor_name, volume_number, book_form_id, start_time, end_time,
-       last_known_entry_count, persisted_in_save
+       last_known_entry_count
 FROM volumes ORDER BY actor_name, volume_number;
 
 SELECT * FROM stolen_volumes;

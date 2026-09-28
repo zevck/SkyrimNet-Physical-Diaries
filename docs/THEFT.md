@@ -50,5 +50,5 @@ At `kPostLoadGame`, `ReconcileAfterLoad` deletes every theft record whose `stole
 ## Related behaviour
 
 - A stolen volume is never updated again. When the NPC writes their next entry, `UpdateDiaryForActorInternal` sees they no longer hold their latest volume and starts a new one. See [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md).
-- `persisted_in_save` stops a stolen book being put back into the NPC's inventory on load. See [BOOK_FORMS.md](BOOK_FORMS.md#keeping-forms-valid-across-loads).
+- A stolen book stays where the save put it: inventories are the engine's `.ess` state, and SNPD never re-adds a book to the NPC on load. See [BOOK_FORMS.md](BOOK_FORMS.md#load).
 - The ESP still has `SNPD_DiaryStolenFaction` from an earlier faction-based design. Nothing uses it; it is harmless and left in place. (An even earlier spell-based design looked up `SNPD_DiaryStorageSpell`, which is not in the ESP; its natives were removed on 2026-09-26.)

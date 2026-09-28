@@ -29,7 +29,7 @@ The folder is located from **the DLL's own path** (`GetModuleHandleExA` on a fun
 | `[Format] DiaryTitle` | Book title | `{Name}` |
 | `[Format] VolumeSuffix` | Appended from volume 2 on (default `, v{n}`) | `{n}` number, `{cn}` Chinese numeral |
 | `[Format] EmptyVolumeText` | Page shown when all of a volume's entries were deleted | |
-| `[Messages] DpfMissing`, `TemplatesMissing` | The startup warnings shown when Dynamic Persistent Forms or the template books are missing. One line each; `\n` is a line break. The button uses the game's own `sOk` string. | |
+| `[Messages] TemplatesMissing` | The startup warning shown when the template books are missing. One line; `\n` is a line break. The button uses the game's own `sOk` string. | |
 | `[Months]`, `[Days]` | Optional name overrides, keyed by the English name | |
 
 Anything missing falls back to English.

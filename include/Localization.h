@@ -61,8 +61,7 @@ namespace SkyrimNetDiaries {
         // Empty volume placeholder text
         const std::string& GetEmptyVolumeText() const { return emptyVolumeText_; }
 
-        // Startup warnings ([Messages] in the locale file).
-        const std::string& GetDpfMissingText() const { return dpfMissingText_; }
+        // Startup warning ([Messages] in the locale file).
         const std::string& GetTemplatesMissingText() const { return templatesMissingText_; }
 
         // Detected language as uppercase string (e.g. "RUSSIAN")
@@ -99,7 +98,6 @@ namespace SkyrimNetDiaries {
         std::string diaryTitleFmt_;  // e.g. "{Name}'s Diary"
         std::string volumeSuffixFmt_; // e.g. ", v{n}"
         std::string emptyVolumeText_;
-        std::string dpfMissingText_;
         std::string templatesMissingText_;
     };
 

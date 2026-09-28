@@ -21,32 +21,31 @@
 
 #include "PCH.h"
 
-// DPF book creation: the serial create queue, DPFCreateCallback and the FormID
-// claim table.  BookManager::CreateDiaryBook and SanitizeLoadedBookForms are also
-// defined in BookCreation.cpp.  See docs/BOOK_FORMS.md.
+// Diary book forms: engine-persisted runtime books (DynamicForms), one per volume.
+// BookManager::CreateDiaryBook is also defined in BookCreation.cpp.  See
+// docs/BOOK_FORMS.md.
 namespace SkyrimNetDiaries {
 
-    // Records that formId belongs to actorUuid, so a recycled DPF FormID can't be
-    // handed to a second actor.
-    void ClaimBookFormId(RE::FormID formId, const std::string& actorUuid);
+    // A volume's key in its co-save record: "<actor UUID>|v<volume number>".
+    std::string VolumeKey(const std::string& actorUuid, int volumeNumber);
+    // Splits a VolumeKey.  False if `key` isn't one.
+    bool ParseVolumeKey(const std::string& key, std::string& actorUuid, int& volumeNumber);
 
-    // Claims are per-session; cleared from BookManager::ClearActorCache on each load.
-    void ClearBookFormIdClaims();
-
-    // Gives a diary form SNPD's look: book type, model and item card from its
-    // template, weight, value, no flags, and its name.  Returns true if the name had
-    // to change.  Used at creation and on every load, because DPF can restore a form
-    // with data (a name) from an earlier owner of the same FormID.
+    // Gives a diary form SNPD's look: book type, models, bounds, sounds, keywords and
+    // item card from its template, weight, value, no flags, and its name.  Returns
+    // true if the name had to change.  The save keeps none of this, so it runs at
+    // creation and on every load.
     bool ConfigureDiaryForm(RE::TESObjectBOOK* book, const RE::TESObjectBOOK* templateBook,
                             const std::string& name);
 
-    // True while any of the actor's volumes are queued or being created, i.e. not
-    // yet in books_.  Anything that decides "which volumes does this actor have"
-    // must wait for these, or it creates the same volumes twice.
-    bool HasPendingCreations(const std::string& actorUuid);
+    // Load callback, after DynamicForms::Load: fills in this save's diary books from
+    // their co-save records, so they look right before DiaryDB is open.
+    void ConfigureLoadedBooks();
 
-    // kPreLoadGame and MCM Reset: drops queued creations and discards results of
-    // any Create() still in flight, so they can't register into the new state.
-    void CancelPendingCreations();
+    // Retired books stay in the save but must never be seen (docs/BOOK_FORMS.md#retirement).
+    // Game thread: removes their copies from the loaded cells, owners and merchant chests.
+    void SweepRetiredBooks();
+    // Once at plugin load: removes them from references as their cells attach.
+    void RegisterRetiredBookSweeper();
 
 } // namespace SkyrimNetDiaries

@@ -46,9 +46,7 @@ The same data bounds the earlier volume from above: `GetVolumeEntries` keeps, on
 
 Called from the `UpdateDiaryFromEvent` native (event listener), from load-time recovery, and from the catch-up scan. It needs the API initialized and SkyrimNet's memory system ready.
 
-It waits rather than runs in two cases, re-running itself 500 ms later on the game thread (`DeferUntilSyncReady`):
-- **From `kPreLoadGame` until the post-load sync has run** (`SetPostLoadSyncReady`). DiaryDB isn't loaded yet, so every actor would look new and get a duplicate volume 1. The event native waits too, so the theft clear doesn't land in the previous save's DB. A wait from an earlier load is dropped when a new load starts; that load's recovery and catch-up scans pick the entry up.
-- **While the actor has volumes still being created** (`HasPendingCreations`, see [BOOK_FORMS.md](BOOK_FORMS.md#pending-creations-and-cancellation)). They aren't in `books_` yet, so deciding now would create them twice.
+It waits rather than runs **from `kPreLoadGame` until the post-load sync has run**, re-running itself 500 ms later on the game thread (`DeferUntilSyncReady`) (`SetPostLoadSyncReady`). DiaryDB isn't loaded yet, so every actor would look new and get a duplicate volume 1. The event native waits too, so the theft clear doesn't land in the previous save's DB. A wait from an earlier load is dropped when a new load starts; that load's recovery and catch-up scans pick the entry up. Book creation is synchronous, so a volume is in `books_` as soon as it is created and there is nothing else to wait for.
 
 1. **No volumes yet** → fetch every entry (limit 10000) and create all volumes from 1.
 2. **Volumes exist** → fetch entries after the latest volume's `endTime` (the API bound is inclusive, so entries `<= endTime` are dropped client-side).
@@ -66,7 +64,7 @@ Rendering writes the text to DiaryDB (`UpdateBookText`) and to `cachedBookText`,
 
 ## On load: recovery and catch-up
 
-Both run at the end of the `kPostLoadGame` setup (see [ARCHITECTURE.md](ARCHITECTURE.md#startup-and-load-sequence)). They share a skip set: recovery skips actors already queued for recreation and adds every actor it queues, so the catch-up scan never also creates volumes for them. The catch-up scan additionally skips actors with pending creations.
+Both run at the end of the `kPostLoadGame` setup (see [ARCHITECTURE.md](ARCHITECTURE.md#startup-and-load-sequence)). They share a skip set: recovery skips actors already queued for recreation and adds every actor it queues, so the catch-up scan never also creates volumes for them. The catch-up scan additionally skips actors that got volumes while it ran.
 
 **`QueueNewEntryRecovery`**, per actor with volumes, looking at the latest volume:
 - `endTime > 0` → ask SkyrimNet for one entry after `endTime + 0.001`. If one exists → queue `UpdateDiaryForActorInternal`. This catches entries written while SNPD was not listening: the KEEP choice on a revert, or entries created from the SkyrimNet dashboard while the game was paused.
@@ -111,12 +109,12 @@ This is a stopgap until SkyrimNet's public API can report whether its timeline c
 
 Right after `LoadFromDB`, once the timeline is settled, every volume that ends after the loaded save's game time is checked against the entries SkyrimNet still has (by fetching its range again; the button the player pressed is only logged). This follows SkyrimNet's decision exactly, whether or not the volume was ever saved:
 
-- **Clear** deleted those entries: the volume is re-rendered and its `endTime` moved back to its last live entry. A trailing run of volumes with **no** entries left is dropped from `books_` and DiaryDB, and their books are taken back from the NPC. This runs before `QueueInventoryCheck`, so dropped volumes are never re-added.
+- **Clear** deleted those entries: the volume is re-rendered and its `endTime` moved back to its last live entry. A trailing run of volumes with **no** entries left is dropped from `books_` and DiaryDB, and their books are retired and swept: taken from the NPC, the loaded cells and merchant chests, and from other cells as they load (see [BOOK_FORMS.md](BOOK_FORMS.md#retirement)).
 - **Keep** left them in place: counts and end times match, nothing changes. A later entry dated inside the latest volume is caught by the count check in `UpdateDiaryForActorInternal` (above).
-- **A volume newer than the loaded save** that a later save included (an in-session revert, then Keep) is still `persisted_in_save`, so nothing would give it back to the NPC. When all its live entries are dated after the loaded game time, the flag is cleared (`DiaryDB::ClearPersisted`; the upsert can't lower it) and `QueueInventoryCheck` re-adds the book.
+- **A volume newer than the loaded save** (an in-session revert, then Keep) has no book in this save, so `LoadFromDB` has already deleted its row and queued the actor: the volume is recreated from the entries SkyrimNet kept.
 - **A failed query** (`ok = false`) is neither: the actor's volumes are left alone and a warning is logged, so a SkyrimNet error at load can't delete books.
 
-It replaces the old game-time rebuild ("not saved and `endTime` after now"), which guessed from `persistedInSave` and missed saved volumes after an in-session revert, leaving new entries filtered out as older than the volume's end.
+It replaces the old game-time rebuild ("not saved and `endTime` after now"), which missed saved volumes after an in-session revert, leaving new entries filtered out as older than the volume's end.
 
 ### KEEP and CLEAR outside a load
 

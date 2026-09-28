@@ -23,6 +23,7 @@
 #include "Database.h"  // For DiaryEntry struct
 #include "Config.h"    // For configuration settings
 #include "DiaryDB.h"   // Persistent SQLite store
+#include <mutex>
 
 namespace SkyrimNetDiaries {
 
@@ -52,11 +53,6 @@ namespace SkyrimNetDiaries {
         // not resolved yet).  Never loaded from DiaryDB.
         RE::FormID cachedActorFormId = 0;
         std::string cachedBookText;
-
-        // True once this volume has been included in a Skyrim .ess save file.
-        // Set at kSaveGame.  When false the NPC's inventory state is not
-        // authoritative (reload-without-save) and QueueInventoryCheck may re-add.
-        bool persistedInSave = false;
     };
 
     // Template books in the ESP, found by EditorID.  Everyone gets one of the
@@ -70,9 +66,9 @@ namespace SkyrimNetDiaries {
     public:
         static BookManager* GetSingleton();
 
-        // Queues creation of one volume's book (async: DPF creates the form, then the
-        // volume is registered and the book added to the NPC).  `entries` are the
-        // volume's entries, oldest first.  Defined in BookCreation.cpp.
+        // Creates one volume's book, registers the volume and gives the book to the
+        // NPC.  `entries` are the volume's entries, oldest first.  Game thread.
+        // Defined in BookCreation.cpp.
         void CreateDiaryBook(const std::string& actorUuid, const std::string& actorName,
                              double startTime, int volumeNumber, RE::FormID targetActorFormID,
                              const std::vector<DiaryEntry>& entries, const std::string& bioTemplateName,
@@ -86,6 +82,17 @@ namespace SkyrimNetDiaries {
 
         // Get book data by FormID (searches all actors)
         DiaryBookData* GetBookForFormID(RE::FormID formId);
+
+        // Any thread (never touch books_ off the game thread): the book that owns this
+        // description component (0 if not ours), and a copy of a book's rendered text
+        // ("" if not ours).  Books with no volume have the "all entries removed" page.
+        RE::FormID FindBookByDescription(const RE::TESDescription* description) const;
+        std::string GetBookTextSnapshot(RE::FormID bookFormId) const;
+        std::string GetBookTextSnapshot(const RE::TESDescription* description) const;
+
+        // A book whose volume is gone for certain (Reset, a Clear): retired, so it stays
+        // in the save but is swept out of sight (see BookCreation.h).  Game thread.
+        void RetireBook(RE::FormID bookFormId, const std::string& actorUuid);
 
         // Get all books (for checking volume numbers)
         const std::unordered_map<std::string, std::vector<DiaryBookData>>& GetAllBooks() const { return books_; }
@@ -107,32 +114,20 @@ namespace SkyrimNetDiaries {
         // text and entry count to DiaryDB, and updates cachedBookText / lastKnownEntryCount.
         void SetVolumeText(DiaryBookData& vol, const std::vector<DiaryEntry>& entries);
 
-        // Drops the actor's volumes numbered fromVolume and up (memory and DiaryDB).
+        // Drops the actor's volumes numbered fromVolume and up (memory and DiaryDB) and
+        // retires their books.
         void UnregisterVolumesFrom(const std::string& actorUuid, int fromVolume);
 
         // Re-render every tracked volume from SkyrimNet (MCM "Regenerate texts" and font changes)
         void RegenerateAllDiaryTexts();
 
-        // Load all volumes from DiaryDB into books_ / actorTemplates_.
-        // Validates DPF form IDs — volumes with invalid forms are removed from the
-        // DB so UpdateDiaryForActorInternal will recreate them.  Returns UUIDs of
-        // actors whose latest volume was invalid (useful for logging).
+        // Loads DiaryDB's volumes, matched against this save's books (docs/BOOK_FORMS.md#load).
+        // Returns the UUIDs of actors with a volume to recreate.  Game thread.
         std::vector<std::string> LoadFromDB();
 
-        // Clears the actor FormID cache and the FormID claim table.  Called when a
-        // session ends (kPreLoadGame, kNewGame).
+        // Clears the actor FormID cache.  Called when a session ends (kPreLoadGame,
+        // kNewGame).
         static void ClearActorCache();
-
-        // Clears the invalid sourceFiles pointer DPF leaves on some clones (VR),
-        // across every loaded book form.  Call at kPostLoadGame, before anything
-        // reads book descriptions.  Defined in BookCreation.cpp.
-        static void SanitizeLoadedBookForms();
-
-        // For every volume currently in books_, queues a game-thread task that checks
-        // whether the owning NPC has the book in their inventory and re-adds it if not.
-        // Call this after LoadFromDB to recover books whose DPF forms survived an
-        // in-session reload but whose inventory entries did not.
-        void QueueInventoryCheck();
 
         // Write every in-memory book and actor template to DiaryDB.
         // Safe to call when DB is not open (no-op in that case).
@@ -162,6 +157,22 @@ namespace SkyrimNetDiaries {
         // Book FormID → (UUID, volume number): GetBookForFormID runs on every book open,
         // container change and description read.  Kept in step with every books_ edit.
         std::unordered_map<RE::FormID, std::pair<std::string, int>> formIndex_;
+        // This save's books no volume claims, by volume key: reused if that volume is
+        // created again (docs/BOOK_FORMS.md#load).
+        std::unordered_map<std::string, RE::FormID> unclaimed_;
+        // Read by the text hook on any thread, so under their own lock.
+        mutable std::mutex snapshotMutex_;
+        std::unordered_map<const RE::TESDescription*, RE::FormID> descriptionIndex_;
+        std::unordered_map<RE::FormID, std::string> textSnapshot_;
+        std::string TextSnapshotLocked(RE::FormID bookFormId) const;
+        void SetTextSnapshot(RE::FormID bookFormId, const std::string& text);
+        // The "all entries removed" page, for a book with no volume.
+        void ShowRemovedPage(RE::FormID bookFormId, const std::string& actorUuid);
+
+        // Adds a volume's book to the indexes and snapshot / removes it / clears them.
+        void IndexBook(const DiaryBookData& vol);
+        void UnindexBook(RE::FormID bookFormId);
+        void ClearIndexes();
     };
 
 } // namespace SkyrimNetDiaries

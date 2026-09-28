@@ -15,7 +15,7 @@ Prerequisites: MSVC x64 with C++23, CMake ≥ 3.21 and vcpkg with the `VCPKG_ROO
 v9 changes that SNPD relies on (keep them when updating CommonLib again):
 - The entry point is `SKSE_PLUGIN_LOAD(...)`; v9 removed the `SKSEAPI` macro.
 - `SKSE::Init(a_skse, { .log = false })`. By default v9 installs its own logger on the same `SkyrimNetPhysicalDiaries.log` file, replacing the one `InitializeLog` set up.
-- All three engine hooks (`OpenBookMenu`, `GetDescription`, `QueueMessage`) are MinHook detours installed through `InstallDetour` (`include/Detour.h`); SNPD allocates no SKSE trampoline. (v9's `SKSE::AllocTrampoline` is deprecated and silently allocates nothing without a `TrampolineInterface`, should one ever be needed.)
+- Both engine hooks (`GetDescription`, `QueueMessage`) are MinHook detours installed through `InstallDetour` (`include/Detour.h`). SNPD allocates no SKSE trampoline. (v9's `SKSE::AllocTrampoline` is deprecated and silently allocates nothing without a `TrampolineInterface`, should one ever be needed.)
 
 **Use `Build_Local.ps1`** (repo root, modeled on SkyrimNet's). It builds only the plugin, incrementally; compiles Papyrus with Pyro; and deploys to every configured test instance. It ends with a PASS/FAIL banner, and the same result is written to `%TEMP%\snpd-build-result.json`.
 
@@ -37,7 +37,7 @@ cmake --build build --config Release --target SkyrimNetPhysicalDiaries
 
 | Fact | Where |
 |---|---|
-| Plugin version is in both `CMakeLists.txt` and `vcpkg.json` (1.2.0 as of 2026-09-27) | Keep them in sync when you bump it |
+| Plugin version is in both `CMakeLists.txt` and `vcpkg.json` (2.0.0 as of 2026-09-28) | Keep them in sync when you bump it |
 | vcpkg triplet forced to `x64-windows-static`; static MSVC runtime | `CMakeLists.txt` top |
 | vcpkg deps: `sqlite3`, `nlohmann-json`, `spdlog`, `fmt`, `minhook` (+ CommonLib's) | `vcpkg.json` |
 | Plugin declared with `add_commonlibsse_plugin(... USE_ADDRESS_LIBRARY ...)`, which also generates `SKSEPlugin_Version`/`Query`. Don't declare them by hand. | `CMakeLists.txt`, bottom of `main.cpp` |
@@ -78,9 +78,10 @@ Levels: `debug` for routine tracing, `info` for state changes worth seeing in a 
 | Prefix | Area |
 |---|---|
 | `[BookTextHook]` | `Opening diary` at `info` on every diary open; the per-call entry line only with `DebugLog` on |
-| `[DPF]` | Creation, FormID collisions, cancelled creations, invalid `sourceFiles` cleared on load (VR) |
+| `[DynamicForms]` | Book-form records saved and loaded, forms the engine renumbered, world copies rebuilt after a load |
+| `[BookForms]` | Books filled in at load, retired books swept (per-copy lines at debug) |
 | `[TimelineGate]`, `[Timeline]` | Waiting for SkyrimNet's keep/clear prompt, and reconciling volumes with the history it kept or cleared |
-| `[LoadFromDB]`, `[EnsureInventory]`, `[FindActorForBook]` | Load-time validation and NPC lookup |
+| `[LoadFromDB]`, `[FindActorForBook]` | Matching DiaryDB's volumes against the save's books, and NPC lookup |
 | `[Recovery]`, `QueueBatchCatchUpScan`, `DiscoveryBatch`, `CatchUp` | Load-time sync (see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md)) |
 | `[SNPD]` | `RefreshVolumeOnOpen` re-renders |
 | `[Physical Diaries]`, `[Theft Reconciliation]` | Theft |
@@ -93,11 +94,11 @@ SkyrimNet's own log (`SkyrimNet.log`, same folder) holds the `Using save ID:` li
 ## Verifying a change in game
 
 1. Turn on `DebugLog`, deploy, launch.
-2. Check startup: `Installed OpenBookMenu hook`, `Diary template books verified (all 4 resolved)`, `SkyrimNet API ready`, `DetectSaveFolderFromLog: detected save folder '…'`, `[DiaryDB] Opened`, `[LoadFromDB] Loaded N actors`.
-3. Make an entry happen (talk to an NPC until SkyrimNet writes a diary entry, or use the SkyrimNet dashboard), then watch for `Queued DPF.Create()` → `DPF created book FormID` → `Added '…' to …'s inventory`.
+2. Check startup: `Installed GetDescription hook`, `Diary template books verified (all 4 resolved)`, `SkyrimNet API ready`, `DetectSaveFolderFromLog: detected save folder '…'`, `[DiaryDB] Opened`, `[DynamicForms] Loaded N of N form record(s)`, `[LoadFromDB] Loaded N actors`.
+3. Make an entry happen (talk to an NPC until SkyrimNet writes a diary entry, or use the SkyrimNet dashboard), then watch for `Added '…' (0xFF…) to …'s inventory`.
 4. Open the book (from an NPC via pickpocket, or your own diary): `[BookTextHook] Opening diary`.
 5. For anything touching persistence, cover **save → reload**, **reload without saving**, **load an older save** (try both SkyrimNet KEEP and CLEAR) and **a second character**. Most past bugs lived there.
-6. Test on VR if you touched the hook, form creation or anything that calls `GetDescription`.
+6. Test on VR if you touched the hook, form creation, the co-save record or anything that calls `GetDescription`.
 
 ---
 
@@ -107,14 +108,14 @@ Check these whenever CommonLib or the game runtime changes.
 
 | Touchpoint | Where | Notes |
 |---|---|---|
-| Global form map | `BookManager::SanitizeLoadedBookForms` | `TESForm::GetAllForms()` (same relocation IDs `LookupByID` uses) |
-| `BookMenu::OpenBookMenu` entry hook | `BookTextHook::Install` | `RELOCATION_ID(50122, 51053)` = **(SE, AE)**. VR reuses the SE id through the VR Address Library (`RelocationID` sets `_vrID = a_seID`). A MinHook detour. |
-| `OpenBookMenu` signature | `OpenBookMenuHook::func_t` | `(const BSString&, const ExtraDataList*, TESObjectREFR*, TESObjectBOOK*, const NiPoint3&, const NiMatrix3&, float, bool)`, plus a ninth `NiAVObject*` **on VR only** (CommonLib doesn't declare it; see [BOOK_TEXT.md](BOOK_TEXT.md#delivery-the-openbookmenu-hook)) |
-| `TESObjectBOOK` fields | `ConfigureDiaryForm`, `CompleteCreation`, `ClearBogusSourceFiles` | `data.type`, `data.flags` (`kCantTake`), `inventoryModel`, `itemCardDescription`, `sourceFiles`, `weight`, `value`, `teaches` (never written) |
-| Papyrus VM dispatch | `PumpDiaryCreateQueue` | `DispatchStaticCall` + `IStackCallbackFunctor` (`CanSave`, `SetObject`, `operator()`) |
-| `TESDescription::GetDescription` entry hook | `GetDescriptionHook::Install` (`BookTextHook.cpp`) | `RELOCATION_ID(14399, 14552)`, VR reuses the SE id (VR `0x1A01B0`). MinHook, because other plugins (e.g. Description Framework) hook it too. |
+| Form factory | `DynamicForms::Create` | `IFormFactory::GetConcreteFormFactoryByType<T>()->Create()`, then `formFlags` (`kTemporary` cleared) and `AddChange(kFlags)` |
+| Created-reference load | (no code: a constraint) | A world copy keeps its base's raw FormID and the builder (AE `0x14060EE40`) only checks it is some bound object, so SNPD never removes a book form from the save. Recheck after a runtime update; see [BOOK_FORMS.md](BOOK_FORMS.md#the-engine-behaviour-this-rests-on) fact 8. |
+| Save/load behaviour | `DynamicForms`, `LoadFromDB` | The engine facts in [BOOK_FORMS.md](BOOK_FORMS.md#the-engine-behaviour-this-rests-on) (IDs listed there): recheck them after a runtime update |
+| `TESObjectBOOK` fields | `ConfigureDiaryForm` | `data.type`, `data.flags`, `inventoryModel`, `itemCardDescription`, world model (`SetModel`), `boundData`, `pickupSound`, `putdownSound`, keywords, `weight`, `value`; `teaches` is never written |
+| `TESDescription::GetDescription` entry hook | `GetDescriptionHook::Install` (`BookTextHook.cpp`) | `RELOCATION_ID(14399, 14552)`, VR reuses the SE id (VR `0x1A01B0`). MinHook, because other plugins (e.g. Description Framework) hook it too. The book menu's three callers pass `book + 0xA8` with no parent; recheck that after a runtime update (see [BOOK_TEXT.md](BOOK_TEXT.md#delivery-the-getdescription-hook)). |
 | `MessageBoxData::QueueMessage` entry hook | `TimelineGate::Install` | `RELOCATION_ID(51422, 52271)`, VR reuses the SE id. A MinHook detour, because SkyrimNet (also MinHook) hooks the same function; MinHook copes with a prologue another plugin has already patched. `IMessageBoxCallback::Run(std::uint8_t)` and `MessageBoxData::{bodyText, callback, buttonPressOffset}` are relied on. |
-| Event sinks | `DiaryTheftHandler` | `TESContainerChangedEvent`, `MenuOpenCloseEvent` |
+| Event sinks | `DiaryTheftHandler`, `RetiredBookSweeper` (`BookCreation.cpp`) | `TESContainerChangedEvent`, `MenuOpenCloseEvent`, `TESCellAttachDetachEvent` |
+| Retired-book sweep and world copies | `SweepRetiredBooks`, `RebuildLoadedWorldCopies` | `TES::ForEachReference`, `GetInventory(filter, noInit = true)`, `TESFaction::vendorData.merchantContainer`, `TESObjectREFR::Disable`/`Enable`/`SetDelete`/`RemoveItem` |
 | Avoided on VR | — | `BSPointerHandle::get()` (`RELOCATION_ID(12785, 12922)`) is missing from the VR Address Library and crashes; use `Actor::LookupByHandle` (12204/12332) if a handle ever needs resolving. `MenuTopicManager::speaker` likewise. |
 
 One DLL serves SE, AE and VR. Don't add a runtime-version gate that turns a feature off; branch on `REL::Module::IsVR()` at the specific call site.
@@ -123,7 +124,7 @@ One DLL serves SE, AE and VR. Don't add a runtime-version gate that turns a feat
 
 ## Conventions
 
-- Game state (forms, inventories, references) is touched only on the game thread, via `SKSE::GetTaskInterface()->AddTask`. The DPF callback arrives on a VM thread; Papyrus natives run on the game thread (registered non-tasklet; keep it that way). See [ARCHITECTURE.md](ARCHITECTURE.md#threading).
+- Game state (forms, inventories, references) is touched only on the game thread, via `SKSE::GetTaskInterface()->AddTask`. Papyrus natives run on the game thread (registered non-tasklet; keep it that way). See [ARCHITECTURE.md](ARCHITECTURE.md#threading).
 - Wrap SkyrimNet-API and DB work in `try`/`catch`. An exception crossing the SKSE boundary takes the game down.
 - Identify diaries by book FormID (`GetBookForFormID`) and NPCs by SkyrimNet UUID. Never by name (names are localized and SkyrimNet shares names) and never by a bare stored FormID.
 - User-visible text goes through `Localization`. See [LOCALIZATION.md](LOCALIZATION.md).

@@ -38,9 +38,9 @@ namespace SkyrimNetDiaries {
     bool IsPostLoadSyncReady();
 
     // For the rest of this session, diary events create and update nothing.  Used
-    // when the post-load sync couldn't load this save's volumes (no save folder, no
-    // DPF, SkyrimNet never ready): with nothing loaded, every NPC would look new and
-    // get a second set of books.  Cleared when the session ends.
+    // when the post-load sync couldn't load this save's volumes (no save folder,
+    // SkyrimNet never ready): with nothing loaded, every NPC would look new and get a
+    // second set of books.  Cleared when the session ends.
     void PauseDiaryBooks();
 
     // Runs handler(formId) on the game thread once the post-load sync has run,
@@ -51,9 +51,9 @@ namespace SkyrimNetDiaries {
     // Post-load, once SkyrimNet has settled its timeline (TimelineGate): checks every
     // volume that ends after the loaded save's game time against the entries
     // SkyrimNet still has.  After Clear those entries are gone, so the volume is
-    // re-rendered with its end moved back, or dropped (with its book taken back from
-    // the NPC) when nothing is left.  After Keep they are all there and nothing
-    // changes.  Run after LoadFromDB and before QueueInventoryCheck.
+    // re-rendered with its end moved back, or dropped (its book taken back from the
+    // NPC and retired) when nothing is left.  After Keep they are all there and
+    // nothing changes.  Run after LoadFromDB.
     void ReconcileWithTimeline();
 
     // kPostLoadGame (revert + KEEP): queues an update for every actor whose latest
@@ -65,9 +65,10 @@ namespace SkyrimNetDiaries {
     // none of our volumes yet, then creates theirs, one actor per task.
     void QueueBatchCatchUpScan(std::unordered_set<std::string> skipUuids = {});
 
-    // MCM Reset: removes every tracked book from loaded inventories and clears
-    // BookManager and DiaryDB tracking (never SkyrimNet's entries).  Returns the
-    // number of actors cleared, or -1 on exception.
+    // MCM Reset: retires every diary book (removed from the loaded cells; copies
+    // elsewhere show the "all entries removed" page) and clears BookManager and DiaryDB
+    // tracking (never SkyrimNet's entries).  Returns the number of actors cleared,
+    // or -1 on exception.
     int ResetAllDiariesInternal();
 
 } // namespace SkyrimNetDiaries

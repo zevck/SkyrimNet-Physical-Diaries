@@ -26,6 +26,7 @@
 #include "Database.h"
 #include "DiaryDB.h"
 #include "DiaryTheftHandler.h"
+#include "DynamicForms.h"
 #include "Localization.h"
 #include "SaveFolder.h"
 #include "TimelineGate.h"
@@ -195,14 +196,6 @@ namespace SkyrimNetDiaries {
             }
             SKSE::log::debug("Processing diary update for {} (UUID: {})", actorName, uuid);
 
-            // Volumes still being created aren't in books_ yet: deciding now would
-            // create them a second time.  Try again once they're registered.
-            if (HasPendingCreations(uuid)) {
-                SKSE::log::debug("{} has volumes still being created — update waits", actorName);
-                DeferUntilSyncReady(formId, UpdateDiaryForActorInternal);
-                return;
-            }
-
             auto latestVolume = bookManager->GetBookForActor(uuid);
 
             if (!latestVolume) {
@@ -356,7 +349,7 @@ namespace SkyrimNetDiaries {
         if (now <= 0.0) return;
         auto* bookManager = BookManager::GetSingleton();
 
-        struct Removal { std::string uuid; std::string name; RE::FormID actorFormId; int fromVolume; std::vector<RE::FormID> books; };
+        struct Removal { std::string uuid; std::string name; int fromVolume; std::vector<RE::FormID> books; };
         std::vector<Removal> removals;
         int reRendered = 0;
 
@@ -365,7 +358,7 @@ namespace SkyrimNetDiaries {
             const RE::FormID formId = Database::GetFormIDForUUID(uuid);
             if (formId == 0) continue;
 
-            Removal tail{ uuid, volumes.back().actorName, formId, 0, {} };  // trailing volumes left with no entries
+            Removal tail{ uuid, volumes.back().actorName, 0, {} };  // trailing volumes left with no entries
             bool queryFailed = false;
             for (auto& vol : volumes) {
                 if (!DatedAfter(vol.endTime, now)) continue;
@@ -386,15 +379,6 @@ namespace SkyrimNetDiaries {
                 }
                 tail.fromVolume = 0;  // only a trailing run of empty volumes is dropped
                 tail.books.clear();
-                if (vol.persistedInSave && DatedAfter(live.front().entry_date, now)) {
-                    // Every entry is newer than this save, so the save never had the
-                    // volume; a later save did (an in-session revert, then Keep).  Let
-                    // QueueInventoryCheck give the book back to the NPC.
-                    vol.persistedInSave = false;
-                    DiaryDB::GetSingleton()->ClearPersisted(uuid, vol.volumeNumber);
-                    SKSE::log::info("[Timeline] {} vol {} is newer than this save — returning it to the NPC",
-                                    vol.actorName, vol.volumeNumber);
-                }
                 if (static_cast<int>(live.size()) == vol.lastKnownEntryCount &&
                     live.back().entry_date == vol.endTime) {
                     continue;  // SkyrimNet kept this history: the volume is unchanged
@@ -412,21 +396,12 @@ namespace SkyrimNetDiaries {
         for (auto& r : removals) {
             SKSE::log::info("[Timeline] {}: volumes from {} have no entries left in SkyrimNet — removing {} book(s)",
                             r.name, r.fromVolume, r.books.size());
+            // Also retires the books.
             bookManager->UnregisterVolumesFrom(r.uuid, r.fromVolume);
-            // Take the books back from the NPC.  Forms stay alive (never Dispose,
-            // see docs/BOOK_FORMS.md).
-            SKSE::GetTaskInterface()->AddTask([actorFormId = r.actorFormId, books = r.books, name = r.name]() {
-                auto* npc = RE::TESForm::LookupByID<RE::Actor>(actorFormId);
-                if (!npc) return;
-                for (const auto bookId : books) {
-                    auto* book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(bookId);
-                    if (!book) continue;
-                    if (const auto count = CountInInventory(npc, book); count > 0) {
-                        npc->RemoveItem(book, count, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
-                        SKSE::log::info("[Timeline] Removed book 0x{:X} from {}'s inventory", bookId, name);
-                    }
-                }
-            });
+        }
+        if (!removals.empty()) {
+            // Take the retired books from the NPCs, the loaded cells and merchant chests.
+            SKSE::GetTaskInterface()->AddTask([]() { SweepRetiredBooks(); });
         }
 
         if (reRendered > 0 || !removals.empty()) {
@@ -506,8 +481,8 @@ namespace SkyrimNetDiaries {
         //   then frees the memory.  Tasks run on successive game-thread ticks so the
         //   load is spread out.
         //
-        // Actors that already have volumes (or have volumes being created) are skipped,
-        // as are those the recovery pass already queued.
+        // Actors that already have volumes are skipped, as are those the recovery pass
+        // already queued.
         // =============================================================================
 
         // Shared state carried across discovery batch tasks via shared_ptr.
@@ -594,7 +569,7 @@ namespace SkyrimNetDiaries {
                     // Skip actors already being handled by immediate recovery.
                     if (state->skip.count(uuid)) { ++skippedRecovering; continue; }
                     // Skip actors that got volumes from a regular diary event during discovery.
-                    if (bookManager->GetBookForActor(uuid) || HasPendingCreations(uuid)) { ++skippedHaveBooks; continue; }
+                    if (bookManager->GetBookForActor(uuid)) { ++skippedHaveBooks; continue; }
                     ++queued;
 
                     taskInterface->AddTask(
@@ -603,7 +578,7 @@ namespace SkyrimNetDiaries {
                             try {
                                 // Skip if volumes appeared between queue time and execution.
                                 auto* bm = SkyrimNetDiaries::BookManager::GetSingleton();
-                                if (bm->GetBookForActor(uuid) || HasPendingCreations(uuid)) return;
+                                if (bm->GetBookForActor(uuid)) return;
 
                                 RE::FormID formId = SkyrimNetDiaries::Database::GetFormIDForUUID(uuid);
                                 if (formId == 0) {
@@ -647,39 +622,22 @@ namespace SkyrimNetDiaries {
     } // namespace
 
     // =============================================================================
-    // MCM Reset: remove all tracked diary books from NPC inventories and clear all
-    // BookManager and DiaryDB tracking.  SkyrimNet diary ENTRIES are
-    // NOT touched - books are recreated by the next diary event or load (catch-up).
-    // Returns the number of actor records cleared (negative on exception).
+    // MCM Reset: retires every diary book (removed from the loaded cells; copies
+    // elsewhere show the "all entries removed" page) and clears BookManager and DiaryDB
+    // tracking.  SkyrimNet diary ENTRIES are NOT touched - books are recreated by the
+    // next diary event or load (catch-up).
+    // Returns the number of actors cleared (negative on exception).
     // =============================================================================
     int ResetAllDiariesInternal() {
         SKSE::log::info("ResetAllDiariesInternal: starting");
 
-        // Creations still queued would otherwise register volumes after the reset.
-        CancelPendingCreations();
-
         auto bookManager   = SkyrimNetDiaries::BookManager::GetSingleton();
-
-        int actorsAffected = 0;
-        int booksRemoved   = 0;
 
         try {
             const auto& allBooks = bookManager->GetAllBooks();
-
-            // Every tracked book, removed from inventories on the game thread below.
-            struct RemovalEntry { RE::FormID bookFormId; std::string label; };
-            std::vector<RemovalEntry> pendingRemovals;
-
+            int actorsAffected = 0;
             for (const auto& [uuid, volumes] : allBooks) {
-                if (volumes.empty()) continue;
-                ++actorsAffected;
-
-                for (const auto& vol : volumes) {
-                    pendingRemovals.push_back({vol.bookFormId,
-                        vol.actorName + " vol " + std::to_string(vol.volumeNumber)});
-
-                    ++booksRemoved;
-                }
+                if (!volumes.empty()) ++actorsAffected;
             }
 
             // Wipe DiaryDB rows BEFORE clearing in-memory state.  Without this,
@@ -699,52 +657,25 @@ namespace SkyrimNetDiaries {
                 DiaryTheftHandler::SyncStolenCache();
             } else {
                 SKSE::log::warn("ResetAllDiariesInternal: DiaryDB not open — DB rows NOT deleted "
-                                "(reload will restore the diaries)");
+                                "(the next load recreates the diaries)");
             }
 
-            // Clear all in-memory tracking immediately (safe — no game-thread state involved).
+            // Clear all in-memory tracking, then retire every book of ours (including any
+            // this session couldn't match to a volume): they stay in the save and show
+            // the "all entries removed" page.
             bookManager->Revert();
             SaveFolder::Clear();
-
-            // Dispatch inventory removals to the game thread.
-            if (!pendingRemovals.empty()) {
-                SKSE::GetTaskInterface()->AddTask([pendingRemovals]() {
-                    for (const auto& entry : pendingRemovals) {
-                        auto* bookForm = RE::TESForm::LookupByID<RE::TESObjectBOOK>(entry.bookFormId);
-                        if (!bookForm) {
-                            SKSE::log::warn("  Reset: book form 0x{:X} not found for {}", entry.bookFormId, entry.label);
-                            continue;
-                        }
-
-                        // ForEachReference covers the active worldspace/interior, so books in
-                        // nearby NPC inventories, containers, shelves, etc. are removed
-                        // immediately without waiting for a reload.
-                        {
-                            auto* tesWorld = RE::TES::GetSingleton();
-                            if (tesWorld) {
-                                tesWorld->ForEachReference([&](RE::TESObjectREFR* ref) -> RE::BSContainer::ForEachResult {
-                                    if (!ref || ref->IsDeleted()) return RE::BSContainer::ForEachResult::kContinue;
-                                    if (const auto count = CountInInventory(ref, bookForm); count > 0) {
-                                        ref->RemoveItem(bookForm, count,
-                                            RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
-                                        SKSE::log::debug("  Removed {} from ref 0x{:X} ({})",
-                                            entry.label, ref->GetFormID(),
-                                            ref->GetBaseObject() ? ref->GetBaseObject()->GetName() : "?");
-                                    }
-                                    return RE::BSContainer::ForEachResult::kContinue;
-                                });
-                            }
-                        }
-
-                        // The form is never Disposed or SetDeleted: both poison DPF's
-                        // recycle pool and later hand one FormID to two actors.  See
-                        // docs/BOOK_FORMS.md.
-                    }
-                });
+            const auto records = DynamicForms::Tracked();
+            for (const auto& record : records) {
+                std::string uuid;
+                int volume = 0;
+                ParseVolumeKey(record.key, uuid, volume);
+                bookManager->RetireBook(record.formId, uuid);
             }
 
-            SKSE::log::info("ResetAllDiariesInternal: cleared {} volumes for {} actor(s), {} inventory removals queued",
-                            booksRemoved, actorsAffected, pendingRemovals.size());
+            SKSE::GetTaskInterface()->AddTask([]() { SweepRetiredBooks(); });
+
+            SKSE::log::info("ResetAllDiariesInternal: retired {} book(s) for {} actor(s)", records.size(), actorsAffected);
             return actorsAffected;
 
         } catch (const std::exception& e) {

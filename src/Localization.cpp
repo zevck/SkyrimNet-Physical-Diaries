@@ -225,8 +225,7 @@ namespace SkyrimNetDiaries {
                         text += value[i];
                     }
                 }
-                if (key == "DpfMissing") dpfMissingText_ = text;
-                else if (key == "TemplatesMissing") templatesMissingText_ = text;
+                if (key == "TemplatesMissing") templatesMissingText_ = text;
             } else if (currentSection == "months") {
                 for (auto& [mk, idx] : monthKeys) {
                     if (key == mk) {
@@ -340,9 +339,6 @@ namespace SkyrimNetDiaries {
         diaryTitleFmt_ = "{Name}'s Diary";
         volumeSuffixFmt_ = ", v{n}";
         emptyVolumeText_ = "All entries from this time period have been removed.";
-        dpfMissingText_ =
-            "SkyrimNet Physical Diaries requires Dynamic Persistent Forms.\n\n"
-            "Diary books can't be created without it. Install Dynamic Persistent Forms and restart the game.";
         templatesMissingText_ =
             "SkyrimNet Physical Diaries: the diary template books were not found.\n\n"
             "Diaries can't be created. Check that:\n"

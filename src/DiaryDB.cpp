@@ -102,7 +102,6 @@ namespace SkyrimNetDiaries {
                 prev_volume_last_creation_time  REAL    NOT NULL DEFAULT 0,
                 prev_volume_count_at_boundary   INTEGER NOT NULL DEFAULT 0,
                 book_text                       TEXT    NOT NULL DEFAULT '',
-                persisted_in_save               INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (actor_uuid, volume_number)
             );
             CREATE TABLE IF NOT EXISTS actor_templates (
@@ -119,13 +118,9 @@ namespace SkyrimNetDiaries {
         )");
         if (!ok) return false;
 
-        // Migration: add persisted_in_save to existing DBs that pre-date this column.
-        // SQLite returns an error if the column already exists — we ignore it.
-        sqlite3_exec(db_,
-            "ALTER TABLE volumes ADD COLUMN persisted_in_save INTEGER NOT NULL DEFAULT 0;",
-            nullptr, nullptr, nullptr);
-
-        // Migration: add actor_form_id to existing DBs.
+        // Migration: add actor_form_id to existing DBs.  SQLite returns an error if the
+        // column already exists — we ignore it.  (DBs from before 2.0.0 also have an
+        // unused persisted_in_save column.)
         sqlite3_exec(db_,
             "ALTER TABLE volumes ADD COLUMN actor_form_id INTEGER NOT NULL DEFAULT 0;",
             nullptr, nullptr, nullptr);
@@ -191,8 +186,8 @@ namespace SkyrimNetDiaries {
             "INSERT INTO volumes "
             "(actor_uuid, actor_name, actor_form_id, book_form_id, volume_number, start_time, end_time, "
             " journal_template, bio_template_name, last_known_entry_count, "
-            " prev_volume_last_creation_time, prev_volume_count_at_boundary, book_text, persisted_in_save) "
-            "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14) "
+            " prev_volume_last_creation_time, prev_volume_count_at_boundary, book_text) "
+            "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) "
             "ON CONFLICT(actor_uuid, volume_number) DO UPDATE SET "
             " actor_name=excluded.actor_name, "
             " actor_form_id=CASE WHEN excluded.actor_form_id!=0 THEN excluded.actor_form_id ELSE volumes.actor_form_id END, "
@@ -204,8 +199,6 @@ namespace SkyrimNetDiaries {
             " last_known_entry_count=excluded.last_known_entry_count, "
             " prev_volume_last_creation_time=excluded.prev_volume_last_creation_time, "
             " prev_volume_count_at_boundary=excluded.prev_volume_count_at_boundary, "
-            // Never un-persist: once a volume was in a save, it stays marked.
-            " persisted_in_save=MAX(volumes.persisted_in_save, excluded.persisted_in_save), "
             // Preserve existing text when the caller passes an empty string.
             " book_text=CASE WHEN excluded.book_text='' THEN volumes.book_text "
             "                ELSE excluded.book_text END;",
@@ -215,7 +208,7 @@ namespace SkyrimNetDiaries {
                  .Bind(5, r.volumeNumber).Bind(6, r.startTime).Bind(7, r.endTime)
                  .Bind(8, r.journalTemplate).Bind(9, r.bioTemplateName).Bind(10, r.lastKnownEntryCount)
                  .Bind(11, r.prevVolumeLastCreationTime).Bind(12, r.prevVolumeCountAtBoundary)
-                 .Bind(13, r.bookText).Bind(14, r.persistedInSave ? 1 : 0)
+                 .Bind(13, r.bookText)
                  .Run();
     }
 
@@ -257,8 +250,7 @@ namespace SkyrimNetDiaries {
         Statement st(db_,
             "SELECT actor_uuid, actor_name, actor_form_id, book_form_id, volume_number, start_time, end_time, "
             "       journal_template, bio_template_name, last_known_entry_count, "
-            "       prev_volume_last_creation_time, prev_volume_count_at_boundary, book_text, "
-            "       persisted_in_save "
+            "       prev_volume_last_creation_time, prev_volume_count_at_boundary, book_text "
             "FROM volumes ORDER BY actor_uuid, volume_number;",
             "LoadAllVolumes");
         while (st.Next()) {
@@ -276,16 +268,9 @@ namespace SkyrimNetDiaries {
             r.prevVolumeLastCreationTime  = st.Double(10);
             r.prevVolumeCountAtBoundary   = st.Int(11);
             r.bookText                    = st.Text(12);
-            r.persistedInSave             = st.Int(13) != 0;
             rows.push_back(std::move(r));
         }
         return rows;
-    }
-
-    bool DiaryDB::MarkAllVolumesPersisted() {
-        if (!db_) return false;
-        SKSE::log::debug("[DiaryDB] Marking all volumes as persisted_in_save=1");
-        return Exec("UPDATE volumes SET persisted_in_save=1;");
     }
 
     // ── Actor-template operations ────────────────────────────────────────────────
@@ -344,13 +329,6 @@ namespace SkyrimNetDiaries {
         if (!db_) return 0;
         Statement st(db_, "DELETE FROM stolen_volumes WHERE stolen_at > ?1;", "RemoveStolenVolumesAfter");
         return st.Bind(1, gameTime).Run() ? sqlite3_changes(db_) : 0;
-    }
-
-    bool DiaryDB::ClearPersisted(const std::string& actorUuid, int volumeNumber) {
-        if (!db_) return false;
-        Statement st(db_, "UPDATE volumes SET persisted_in_save=0 WHERE actor_uuid=?1 AND volume_number=?2;",
-                     "ClearPersisted");
-        return st.Bind(1, actorUuid).Bind(2, volumeNumber).Run();
     }
 
     bool DiaryDB::UpsertActorTemplate(const std::string& uuid,

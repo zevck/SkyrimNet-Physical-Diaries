@@ -23,8 +23,11 @@
 #include "BookText.h"
 #include "Database.h"
 #include "DiaryDB.h"
+#include "DynamicForms.h"
 #include "Localization.h"
 #include <algorithm>
+#include <map>
+#include <mutex>
 
 namespace SkyrimNetDiaries {
 
@@ -51,7 +54,6 @@ namespace SkyrimNetDiaries {
             r.prevVolumeLastCreationTime = d.prevVolumeLastCreationTime;
             r.prevVolumeCountAtBoundary  = d.prevVolumeCountAtBoundary;
             r.bookText                   = d.cachedBookText;  // "" keeps the stored text
-            r.persistedInSave            = d.persistedInSave;
             return r;
         }
 
@@ -70,7 +72,6 @@ namespace SkyrimNetDiaries {
             d.prevVolumeLastCreationTime = r.prevVolumeLastCreationTime;
             d.prevVolumeCountAtBoundary  = r.prevVolumeCountAtBoundary;
             d.cachedBookText             = r.bookText;
-            d.persistedInSave            = r.persistedInSave;
             return d;
         }
     }
@@ -147,6 +148,63 @@ namespace SkyrimNetDiaries {
         return nullptr;
     }
 
+    RE::FormID BookManager::FindBookByDescription(const RE::TESDescription* description) const {
+        std::lock_guard lock{ snapshotMutex_ };
+        const auto entry = descriptionIndex_.find(description);
+        return entry == descriptionIndex_.end() ? 0 : entry->second;
+    }
+
+    std::string BookManager::TextSnapshotLocked(RE::FormID bookFormId) const {
+        const auto entry = textSnapshot_.find(bookFormId);
+        return entry == textSnapshot_.end() ? std::string{} : entry->second;
+    }
+
+    std::string BookManager::GetBookTextSnapshot(RE::FormID bookFormId) const {
+        std::lock_guard lock{ snapshotMutex_ };
+        return TextSnapshotLocked(bookFormId);
+    }
+
+    std::string BookManager::GetBookTextSnapshot(const RE::TESDescription* description) const {
+        std::lock_guard lock{ snapshotMutex_ };
+        const auto entry = descriptionIndex_.find(description);
+        return entry == descriptionIndex_.end() ? std::string{} : TextSnapshotLocked(entry->second);
+    }
+
+    void BookManager::SetTextSnapshot(RE::FormID bookFormId, const std::string& text) {
+        const auto* book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(bookFormId);
+        std::lock_guard lock{ snapshotMutex_ };
+        if (book) descriptionIndex_[static_cast<const RE::TESDescription*>(book)] = bookFormId;
+        textSnapshot_[bookFormId] = text;
+    }
+
+    void BookManager::ShowRemovedPage(RE::FormID bookFormId, const std::string& actorUuid) {
+        SetTextSnapshot(bookFormId, FormatDiaryEntries({}, Database::GetActorName(actorUuid)));
+    }
+
+    void BookManager::RetireBook(RE::FormID bookFormId, const std::string& actorUuid) {
+        DynamicForms::Retire(bookFormId);
+        ShowRemovedPage(bookFormId, actorUuid);
+    }
+
+    void BookManager::IndexBook(const DiaryBookData& vol) {
+        formIndex_[vol.bookFormId] = { vol.actorUuid, vol.volumeNumber };
+        SetTextSnapshot(vol.bookFormId, vol.cachedBookText);
+    }
+
+    void BookManager::UnindexBook(RE::FormID bookFormId) {
+        formIndex_.erase(bookFormId);
+        std::lock_guard lock{ snapshotMutex_ };
+        std::erase_if(descriptionIndex_, [bookFormId](const auto& entry) { return entry.second == bookFormId; });
+        textSnapshot_.erase(bookFormId);
+    }
+
+    void BookManager::ClearIndexes() {
+        formIndex_.clear();
+        std::lock_guard lock{ snapshotMutex_ };
+        descriptionIndex_.clear();
+        textSnapshot_.clear();
+    }
+
     DiaryBookData& BookManager::RegisterBook(DiaryBookData data) {
         // Pre-warm the runtime cache so RefreshVolumeOnOpen never needs the UUID roundtrip.
         if (data.actorFormId != 0) {
@@ -154,7 +212,7 @@ namespace SkyrimNetDiaries {
         }
         auto& volumes = books_[data.actorUuid];
         auto& registered = volumes.emplace_back(std::move(data));
-        formIndex_[registered.bookFormId] = { registered.actorUuid, registered.volumeNumber };
+        IndexBook(registered);
         SKSE::log::info("Registered book for actor {}: FormID 0x{:X}, Volume {} (template: {}, subfolder: {})",
                        registered.actorUuid, registered.bookFormId, registered.volumeNumber,
                        registered.journalTemplate, registered.bioTemplateName);
@@ -208,6 +266,7 @@ namespace SkyrimNetDiaries {
                          vol.actorName, vol.volumeNumber, count, vol.lastKnownEntryCount);
         vol.cachedBookText = std::move(text);
         vol.lastKnownEntryCount = count;
+        SetTextSnapshot(vol.bookFormId, vol.cachedBookText);
     }
 
     void BookManager::UnregisterVolumesFrom(const std::string& actorUuid, int fromVolume) {
@@ -219,7 +278,8 @@ namespace SkyrimNetDiaries {
         for (auto vol = volumes.begin(); vol != volumes.end();) {
             if (vol->volumeNumber >= fromVolume) {
                 db->DeleteVolume(actorUuid, vol->volumeNumber);
-                formIndex_.erase(vol->bookFormId);
+                UnindexBook(vol->bookFormId);
+                RetireBook(vol->bookFormId, actorUuid);
                 vol = volumes.erase(vol);
                 ++removed;
             } else {
@@ -278,7 +338,8 @@ namespace SkyrimNetDiaries {
         // Clear in-memory maps only; DiaryDB on disk is intentionally preserved
         // so that volume metadata survives the revert and loads correctly.
         books_.clear();
-        formIndex_.clear();
+        ClearIndexes();
+        unclaimed_.clear();
         actorTemplates_.clear();
         SKSE::log::debug("[BookManager] Revert: in-memory data cleared (DiaryDB preserved on disk)");
     }
@@ -303,69 +364,7 @@ namespace SkyrimNetDiaries {
 
     void BookManager::ClearActorCache() {
         ClearActorLookupCache();
-        // FormID claims are per-session; clear alongside the actor cache so a fresh
-        // load/regeneration starts with a clean claim table.
-        ClearBookFormIdClaims();
-        SKSE::log::debug("[BookManager] Actor cache + FormID claims cleared");
-    }
-
-    // Gives the NPC the book back if they don't hold it: a volume whose form is still
-    // in memory but not in the NPC's inventory (a reload without saving).
-    static void EnsureBookInInventory(RE::FormID bookFormId, RE::FormID targetFormID,
-                                      const std::string& actorName, const std::string& bioTemplate,
-                                      const std::string& bookName, const std::string& actorUuid) {
-        auto* book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(bookFormId);
-        if (!book) {
-            SKSE::log::warn("[EnsureInventory] Book 0x{:X} no longer valid — skipping '{}'", bookFormId, bookName);
-            return;
-        }
-
-        RE::Actor* actor = FindActorForBook(targetFormID, actorName, bioTemplate, actorUuid);
-        if (!actor) {
-            SKSE::log::warn("[EnsureInventory] Could not find actor '{}' (UUID {}) for '{}'", actorName, actorUuid, bookName);
-            return;
-        }
-
-        if (CountInInventory(actor, book) > 0) {
-            SKSE::log::debug("[EnsureInventory] '{}' already in {}'s inventory", bookName, actorName);
-            return;
-        }
-
-        actor->AddObjectToContainer(book, nullptr, 1, nullptr);
-        SKSE::log::info("[EnsureInventory] Re-added '{}' to {}'s inventory after reload", bookName, actorName);
-    }
-
-    void BookManager::QueueInventoryCheck() {
-        int queued = 0;
-        int skipped = 0;
-        for (const auto& [uuid, volumes] : books_) {
-            uint32_t actorFormId = SkyrimNetDiaries::Database::GetFormIDForUUID(uuid);
-            for (const auto& vol : volumes) {
-                if (vol.persistedInSave) {
-                    // This volume was committed to a .ess save — the loaded inventory
-                    // state is authoritative.  Do not re-add (would duplicate taken books).
-                    ++skipped;
-                    continue;
-                }
-                RE::FormID bookFid   = vol.bookFormId;
-                // Prefer the volume's stored actorFormId (set at creation time);
-                // fall back to live UUID→FormID resolution if it wasn't persisted
-                // on older DB rows.
-                RE::FormID actorFid  = vol.actorFormId != 0
-                                          ? vol.actorFormId
-                                          : static_cast<RE::FormID>(actorFormId);
-                std::string aName    = vol.actorName;
-                std::string bio      = vol.bioTemplateName;
-                std::string bName    = Localization::GetSingleton()->FormatBookName(vol.actorName, vol.volumeNumber);
-                std::string aUuid    = uuid;
-                SKSE::GetTaskInterface()->AddTask([bookFid, actorFid, aName, bio, bName, aUuid]() {
-                    EnsureBookInInventory(bookFid, actorFid, aName, bio, bName, aUuid);
-                });
-                ++queued;
-            }
-        }
-        if (queued > 0 || skipped > 0)
-            SKSE::log::debug("[BookManager] Inventory check: {} volume(s) queued, {} skipped (already persisted)", queued, skipped);
+        SKSE::log::debug("[BookManager] Actor cache cleared");
     }
 
     std::vector<std::string> BookManager::LoadFromDB() {
@@ -377,7 +376,8 @@ namespace SkyrimNetDiaries {
         // session survive and cause the catch-up scan to think every actor already
         // has books — so nothing gets recreated after a reload-without-save.
         books_.clear();
-        formIndex_.clear();
+        ClearIndexes();
+        unclaimed_.clear();
         actorTemplates_.clear();
 
         if (!db->IsOpen()) {
@@ -385,52 +385,80 @@ namespace SkyrimNetDiaries {
             return {};
         }
 
+        // This save's live books by volume, from its co-save records: the record, not
+        // the row, says which form is the volume in this save (DiaryDB is shared by
+        // every save of the character).  Retired books match no row.
+        std::map<std::pair<std::string, int>, std::vector<DynamicForms::Record>> saved;
+        for (auto& record : DynamicForms::Tracked()) {
+            std::string uuid;
+            int volume = 0;
+            if (!ParseVolumeKey(record.key, uuid, volume)) continue;
+            if (record.retired) {
+                ShowRemovedPage(record.formId, uuid);
+            } else {
+                saved[{ uuid, volume }].push_back(std::move(record));
+            }
+        }
+
         auto rows = db->LoadAllVolumes();
         std::vector<std::string> invalidActors;
+        auto* localization = Localization::GetSingleton();
 
         for (auto& row : rows) {
-            // The book form must exist.  A volume created after the loaded save isn't
-            // in it (DPF only restores forms the save contains): drop the row and let
-            // the actor be recreated from SkyrimNet's entries.
-            auto* form = RE::TESForm::LookupByID(static_cast<RE::FormID>(row.bookFormId));
-            if (!form || form->GetFormType() != RE::FormType::Book) {
-                SKSE::log::info("[LoadFromDB] {} vol {}: book 0x{:X} is gone{} — removing row and queuing recreation",
-                                row.actorName, row.volumeNumber, row.bookFormId,
-                                row.persistedInSave ? "" : " (never saved)");
+            // The save's book for this volume; with two, the one DiaryDB names.
+            auto* candidates = [&]() -> std::vector<DynamicForms::Record>* {
+                const auto match = saved.find({ row.actorUuid, row.volumeNumber });
+                return match != saved.end() && !match->second.empty() ? &match->second : nullptr;
+            }();
+            auto chosen = candidates ? std::ranges::find(*candidates, static_cast<RE::FormID>(row.bookFormId),
+                                                         &DynamicForms::Record::formId)
+                                     : std::vector<DynamicForms::Record>::iterator{};
+            if (candidates && chosen == candidates->end()) chosen = candidates->begin();
+            auto* book = candidates ? RE::TESForm::LookupByID<RE::TESObjectBOOK>(chosen->formId) : nullptr;
+            if (!book) {
+                // Created after this save, or in another of the character's timelines:
+                // the volume has no book here.  It is recreated from SkyrimNet's entries.
+                SKSE::log::info("[LoadFromDB] {} vol {}: no book in this save — removing row and queuing recreation",
+                                row.actorName, row.volumeNumber);
                 db->DeleteVolume(row.actorUuid, row.volumeNumber);
                 invalidActors.push_back(row.actorUuid);
                 continue;
             }
-            if (!row.persistedInSave) {
-                // Created this session and never saved (a reload without saving): the
-                // form is still in memory; QueueInventoryCheck puts it back.
-                SKSE::log::debug("[LoadFromDB] {} vol {} not saved yet, form 0x{:X} still valid",
-                                 row.actorName, row.volumeNumber, row.bookFormId);
-            }
+            DynamicForms::Record record = std::move(*chosen);
+            candidates->erase(chosen);
 
             DiaryBookData data = FromRow(row);
-
-            // Claim this loaded diary's FormID so a later creation can't be handed
-            // the same ID (guards against a duplicate deleted record in DPF's pool
-            // that happens to match an already-live loaded diary).
-            ClaimBookFormId(static_cast<RE::FormID>(row.bookFormId), data.actorUuid);
-
-            // DPF may have restored this form with another owner's data: a FormID it
-            // handed out in an earlier session keeps that session's name in a save
-            // made then.  DiaryDB is authoritative, so re-apply the volume's look.
-            {
-                const std::string bookName = Localization::GetSingleton()->FormatBookName(data.actorName, data.volumeNumber);
-                auto* templateBook = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>(data.journalTemplate);
-                const std::string previous = form->GetName();
-                if (ConfigureDiaryForm(form->As<RE::TESObjectBOOK>(), templateBook, bookName)) {
-                    SKSE::log::info("[LoadFromDB] Book 0x{:X} was named '{}' — renamed to '{}'",
-                                    row.bookFormId, previous, bookName);
-                }
+            if (data.bookFormId != record.formId) {
+                SKSE::log::info("[LoadFromDB] {} vol {}: this save's book is 0x{:X} (DiaryDB had 0x{:X})",
+                                data.actorName, data.volumeNumber, record.formId, data.bookFormId);
+                data.bookFormId = record.formId;
+                db->UpsertVolume(ToRow(data));
             }
 
-            formIndex_[data.bookFormId] = { data.actorUuid, data.volumeNumber };
+            // DiaryDB is authoritative for the look: re-apply it (the actor's name or the
+            // game's language may have changed since the save) and keep the record in step.
+            if (!data.journalTemplate.empty()) record.templateEditorId = data.journalTemplate;
+            record.displayName = localization->FormatBookName(data.actorName, data.volumeNumber);
+            auto* templateBook = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>(record.templateEditorId);
+            ConfigureDiaryForm(book, templateBook, record.displayName);
+            DynamicForms::Track(std::move(record));
+
+            IndexBook(data);
             books_[data.actorUuid].push_back(std::move(data));
         }
+
+        // Books with no volume in DiaryDB are not proof of a Reset (DiaryDB may be new,
+        // or from another branch of saves), so they are left where they are: unclaimed,
+        // and reused if their volume is created again.
+        for (const auto& [volume, records] : saved) {
+            for (const auto& record : records) {
+                SKSE::log::info("[LoadFromDB] Book 0x{:X} ('{}') has no volume in DiaryDB — kept unclaimed",
+                                record.formId, record.key);
+                unclaimed_.try_emplace(record.key, record.formId);
+                ShowRemovedPage(record.formId, volume.first);
+            }
+        }
+        SweepRetiredBooks();
 
         // Ensure each actor's volumes are in order.
         for (auto& [uuid, volumes] : books_) {
@@ -442,7 +470,7 @@ namespace SkyrimNetDiaries {
 
         actorTemplates_ = db->LoadActorTemplates();
 
-        SKSE::log::info("[LoadFromDB] Loaded {} actors ({} invalid FormIDs queued for recovery)",
+        SKSE::log::info("[LoadFromDB] Loaded {} actors ({} volume(s) queued for recreation)",
                         books_.size(), invalidActors.size());
         return invalidActors;
     }

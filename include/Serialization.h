@@ -21,8 +21,8 @@
 
 #include "PCH.h"
 
-// SKSE co-save callbacks, used only for their timing (no records are written):
-// DiaryDB is the source of truth.
+// SKSE co-save callbacks.  The co-save holds one record, what each diary book form
+// in the save is (see DynamicForms.h); DiaryDB is the source of truth for the rest.
 // See docs/DATABASE.md.
 namespace SkyrimNetDiaries::Serialization {
 

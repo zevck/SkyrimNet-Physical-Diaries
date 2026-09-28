@@ -5,7 +5,7 @@ set(VCPKG_TARGET_TRIPLET "x64-windows-static" CACHE STRING "" FORCE)
 
 project(
     SkyrimNetPhysicalDiaries
-    VERSION 1.2.0
+    VERSION 2.0.0
     LANGUAGES CXX
 )
 
@@ -41,6 +41,7 @@ set(sources
     src/Database.cpp
     src/DiaryDB.cpp
     src/DiaryTheftHandler.cpp
+    src/DynamicForms.cpp
     src/InterPluginAPI.cpp
     src/Localization.cpp
     src/PapyrusAPI.cpp

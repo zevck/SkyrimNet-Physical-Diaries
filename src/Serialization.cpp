@@ -18,22 +18,29 @@
  */
 
 #include "Serialization.h"
+#include "BookCreation.h"
 #include "BookManager.h"
 #include "DiaryDB.h"
+#include "DynamicForms.h"
 #include "SaveFolder.h"
 #include "VolumeSync.h"
 
 namespace SkyrimNetDiaries::Serialization {
 
     namespace {
-        // The co-save carries no data: DiaryDB is the source of truth, and the save
-        // folder is detected from SkyrimNet.log.  The callbacks are still needed for
-        // their timing.  Older saves hold 'SNDB', 'SNDF' and 'SNDC' records; with no
-        // load callback SKSE skips them.
+        // The co-save holds one record: what each diary book form in the save is
+        // (DynamicForms).  DiaryDB holds everything else, and the save folder is
+        // detected from SkyrimNet.log.  Saves from before 2.0.0 hold 'SNDB', 'SNDF'
+        // and 'SNDC' records instead, which are skipped.
         constexpr std::uint32_t kSerializationId = 'SNDB';
+        constexpr std::uint32_t kBookFormsRecord = 'SNBF';
 
-        void SaveCallback([[maybe_unused]] SKSE::SerializationInterface* a_intfc) {
+        void SaveCallback(SKSE::SerializationInterface* a_intfc) {
             try {
+                // First, so a DiaryDB failure below can't lose it: without its record a
+                // book in the save loads as an empty shell.
+                DynamicForms::Save(a_intfc, kBookFormsRecord);
+
                 // A new game never gets a post-load sync, so its first save opens
                 // DiaryDB here and flushes the volumes created so far.  Not during a
                 // load's post-load wait: SkyrimNet.log may still name the previous
@@ -60,8 +67,26 @@ namespace SkyrimNetDiaries::Serialization {
         void RevertCallback([[maybe_unused]] SKSE::SerializationInterface* a_intfc) {
             // A new game or a load: clear in-memory volumes (DiaryDB on disk stays).
             BookManager::GetSingleton()->Revert();
+            DynamicForms::Revert();
             SaveFolder::Clear();
             SKSE::log::info("Reverted all diary data and caches");
+        }
+
+        // Runs inside the load, after the engine has recreated this save's book forms
+        // and resolved inventories.  Fills the books in so they look right at once;
+        // the post-load sync matches them against DiaryDB later.
+        void LoadCallback(SKSE::SerializationInterface* a_intfc) {
+            try {
+                std::uint32_t type = 0, version = 0, length = 0;
+                while (a_intfc->GetNextRecordInfo(type, version, length)) {
+                    if (type == kBookFormsRecord) DynamicForms::Load(a_intfc, version);
+                }
+                ConfigureLoadedBooks();
+            } catch (const std::exception& e) {
+                SKSE::log::error("LoadCallback exception: {}", e.what());
+            } catch (...) {
+                SKSE::log::error("LoadCallback: unknown exception");
+            }
         }
 
     } // namespace
@@ -71,6 +96,7 @@ namespace SkyrimNetDiaries::Serialization {
         serialization->SetUniqueID(kSerializationId);
         serialization->SetSaveCallback(SaveCallback);
         serialization->SetRevertCallback(RevertCallback);
+        serialization->SetLoadCallback(LoadCallback);
     }
 
 } // namespace SkyrimNetDiaries::Serialization

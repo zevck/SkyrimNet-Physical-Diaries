@@ -69,7 +69,6 @@ namespace SkyrimNetDiaries {
             double        prevVolumeLastCreationTime   = 0.0;
             int           prevVolumeCountAtBoundary    = 0;
             std::string  bookText;   // rendered font-tagged text ready for injection
-            bool          persistedInSave              = false; // true once written into a .ess save file
         };
 
         // Insert-or-replace a full volume row.  If bookText is empty the existing
@@ -94,10 +93,6 @@ namespace SkyrimNetDiaries {
         // Return all volume rows ordered by (actor_uuid, volume_number).
         std::vector<VolumeRow> LoadAllVolumes();
 
-        // Mark every volume as persisted (call from kSaveGame so that the
-        // inventory-check on next load doesn't re-add legitimately taken books).
-        bool MarkAllVolumesPersisted();
-
         // ── Actor-template operations ─────────────────────────────────────────
 
         std::unordered_map<std::string, std::string> LoadActorTemplates();
@@ -114,8 +109,6 @@ namespace SkyrimNetDiaries {
         // happened in a timeline the player has left.  Returns how many were removed.
         int RemoveStolenVolumesAfter(double gameTime);
 
-        // Lowers a volume's persisted_in_save flag (UpsertVolume never lowers it).
-        bool ClearPersisted(const std::string& actorUuid, int volumeNumber);
         bool UpsertActorTemplate(const std::string& uuid,
                                  const std::string& templateName);
 

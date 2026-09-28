@@ -9,14 +9,14 @@ SKSE plugin (CommonLibSSE-NG, C++23; one DLL for SE, AE and VR) that turns the d
 - SNPD **presents** SkyrimNet's data; it never writes or changes diary entries. DiaryDB holds SNPD's own bookkeeping plus a render cache.
 - Identify books by **base FormID** (`BookManager::GetBookForFormID`) and NPCs by **SkyrimNet UUID**. Never by name (localized; same-named NPCs share an identity) and never by a stored FormID without a UUID back-check.
 - Every persistence change must survive: save → reload, reload without saving, loading an older save with SkyrimNet **KEEP and CLEAR**, and a second character. See [docs/VOLUMES_AND_SYNC.md](docs/VOLUMES_AND_SYNC.md).
-- Never `DPF.Dispose()` forms (or release DPF RE slots) on Reset. See [docs/BOOK_FORMS.md](docs/BOOK_FORMS.md).
-- Game state is touched only on the game thread (`SKSE::GetTaskInterface()->AddTask`). The DPF callback arrives on a VM thread; Papyrus natives run on the game thread (registered non-tasklet).
+- Book forms are runtime forms the engine saves itself (`DynamicForms`). Never pick a FormID yourself; a volume that goes away is retired (`BookManager::RetireBook`): its form stays in the save, never removed, or a world copy of it crashes the game on load. See [docs/BOOK_FORMS.md](docs/BOOK_FORMS.md).
+- Game state is touched only on the game thread (`SKSE::GetTaskInterface()->AddTask`). Papyrus natives run on the game thread (registered non-tasklet).
 - A Papyrus change is done only when the `.pex` is compiled into `Scripts/` **and** shipped. See [docs/PAPYRUS_AND_API.md](docs/PAPYRUS_AND_API.md).
 - **Build and deploy with `.\Build_Local.ps1`**: incremental plugin build, Pyro (`skyrimse.ppj`, same as the VS Code task), and deploy to the `Physical Diaries - Dev` mod folder in each test instance (one per runtime: SE, AE, VR). Paths are in the gitignored `Build_Config_Local.ps1`. PASS/FAIL is also written to `%TEMP%\snpd-build-result.json`. Never `/t:Rebuild`: it rebuilds all of CommonLib. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#build).
 
-## Open work (as of 2026-09-27)
+## Open work (as of 2026-09-28)
 
-- VR, untested on VR: the book hook now passes VR's ninth `OpenBookMenu` argument (an `NiAVObject*`; dropping it caused the VR book crashes and invisible books, see [docs/BOOK_TEXT.md](docs/BOOK_TEXT.md#delivery-the-openbookmenu-hook)), and `ClearBogusSourceFiles` clears the invalid `sourceFiles` pointer DPF leaves on clones.
+- 2.0.0 replaced Dynamic Persistent Forms with engine-saved runtime forms ([docs/BOOK_FORMS.md](docs/BOOK_FORMS.md)). Run on AE; the engine behaviour was checked in the VR binary, but it hasn't been run in game on VR yet ([docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md)).
 
 Ask before committing.
 

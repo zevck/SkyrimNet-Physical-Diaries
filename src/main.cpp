@@ -24,6 +24,7 @@
 #include "Database.h"
 #include "DiaryDB.h"
 #include "DiaryTheftHandler.h"
+#include "DynamicForms.h"
 #include "InterPluginAPI.h"
 #include "Localization.h"
 #include "PapyrusAPI.h"
@@ -61,18 +62,13 @@ namespace {
     // still waiting from an earlier load gives up instead of running against the new one.
     std::atomic<std::uint32_t> g_loadGeneration{ 0 };
 
-    // Set at kDataLoaded: without DPF no book form can be created or restored.
-    bool g_dpfMissing = false;
-
     // Ends the current session before a load or a new game.  Nothing from it may
-    // leak into the next: queued book creations, the actor cache and FormID claims,
-    // and the previous save's DiaryDB (reopened by the post-load sync, or by
+    // leak into the next: the actor cache, and the previous save's DiaryDB (reopened by the post-load sync, or by
     // SaveCallback if a save happens first).  A new game gets no kPreLoadGame, so
     // without this it would keep writing into the previous character's DiaryDB.
     void EndSession() {
         ++g_loadGeneration;
         SkyrimNetDiaries::TimelineGate::Reset();
-        SkyrimNetDiaries::CancelPendingCreations();
         SkyrimNetDiaries::BookManager::ClearActorCache();
         SkyrimNetDiaries::DiaryDB::GetSingleton()->Close();
         SkyrimNetDiaries::SaveFolder::Clear();
@@ -97,17 +93,6 @@ namespace {
         switch (msg->type) {
         case SKSE::MessagingInterface::kDataLoaded: {
             try {
-                // Check for required dependency: Dynamic Persistent Forms
-                {
-                    auto* dataHandler = RE::TESDataHandler::GetSingleton();
-                    bool dpfInstalled = dataHandler && dataHandler->LookupModByName("Dynamic Persistent Forms.esp");
-                    if (!dpfInstalled) {
-                        g_dpfMissing = true;
-                        SKSE::log::error("kDataLoaded: 'Dynamic Persistent Forms.esp' is not installed — diary books cannot be created");
-                        ShowWarning(SkyrimNetDiaries::Localization::GetSingleton()->GetDpfMissingText());
-                    }
-                }
-
                 // The stolen-diary decorator for SkyrimNet's prompts (native, registered once).
                 if (SkyrimNetDiaries::Database::InitializeAPI()) {
                     SkyrimNetDiaries::DiaryTheftHandler::RegisterStolenDecorator();
@@ -154,23 +139,6 @@ namespace {
             }
             break;
         }
-        case SKSE::MessagingInterface::kSaveGame: {
-            // Mark every tracked volume as having been written into a .ess save file.
-            // On the next kPostLoadGame, QueueInventoryCheck will skip these volumes
-            // so legitimately taken/stolen books are not re-added to NPC inventories.
-            try {
-                SkyrimNetDiaries::DiaryDB::GetSingleton()->MarkAllVolumesPersisted();
-                // Sync the in-memory flag too so the current session stays consistent.
-                for (auto& [uuid, volumes] : SkyrimNetDiaries::BookManager::GetSingleton()->GetAllBooksRef()) {
-                    for (auto& vol : volumes) vol.persistedInSave = true;
-                }
-                SKSE::log::debug("kSaveGame: all volumes marked as persisted");
-            } catch (const std::exception& e) {
-                SKSE::log::error("Exception in kSaveGame: {}", e.what());
-            }
-            break;
-        }
-
         case SKSE::MessagingInterface::kPreLoadGame: {
             // Diary events wait for this load's post-load sync (see SetPostLoadSyncReady).
             EndSession();
@@ -185,8 +153,9 @@ namespace {
         }
 
         case SKSE::MessagingInterface::kPostLoadGame: {
-            // First, and independent of SkyrimNet: DPF has restored its forms by now.
-            SkyrimNetDiaries::BookManager::SanitizeLoadedBookForms();
+            // First, and independent of SkyrimNet: world copies of our books in the
+            // loaded cells were built before the load callback filled the books in.
+            DynamicForms::RebuildLoadedWorldCopies();
 
             if (!SkyrimNetDiaries::Database::InitializeAPI()) {
                 SKSE::log::warn("Failed to initialize API (SkyrimNet may not be loaded yet)");
@@ -253,10 +222,9 @@ namespace {
                     }
                     // Without this save's volumes every NPC would look new and get a
                     // second set of books, so create nothing this session instead.
-                    if (g_dpfMissing || !db->IsOpen()) {
-                        SKSE::log::error("kPostLoadGame: {} — diary books are paused until the next load",
-                                         g_dpfMissing ? "Dynamic Persistent Forms is not installed"
-                                                      : "couldn't find or open this save's SkyrimNet folder");
+                    if (!db->IsOpen()) {
+                        SKSE::log::error("kPostLoadGame: couldn't find or open this save's SkyrimNet folder — "
+                                         "diary books are paused until the next load");
                         SkyrimNetDiaries::PauseDiaryBooks();
                         SkyrimNetDiaries::SetPostLoadSyncReady(true);
                         return;
@@ -266,12 +234,8 @@ namespace {
                     volumesLoaded = true;
 
                     // Match SkyrimNet's history: volumes reaching past this save lose the
-                    // entries a Clear deleted (before books are re-added below).
+                    // entries a Clear deleted.
                     SkyrimNetDiaries::ReconcileWithTimeline();
-
-                    // For volumes whose DPF form still exists in process memory but whose
-                    // inventory entry was wiped by a reload-without-save, re-add the book.
-                    SkyrimNetDiaries::BookManager::GetSingleton()->QueueInventoryCheck();
 
                     // Drop theft records made after this save's game time (they belong to a
                     // timeline the player has left).
@@ -284,7 +248,7 @@ namespace {
                     // Build skip set: deduplicated UUIDs being immediately recovered.
                     std::unordered_set<std::string> skipUuids;
                     if (!invalidActors.empty()) {
-                        SKSE::log::info("kPostLoadGame: {} actor(s) had invalid FormIDs — queuing immediate recreation", invalidActors.size());
+                        SKSE::log::info("kPostLoadGame: {} actor(s) lost volumes with this save — queuing immediate recreation", invalidActors.size());
                         std::unordered_set<std::string> seen;
                         for (const auto& uuid : invalidActors) {
                             if (!seen.insert(uuid).second) continue;
@@ -381,6 +345,7 @@ SKSE_PLUGIN_LOAD(const SKSE::LoadInterface* a_skse)
     // Register C++ event handler for diary theft/return detection
     SKSE::log::debug("Registering diary theft/return event handler...");
     SkyrimNetDiaries::DiaryTheftHandler::Register();
+    SkyrimNetDiaries::RegisterRetiredBookSweeper();
 
     // Detect game language and initialize localization (must happen before BookTextHook).
     SkyrimNetDiaries::Localization::GetSingleton()->Initialize();
