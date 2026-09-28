@@ -21,7 +21,9 @@
 #include "BookManager.h"
 #include "Localization.h"
 
+#include <MinHook.h>
 #include <cstring>
+#include <thread>
 
 // ---------------------------------------------------------------------------
 // OpenBookMenu hook
@@ -46,6 +48,13 @@
 // Dropping it (as before 2026-09-27) handed VR a junk pointer: crashes in
 // `lock inc [rbx+0x08]`, invisible vanilla books, wrong book placement.
 // See docs/BOOK_TEXT.md.
+//
+// TESDescription::GetDescription hook
+//
+// Anything else that reads a book's text asks the form for its DESC field:
+// SkyrimNet's book-read event, Immersive Reading on VR, the item card.  For our
+// volumes that is the template's text, so this hook answers DESC for them with
+// the cached diary text instead (see docs/BOOK_TEXT.md).
 // ---------------------------------------------------------------------------
 
 namespace
@@ -174,6 +183,45 @@ namespace
         return out;
     }
 
+    // The id of the game's main thread (plugin load runs on it).  BookManager is
+    // game-thread state, so the description hook only answers there.
+    std::thread::id g_gameThread;
+
+    // The text to show for `book` if it is one of our volumes ("" otherwise), in the
+    // encoding the book renderer needs.  `refresh` re-reads SkyrimNet first; that
+    // queries SkyrimNet, so it is only done when the book is actually opened.
+    std::string DiaryTextFor(const RE::TESObjectBOOK* book, bool refresh) {
+        auto* bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
+        auto* vol = bookManager->GetBookForFormID(book->GetFormID());
+        if (!vol) return {};
+        if (refresh) bookManager->RefreshVolumeOnOpen(vol);
+        if (vol->cachedBookText.empty()) return {};
+        if (refresh) {
+            SKSE::log::info("[BookTextHook] Opening diary: formId=0x{:X} actor='{}' vol={} textLen={}",
+                book->GetFormID(), vol->actorName, vol->volumeNumber, vol->cachedBookText.size());
+        }
+        // Win-1251 only for Cyrillic text (see Utf8ToWin1251).
+        return HasCyrillic(vol->cachedBookText) ? Utf8ToWin1251(vol->cachedBookText) : vol->cachedBookText;
+    }
+
+    // The rendered text without its <font> tags.  Other readers (SkyrimNet's prompt,
+    // Immersive Reading) get markup close to a vanilla book's; the book menu still
+    // gets the styled text from OpenBookMenuHook.
+    std::string StripFontTags(const std::string& text) {
+        std::string out;
+        out.reserve(text.size());
+        for (std::size_t i = 0; i < text.size();) {
+            if (text.compare(i, 6, "<font ") == 0 || text.compare(i, 7, "</font>") == 0) {
+                const std::size_t close = text.find('>', i);
+                if (close == std::string::npos) break;
+                i = close + 1;
+            } else {
+                out += text[i++];
+            }
+        }
+        return out;
+    }
+
     struct OpenBookMenuHook
     {
         // BookMenu::OpenBookMenu, plus VR's ninth argument (see the file header).
@@ -208,21 +256,8 @@ namespace
                 // book opens with its own text instead.
                 std::string textToInject;
                 try {
-                    auto* bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
-                    if (auto* vol = bookManager->GetBookForFormID(a_book->GetFormID())) {
-                        // Refresh text before injection: detects new/deleted entries and
-                        // reformats if the live count differs from the cached count.
-                        bookManager->RefreshVolumeOnOpen(vol);
-                        if (!vol->cachedBookText.empty()) {
-                            SKSE::log::info("[BookTextHook] Opening diary: formId=0x{:X} actor='{}' vol={} textLen={}",
-                                a_book->GetFormID(), vol->actorName, vol->volumeNumber, vol->cachedBookText.size());
-
-                            // Win-1251 only for Cyrillic text (see Utf8ToWin1251).
-                            textToInject = HasCyrillic(vol->cachedBookText)
-                                               ? Utf8ToWin1251(vol->cachedBookText)
-                                               : vol->cachedBookText;
-                        }
-                    }
+                    // Refresh first: picks up entries added or deleted since the last render.
+                    textToInject = DiaryTextFor(a_book, true);
                 } catch (const std::exception& e) {
                     SKSE::log::error("[BookTextHook] Preparing diary text for 0x{:X} failed: {} — opening the book without it",
                                      a_book->GetFormID(), e.what());
@@ -375,6 +410,60 @@ namespace
         }
     };
 
+    struct GetDescriptionHook
+    {
+        using func_t = void (*)(RE::TESDescription*, RE::BSString&, RE::TESForm*, std::uint32_t);
+        static inline func_t original{ nullptr };
+
+        static void thunk(RE::TESDescription* a_self, RE::BSString& a_out, RE::TESForm* a_parent,
+                          std::uint32_t a_fieldType)
+        {
+            // Only DESC (the book's text; CNAM is the item card) of our volumes, and only
+            // on the game thread.  Cheap checks first: this runs for every description.
+            if (a_fieldType == 'CSED' && a_parent && a_parent->GetFormType() == RE::FormType::Book &&
+                std::this_thread::get_id() == g_gameThread) {
+                try {
+                    // No refresh: callers can ask often, and the text was refreshed
+                    // when the book was last opened.
+                    const auto text = DiaryTextFor(a_parent->As<RE::TESObjectBOOK>(), false);
+                    if (!text.empty()) {
+                        a_out = StripFontTags(text).c_str();
+                        return;
+                    }
+                } catch (...) {
+                    // Fall through to the form's own text.
+                }
+            }
+            original(a_self, a_out, a_parent, a_fieldType);
+        }
+
+        static void Install()
+        {
+            // SE id 14399 (also used by VR) | AE id 14552.  MinHook: other plugins
+            // (e.g. Description Framework) hook this function too.
+            REL::Relocation<std::uintptr_t> target{ RELOCATION_ID(14399, 14552) };
+            auto* targetPtr = reinterpret_cast<void*>(target.address());
+
+            const auto init = MH_Initialize();
+            if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) {
+                SKSE::log::error("[BookTextHook] MH_Initialize failed ({}) — other mods will see template text",
+                                 MH_StatusToString(init));
+                return;
+            }
+            auto status = MH_CreateHook(targetPtr, reinterpret_cast<void*>(&thunk),
+                                        reinterpret_cast<void**>(&original));
+            if (status == MH_OK) {
+                status = MH_EnableHook(targetPtr);
+            }
+            if (status != MH_OK) {
+                SKSE::log::error("[BookTextHook] GetDescription hook failed ({}) — other mods will see template text",
+                                 MH_StatusToString(status));
+                return;
+            }
+            SKSE::log::info("Installed GetDescription hook (RELOCATION_ID 14399/14552)");
+        }
+    };
+
 } // anonymous namespace
 
 void SkyrimNetDiaries::BookTextHook::Install()
@@ -382,5 +471,7 @@ void SkyrimNetDiaries::BookTextHook::Install()
     SKSE::log::info("[BookTextHook] Game language: '{}'",
                     SkyrimNetDiaries::Localization::GetSingleton()->GetLanguageString());
 
+    g_gameThread = std::this_thread::get_id();  // SKSEPlugin_Load runs on the main thread
     OpenBookMenuHook::Install();
+    GetDescriptionHook::Install();
 }
