@@ -373,12 +373,22 @@ namespace SkyrimNetDiaries {
     bool ConfigureDiaryForm(RE::TESObjectBOOK* book, const RE::TESObjectBOOK* templateBook,
                             const std::string& name) {
         // From the template: book type (must be a tome, 0x00; a note scroll, 0xFF,
-        // ignores [pagebreak]), model and item card.  Flags are not copied.  Never
+        // ignores [pagebreak]), the models, bounds, sounds, keywords and item card.
+        // A factory-made form starts with none of these: without the world model and
+        // bounds a dropped book has no 3D and vanishes.  Flags are not copied.  Never
         // touch data.teaches: clearing it crashed DPF's serializer on save.
         if (templateBook) {
             book->data.type = templateBook->data.type;
             book->inventoryModel = templateBook->inventoryModel;
             book->itemCardDescription = templateBook->itemCardDescription;
+            if (const char* model = templateBook->GetModel(); model && *model) book->SetModel(model);
+            book->boundData = templateBook->boundData;
+            book->pickupSound = templateBook->pickupSound;
+            book->putdownSound = templateBook->putdownSound;
+            templateBook->ForEachKeyword([book](RE::BGSKeyword* keyword) {
+                if (keyword && !book->HasKeyword(keyword)) book->AddKeyword(keyword);
+                return RE::BSContainer::ForEachResult::kContinue;
+            });
         }
         book->weight = 0.5f;
         book->value = 0;
