@@ -234,6 +234,16 @@ namespace {
 
                 const auto waited = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
                 SKSE::log::info("kPostLoadGame: SkyrimNet ready, starting post-load sync (waited {:.1f}s)", waited);
+                // A failure before this save's volumes are loaded pauses diary books, as
+                // the other load failures do: with books_ incomplete, events would
+                // create duplicate volumes.
+                bool volumesLoaded = false;
+                const auto pauseIfIncomplete = [&volumesLoaded]() {
+                    if (!volumesLoaded) {
+                        SKSE::log::error("kPostLoadGame: this save's volumes weren't loaded — diary books are paused until the next load");
+                        SkyrimNetDiaries::PauseDiaryBooks();
+                    }
+                };
                 try {
                     // Detect the save folder from SkyrimNet.log and open this save's DiaryDB.
                     SkyrimNetDiaries::SaveFolder::DetectFromLog();
@@ -253,6 +263,7 @@ namespace {
                     }
 
                     auto invalidActors = SkyrimNetDiaries::BookManager::GetSingleton()->LoadFromDB();
+                    volumesLoaded = true;
 
                     // Match SkyrimNet's history: volumes reaching past this save lose the
                     // entries a Clear deleted (before books are re-added below).
@@ -262,8 +273,8 @@ namespace {
                     // inventory entry was wiped by a reload-without-save, re-add the book.
                     SkyrimNetDiaries::BookManager::GetSingleton()->QueueInventoryCheck();
 
-                    // Clear stolen-volume records if this save is earlier in game time
-                    // than the last session (the theft happened in an abandoned timeline).
+                    // Drop theft records made after this save's game time (they belong to a
+                    // timeline the player has left).
                     SkyrimNetDiaries::DiaryTheftHandler::ReconcileAfterLoad();
 
                     // Diary events are handled again from here on; entries that arrived while
@@ -295,8 +306,10 @@ namespace {
                     SkyrimNetDiaries::QueueBatchCatchUpScan(std::move(skipUuids));
                 } catch (const std::exception& e) {
                     SKSE::log::error("Exception in the post-load sync: {}", e.what());
+                    pauseIfIncomplete();
                 } catch (...) {
                     SKSE::log::error("Unknown exception in the post-load sync");
+                    pauseIfIncomplete();
                 }
                 // Never leave diary events waiting for a sync that failed.
                 SkyrimNetDiaries::SetPostLoadSyncReady(true);

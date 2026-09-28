@@ -30,7 +30,7 @@ The menu sink tracks only whether the **Dialogue Menu**, **Console** and **Conta
   ```
   {% if render_mode == "full" and rendering_diary %}
   {% if snpd_diary_stolen(npc.UUID) == "true" %}
-  **IMPORTANT**: You notice that your diary has been stolen! Write about your reaction.
+  **IMPORTANT**: You notice that your diary, which you always keep on you, has been stolen! Write about your reaction in a new volume.
   {% endif %}
   {% endif %}
   ```

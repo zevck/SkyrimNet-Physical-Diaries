@@ -1,6 +1,6 @@
 # SkyrimNet Physical Diaries Architecture
 
-SkyrimNet Physical Diaries (SNPD) is an SKSE plugin (`SkyrimNetPhysicalDiaries.dll`) plus five small Papyrus scripts and an ESP. It turns the diary entries that [SkyrimNet](https://github.com/MinLL/SkyrimNet-GamePlugin) writes for NPCs into real book items. SkyrimNet already stores those entries, but only as AI context and dashboard text. SNPD reads them through SkyrimNet's public API, splits them into volumes, gives each volume a book form, puts the book in the NPC's inventory, and supplies the text when the player opens it.
+SkyrimNet Physical Diaries (SNPD) is an SKSE plugin (`SkyrimNetPhysicalDiaries.dll`) plus four small Papyrus scripts, an ESP and a SkyrimNet prompt plugin. It turns the diary entries that [SkyrimNet](https://github.com/MinLL/SkyrimNet-GamePlugin) writes for NPCs into real book items. SkyrimNet already stores those entries, but only as AI context and dashboard text. SNPD reads them through SkyrimNet's public API, splits them into volumes, gives each volume a book form, puts the book in the NPC's inventory, and supplies the text when the player opens it.
 
 **SNPD is a presentation and interaction layer over SkyrimNet's data.** It never writes diary content and never changes SkyrimNet's entries. It owns only the book forms and its own SQLite state. Any design that puts authoritative diary content in SNPD's storage is wrong.
 
@@ -17,9 +17,10 @@ The repo has the layout of an MO2 mod folder. Builds are deployed as a `Physical
 | `src/` | C++ sources |
 | `include/` | Headers, one per component, plus `PCH.h` (force-included: `RE/Skyrim.h`, `SKSE/SKSE.h`, spdlog), `SkyrimNetPublicAPI.h` (vendored SkyrimNet API loader) and `SkyrimNetPhysicalDiariesAPI.h` (SNPD's own inter-plugin API, for other mods) |
 | `lib/commonlibsse-ng/` | CommonLibSSE-NG v9.1.0 as a git submodule. See [DEVELOPMENT.md](DEVELOPMENT.md#build). |
-| `Source/Scripts/*.psc` → `Scripts/*.pex` | Papyrus: `SkyrimNetDiaries_API`, `_Decorators`, `_EventListener`, `_MCM`, `_Native`. See [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md). |
+| `Source/Scripts/*.psc` → `Scripts/*.pex` | Papyrus: `SkyrimNetDiaries_API`, `_EventListener`, `_MCM`, `_Native`. See [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md). |
 | `SkyrimNet Physical Diaries.esp` | The four template books (`SkyrimNetDiaryTemplate`, `…2`, `…3`, `…N`), the MCM quest and the event-listener quest. Also `SNPD_DiaryStolenFaction`, which nothing uses any more (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). |
 | `SKSE/Plugins/SkyrimNetPhysicalDiaries.dll` | Build output, not tracked (`*.dll` and `*.pex` are gitignored). |
+| `SKSE/Plugins/SkyrimNet/external/zevick.physical-diaries/` | SkyrimNet Beta 25+ plugin (external layer): `manifest.json` and `prompts/submodules/system_head/0500_diary_stolen.prompt`, which puts the stolen-diary line in the diary prompt. See [THEFT.md](THEFT.md#how-skyrimnet-learns-about-it). |
 | `SKSE/Plugins/SkyrimNetPhysicalDiaries/Locales/*.ini` | Per-language date and title formats. See [LOCALIZATION.md](LOCALIZATION.md). |
 | `Interface/Translations/SkyrimNet Physical Diaries_*.txt` | MCM translations (UTF-16 LE with BOM) |
 | `docs/` | These developer docs |
@@ -127,7 +128,8 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 | Game (main) thread | SKSE messages, every `AddTask` body, the book hook, event sinks, the `TimelineGate` prompt callback, and **Papyrus natives**: they are registered with `callableFromTasklets = false` (CommonLib's default), so the VM defers each call to the game thread |
 | Papyrus VM thread | Only the `DPF.Create()` callback (`DPFCreateCallback::operator()`) |
 | Whichever thread queues a message box | The `QueueMessage` hook (`TimelineGate`): it only compares text and wraps a callback |
-| Detached `std::thread` | Sleepers that wait, then queue a game-thread task: the 5 s `kCantTake` clear per created book, the post-load readiness poll, `DeferUntilSyncReady` |
+| Detached `std::thread` | Sleepers that wait, then queue a game-thread task: the post-load readiness poll, `DeferUntilSyncReady` |
+| One timer thread (`CantTakeTimer`) | Clears `kCantTake` on each created book 5 s after creation (queues the clear to the game thread) |
 
 Rules: anything touching forms, inventories or references must run on the game thread (`SKSE::GetTaskInterface()->AddTask`). Don't register a native with `callableFromTasklets = true`: it would then run on a VM thread and race `books_`. The DPF callback does only the FormID claim itself and hands the rest to a task. The create queue, the claim table and the actor cache each have their own mutex. `books_` has none and is only touched from the game thread, so keep it that way.
 

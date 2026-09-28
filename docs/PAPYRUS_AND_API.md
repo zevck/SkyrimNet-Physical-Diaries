@@ -23,12 +23,12 @@ All registered in `PapyrusAPI::RegisterFunctions`.
 |---|---|---|
 | `SkyrimNetDiaries_Native.UpdateDiaryFromEvent(String)` | `UpdateDiaryFromEventWrapper`: parses `actorFormId` from the event JSON, then `UpdateDiaryForFormID` (clears stolen volumes, then `UpdateDiaryForActorInternal`) | EventListener |
 | `SkyrimNetDiaries_Native.UpdateDiaryForActor(int)` | `UpdateDiaryForActorWrapper` → `UpdateDiaryForFormID`. Legacy, kept for older listener scripts; wrong for FormIDs ≥ `0x80000000` | Nothing in SNPD |
-| `SkyrimNetDiaries_API.IsDiaryStolen(Actor) → String` | `"true"` / `"false"` | Decorators |
+| `SkyrimNetDiaries_API.IsDiaryStolen(Actor) → String` | `"true"` / `"false"` | Public API only |
 | `SkyrimNetDiaries_API.GetDiaryTheftStatus(Actor) → String` | JSON; see [THEFT.md](THEFT.md) | Public API only |
 | `SkyrimNetDiaries_API.SetTheftCleared(Actor)` | Clears stolen volumes | Public API only |
 | `SkyrimNetDiaries_MCM.*` (16 getters and setters, `RegenerateTextsOnly`, `ResetAllDiaries`) | `MCM_*` | MCM |
 
-`GetDiaryTheftStatus` and `SetTheftCleared` have no callers inside SNPD. They are public API for other mods: keep them.
+`IsDiaryStolen`, `GetDiaryTheftStatus` and `SetTheftCleared` have no callers inside SNPD (the `snpd_diary_stolen` decorator is native). They are public API for other mods: keep them.
 
 ### Adding or changing a native (all four steps, every time)
 

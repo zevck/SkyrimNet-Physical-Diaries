@@ -19,7 +19,7 @@
 
 #include "TimelineGate.h"
 #include "Database.h"
-#include <MinHook.h>
+#include "Detour.h"
 #include <atomic>
 #include <chrono>
 #include <mutex>
@@ -125,29 +125,11 @@ namespace SkyrimNetDiaries::TimelineGate {
     } // namespace
 
     void Install() {
-        // SE id 51422 (also used by VR) | AE id 52271.  MinHook rather than a
-        // hand-written detour: SkyrimNet hooks this function too, and MinHook
-        // handles a prologue that another plugin has already patched.
+        // SE id 51422 (also used by VR) | AE id 52271.  SkyrimNet hooks this function too.
         REL::Relocation<std::uintptr_t> target{ RELOCATION_ID(51422, 52271) };
-        auto* targetPtr = reinterpret_cast<void*>(target.address());
-
-        const auto init = MH_Initialize();
-        if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) {
-            SKSE::log::error("[TimelineGate] MH_Initialize failed ({}) — timeline prompt not tracked",
-                             MH_StatusToString(init));
-            return;
-        }
-        auto status = MH_CreateHook(targetPtr, reinterpret_cast<void*>(&Hook_QueueMessage),
-                                    reinterpret_cast<void**>(&g_originalQueueMessage));
-        if (status == MH_OK) {
-            status = MH_EnableHook(targetPtr);
-        }
-        if (status != MH_OK) {
-            SKSE::log::error("[TimelineGate] QueueMessage hook failed ({}) — timeline prompt not tracked",
-                             MH_StatusToString(status));
-            return;
-        }
-        SKSE::log::info("Installed QueueMessage hook (RELOCATION_ID 51422/52271)");
+        InstallDetour(target.address(), reinterpret_cast<void*>(&Hook_QueueMessage),
+                      reinterpret_cast<void**>(&g_originalQueueMessage), "QueueMessage", "51422/52271",
+                      "the timeline prompt is not tracked");
     }
 
     void OnDataLoaded() {

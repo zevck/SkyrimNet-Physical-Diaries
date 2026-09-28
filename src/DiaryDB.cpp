@@ -321,14 +321,6 @@ namespace SkyrimNetDiaries {
         return ok;
     }
 
-    bool DiaryDB::HasAnyStolenVolumes(const std::string& actorUuid) {
-        if (!db_) return false;
-        Statement st(db_, "SELECT EXISTS(SELECT 1 FROM stolen_volumes WHERE actor_uuid=?1);", "HasAnyStolenVolumes");
-        const bool hasStolen = st.Bind(1, actorUuid).Next() && st.Int(0) != 0;
-        SKSE::log::debug("[DiaryDB] UUID {} has stolen volumes: {}", actorUuid, hasStolen);
-        return hasStolen;
-    }
-
     std::vector<std::string> DiaryDB::LoadStolenActorUuids() {
         std::vector<std::string> uuids;
         if (!db_) return uuids;

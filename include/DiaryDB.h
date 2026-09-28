@@ -107,7 +107,6 @@ namespace SkyrimNetDiaries {
         // Track which specific volumes are stolen (not just a timestamp)
         bool AddStolenVolume(const std::string& actorUuid, int volumeNumber, double gameTime);
         bool RemoveStolenVolume(const std::string& actorUuid, int volumeNumber);
-        bool HasAnyStolenVolumes(const std::string& actorUuid);
         // Every actor with at least one stolen volume.
         std::vector<std::string> LoadStolenActorUuids();
         bool ClearAllStolenVolumes(const std::string& actorUuid);

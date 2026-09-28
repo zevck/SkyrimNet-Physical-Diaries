@@ -34,7 +34,7 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Repo layout, component map, startup and load sequence, one entry end to end, threading, dependencies |
 | [BOOK_FORMS.md](BOOK_FORMS.md) | DPF creation queue, FormID claim table, templates, finding the NPC, validity across loads, alternatives tested |
 | [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md) | Entries → volumes, boundaries, update and seal, load-time recovery and catch-up, refresh on open, save reverts, save-folder detection |
-| [BOOK_TEXT.md](BOOK_TEXT.md) | Rendering, dates, cleaning LLM output, the `OpenBookMenu` hook, VR workarounds, UTF-8 → Win-1251 |
+| [BOOK_TEXT.md](BOOK_TEXT.md) | Rendering, dates, cleaning LLM output, the `OpenBookMenu` hook (and VR's ninth argument), the `GetDescription` hook for other readers, UTF-8 → Win-1251 |
 | [THEFT.md](THEFT.md) | Theft, return and handover; the decorator; clearing; save reverts |
 | [LOCALIZATION.md](LOCALIZATION.md) | Language choice, locale files, GMST names, MCM translations |
 
@@ -60,4 +60,4 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 - **One DLL for SE, AE and VR.** Test the hook and form creation on VR when you touch them.
 - **A Papyrus change isn't done until the `.pex` is built and shipped.**
 - **There is no automated test suite.** Changes are checked in game through the logs.
-- **These docs describe the code as of 2026-09-26** (v1.1.0 plus that day's cleanup and file split, with the VR fixes still untested on VR). Line numbers drift; function names are the stable anchor. When the code and a doc disagree, the code wins. Fix the doc in the same change.
+- **These docs describe the code as of 2026-09-27** (v1.2.0, with the VR hook changes still untested on VR). Line numbers drift; function names are the stable anchor. When the code and a doc disagree, the code wins. Fix the doc in the same change.

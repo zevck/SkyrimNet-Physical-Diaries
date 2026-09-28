@@ -154,10 +154,12 @@ namespace SkyrimNetDiaries {
                 std::unique_lock<std::mutex> lock(mutex);
                 while (true) {
                     wake.wait(lock, [this]() { return !queue.empty(); });
+                    // Entries are only appended, with a fixed delay, and only this thread
+                    // removes them: the front is always the next one due.
                     const auto due = queue.front().due;
-                    if (wake.wait_until(lock, due, [&]() { return queue.empty() || queue.front().due != due; })) {
-                        continue;  // the front changed while waiting
-                    }
+                    lock.unlock();
+                    std::this_thread::sleep_until(due);
+                    lock.lock();
                     Pending next = std::move(queue.front());
                     queue.pop_front();
                     lock.unlock();

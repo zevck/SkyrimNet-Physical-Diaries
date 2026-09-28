@@ -21,7 +21,7 @@
 #include "BookManager.h"
 #include "Localization.h"
 
-#include <MinHook.h>
+#include "Detour.h"
 #include <thread>
 
 // ---------------------------------------------------------------------------
@@ -186,21 +186,9 @@ namespace
     // game-thread state, so the description hook only answers there.
     std::thread::id g_gameThread;
 
-    // The text to show for `book` if it is one of our volumes ("" otherwise), in the
-    // encoding the book renderer needs.  `refresh` re-reads SkyrimNet first; that
-    // queries SkyrimNet, so it is only done when the book is actually opened.
-    std::string DiaryTextFor(const RE::TESObjectBOOK* book, bool refresh) {
-        auto* bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
-        auto* vol = bookManager->GetBookForFormID(book->GetFormID());
-        if (!vol) return {};
-        if (refresh) bookManager->RefreshVolumeOnOpen(vol);
-        if (vol->cachedBookText.empty()) return {};
-        if (refresh) {
-            SKSE::log::info("[BookTextHook] Opening diary: formId=0x{:X} actor='{}' vol={} textLen={}",
-                book->GetFormID(), vol->actorName, vol->volumeNumber, vol->cachedBookText.size());
-        }
-        // Win-1251 only for Cyrillic text (see Utf8ToWin1251).
-        return HasCyrillic(vol->cachedBookText) ? Utf8ToWin1251(vol->cachedBookText) : vol->cachedBookText;
+    // Our volume for `book`, or nullptr.
+    SkyrimNetDiaries::DiaryBookData* VolumeFor(const RE::TESObjectBOOK* book) {
+        return book ? SkyrimNetDiaries::BookManager::GetSingleton()->GetBookForFormID(book->GetFormID()) : nullptr;
     }
 
     // The rendered text without its <font> tags.  Other readers (SkyrimNet's prompt,
@@ -249,14 +237,37 @@ namespace
             SKSE::log::debug("[BookTextHook] thunk entry: book=0x{:X} ref=0x{:X} useDefaultPos={}",
                 a_book ? a_book->GetFormID() : 0, a_ref ? a_ref->GetFormID() : 0, a_useDefaultPos);
 
+            // VR: record the first few ninth arguments at info level, so the first VR
+            // report shows whether it is the reference's 3D (as the VR binary suggests).
+            if (REL::Module::IsVR()) {
+                static int logged = 0;
+                if (logged < 5) {
+                    ++logged;
+                    const RE::NiAVObject* ref3D = a_ref ? a_ref->Get3D() : nullptr;
+                    SKSE::log::info("[BookTextHook] VR OpenBookMenu: book=0x{:X} ref=0x{:X} node={} ref3D={} {}",
+                        a_book ? a_book->GetFormID() : 0, a_ref ? a_ref->GetFormID() : 0,
+                        static_cast<const void*>(a_vrNode), static_cast<const void*>(ref3D),
+                        a_vrNode && a_vrNode == ref3D ? "(node is the ref's 3D)" : "");
+                }
+            }
+
             if (a_book) {
                 // Prepare the diary text under try/catch: this runs inside the engine's
                 // call stack, where an escaping exception is a crash.  On failure the
                 // book opens with its own text instead.
                 std::string textToInject;
                 try {
-                    // Refresh first: picks up entries added or deleted since the last render.
-                    textToInject = DiaryTextFor(a_book, true);
+                    if (auto* vol = VolumeFor(a_book)) {
+                        // Refresh first: picks up entries added or deleted since the last render.
+                        SkyrimNetDiaries::BookManager::GetSingleton()->RefreshVolumeOnOpen(vol);
+                        if (!vol->cachedBookText.empty()) {
+                            SKSE::log::info("[BookTextHook] Opening diary: formId=0x{:X} actor='{}' vol={} textLen={}",
+                                a_book->GetFormID(), vol->actorName, vol->volumeNumber, vol->cachedBookText.size());
+                            // Win-1251 for Cyrillic: Scaleform's pagination needs one byte per character.
+                            textToInject = HasCyrillic(vol->cachedBookText) ? Utf8ToWin1251(vol->cachedBookText)
+                                                                            : vol->cachedBookText;
+                        }
+                    }
                 } catch (const std::exception& e) {
                     SKSE::log::error("[BookTextHook] Preparing diary text for 0x{:X} failed: {} — opening the book without it",
                                      a_book->GetFormID(), e.what());
@@ -279,29 +290,10 @@ namespace
 
         static void Install()
         {
-            // SE id 50122 (also used by VR) | AE id 51053.  MinHook, like the other
-            // hooks: it relocates the prologue itself, and copes with other plugins
-            // hooking the same function.
+            // SE id 50122 (also used by VR) | AE id 51053.
             REL::Relocation<std::uintptr_t> target{ RELOCATION_ID(50122, 51053) };
-            auto* targetPtr = reinterpret_cast<void*>(target.address());
-
-            const auto init = MH_Initialize();
-            if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) {
-                SKSE::log::error("[BookTextHook] MH_Initialize failed ({}) — diaries will show template text",
-                                 MH_StatusToString(init));
-                return;
-            }
-            auto status = MH_CreateHook(targetPtr, reinterpret_cast<void*>(&thunk),
-                                        reinterpret_cast<void**>(&func));
-            if (status == MH_OK) {
-                status = MH_EnableHook(targetPtr);
-            }
-            if (status != MH_OK) {
-                SKSE::log::error("[BookTextHook] OpenBookMenu hook failed ({}) — diaries will show template text",
-                                 MH_StatusToString(status));
-                return;
-            }
-            SKSE::log::info("Installed OpenBookMenu hook (RELOCATION_ID 50122/51053)");
+            SkyrimNetDiaries::InstallDetour(target.address(), reinterpret_cast<void*>(&thunk), reinterpret_cast<void**>(&func),
+                          "OpenBookMenu", "50122/51053", "diaries will show template text");
         }
     };
 
@@ -320,9 +312,11 @@ namespace
                 try {
                     // No refresh: callers can ask often, and the text was refreshed
                     // when the book was last opened.
-                    const auto text = DiaryTextFor(a_parent->As<RE::TESObjectBOOK>(), false);
-                    if (!text.empty()) {
-                        a_out = StripFontTags(text).c_str();
+                    // UTF-8, not the book menu's Win-1251: SkyrimNet and Immersive Reading
+                    // both decode UTF-8 (SkyrimNet reads stray bytes as cp1252).
+                    const auto* vol = VolumeFor(a_parent->As<RE::TESObjectBOOK>());
+                    if (vol && !vol->cachedBookText.empty()) {
+                        a_out = StripFontTags(vol->cachedBookText).c_str();
                         return;
                     }
                 } catch (...) {
@@ -334,28 +328,11 @@ namespace
 
         static void Install()
         {
-            // SE id 14399 (also used by VR) | AE id 14552.  MinHook: other plugins
-            // (e.g. Description Framework) hook this function too.
+            // SE id 14399 (also used by VR) | AE id 14552.  Other plugins (e.g.
+            // Description Framework) hook this function too.
             REL::Relocation<std::uintptr_t> target{ RELOCATION_ID(14399, 14552) };
-            auto* targetPtr = reinterpret_cast<void*>(target.address());
-
-            const auto init = MH_Initialize();
-            if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) {
-                SKSE::log::error("[BookTextHook] MH_Initialize failed ({}) — other mods will see template text",
-                                 MH_StatusToString(init));
-                return;
-            }
-            auto status = MH_CreateHook(targetPtr, reinterpret_cast<void*>(&thunk),
-                                        reinterpret_cast<void**>(&original));
-            if (status == MH_OK) {
-                status = MH_EnableHook(targetPtr);
-            }
-            if (status != MH_OK) {
-                SKSE::log::error("[BookTextHook] GetDescription hook failed ({}) — other mods will see template text",
-                                 MH_StatusToString(status));
-                return;
-            }
-            SKSE::log::info("Installed GetDescription hook (RELOCATION_ID 14399/14552)");
+            SkyrimNetDiaries::InstallDetour(target.address(), reinterpret_cast<void*>(&thunk), reinterpret_cast<void**>(&original),
+                          "GetDescription", "14399/14552", "other mods will see template text");
         }
     };
 

@@ -32,8 +32,6 @@ namespace SkyrimNetDiaries {
         double creation_time = 0.0;
     };
 
-    // Chronological order: entry_date, then creation_time (real-world write time)
-    // to break ties between entries dated the same in-game moment.
     // Where a volume's entry range starts and ends (docs/VOLUMES_AND_SYNC.md#volume-boundaries).
     // The prev* fields are the volume's own boundary data; the next* fields are the
     // next volume's, when there is one.
@@ -47,15 +45,17 @@ namespace SkyrimNetDiaries {
         int    nextPrevCountAtBoundary = 0;
     };
 
+    // Chronological order: entry_date, then creation_time (real-world write time)
+    // to break ties between entries dated the same in-game moment.
     inline bool EntryOlder(const DiaryEntry& a, const DiaryEntry& b) {
         if (a.entry_date != b.entry_date) return a.entry_date < b.entry_date;
         return a.creation_time < b.creation_time;
     }
 
-    // Current game time in entry_date units (game seconds): what diary dates are
-    // compared against.
     inline constexpr double kSecondsPerGameDay = 86400.0;
 
+    // Current game time in entry_date units (game seconds): what diary dates are
+    // compared against.
     inline double CurrentGameTimeSeconds() {
         auto* calendar = RE::Calendar::GetSingleton();
         return calendar ? calendar->GetCurrentGameTime() * kSecondsPerGameDay : 0.0;
