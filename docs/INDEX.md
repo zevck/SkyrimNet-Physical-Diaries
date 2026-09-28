@@ -23,7 +23,7 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 | Add a setting end to end (INI, MCM) | [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md#adding-a-setting-end-to-end) | [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md) |
 | Add a DB column or inspect a live database | [DATABASE.md](DATABASE.md) | |
 | Let another mod read diary text | [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md#inter-plugin-api-skse-messaging) | |
-| Decide on DPF vs DPF RE vs something else | [BOOK_FORMS.md](BOOK_FORMS.md#alternatives-evaluated) | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) |
+| Replace DPF with engine-persisted dynamic forms | [BOOK_FORMS_PLAN.md](BOOK_FORMS_PLAN.md) | [BOOK_FORMS.md](BOOK_FORMS.md#alternatives-evaluated) |
 | Pick up a known bug or cleanup task | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | |
 
 ## By System
@@ -33,6 +33,7 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 |----------|-------------|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Repo layout, component map, startup and load sequence, one entry end to end, threading, dependencies |
 | [BOOK_FORMS.md](BOOK_FORMS.md) | DPF creation queue, FormID claim table, templates, finding the NPC, validity across loads, alternatives tested |
+| [BOOK_FORMS_PLAN.md](BOOK_FORMS_PLAN.md) | Design for replacing DPF with engine-persisted dynamic forms (no ESP: the engine saves and recreates them; a co-save record says what each is), the engine facts it rests on, the migration, and the spike to run first |
 | [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md) | Entries → volumes, boundaries, update and seal, load-time recovery and catch-up, refresh on open, save reverts, save-folder detection |
 | [BOOK_TEXT.md](BOOK_TEXT.md) | Rendering, dates, cleaning LLM output, the `OpenBookMenu` hook (and VR's ninth argument), the `GetDescription` hook for other readers, UTF-8 → Win-1251 |
 | [THEFT.md](THEFT.md) | Theft, return and handover; the decorator; clearing; save reverts |

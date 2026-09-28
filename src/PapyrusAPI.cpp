@@ -41,9 +41,8 @@ namespace SkyrimNetDiaries::PapyrusAPI {
                 return;
             }
 
-            // Clear theft tracking here in C++ so it always runs regardless of whether the
-            // Papyrus caller was able to resolve the Actor object (NPCs not in a loaded cell
-            // will return None from Game.GetForm, which silently skips SetTheftCleared).
+            // The NPC is writing: clear theft tracking (in C++, since Papyrus can't resolve
+            // NPCs in unloaded cells).
             std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(formId);
             if (!uuid.empty()) {
                 DiaryTheftHandler::ClearStolenVolumes(uuid);
@@ -93,88 +92,6 @@ namespace SkyrimNetDiaries::PapyrusAPI {
             SKSE::log::error("[PapyrusAPI] UpdateDiaryFromEvent exception: {}", e.what());
         } catch (...) {
             SKSE::log::error("[PapyrusAPI] UpdateDiaryFromEvent: unknown exception");
-        }
-    }
-
-    RE::BSFixedString GetDiaryTheftStatus(RE::StaticFunctionTag*, RE::Actor* akActor) {
-        try {
-            if (!akActor) {
-                return "{\"error\": \"null actor\"}";
-            }
-
-            std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(akActor->GetFormID());
-            if (uuid.empty()) {
-                return "{\"stolen\": false}";  // Unknown actor = no theft tracking
-            }
-
-            bool hasStolen = DiaryTheftHandler::IsDiaryStolen(uuid);
-
-            // If any volume is stolen, diary is stolen
-            if (hasStolen) {
-                return "{\"stolen\": true, \"chronicled\": false}";
-            }
-
-            return "{\"stolen\": false}";
-        } catch (const std::exception& e) {
-            SKSE::log::error("[PapyrusAPI] GetDiaryTheftStatus exception: {}", e.what());
-        } catch (...) {
-            SKSE::log::error("[PapyrusAPI] GetDiaryTheftStatus: unknown exception");
-        }
-        return "{\"stolen\": false}";
-    }
-
-    RE::BSFixedString IsDiaryStolen(RE::StaticFunctionTag*, RE::Actor* akActor) {
-        try {
-            if (!akActor) {
-                SKSE::log::debug("[IsDiaryStolen] Null actor - returning false");
-                return "false";
-            }
-
-            std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(akActor->GetFormID());
-            if (uuid.empty()) {
-                SKSE::log::debug("[IsDiaryStolen] {} - no UUID, returning false", akActor->GetName());
-                return "false";  // Unknown actor = no theft tracking
-            }
-
-            bool hasStolen = DiaryTheftHandler::IsDiaryStolen(uuid);
-
-            SKSE::log::debug("[IsDiaryStolen] {} (UUID: {}) - has stolen volumes: {}",
-                           akActor->GetName(), uuid, hasStolen ? "YES" : "NO");
-
-            return hasStolen ? "true" : "false";
-        } catch (const std::exception& e) {
-            SKSE::log::error("[PapyrusAPI] IsDiaryStolen exception: {}", e.what());
-        } catch (...) {
-            SKSE::log::error("[PapyrusAPI] IsDiaryStolen: unknown exception");
-        }
-        return "false";
-    }
-
-    void SetTheftCleared(RE::StaticFunctionTag*, RE::Actor* akActor) {
-        try {
-            if (!akActor) {
-                SKSE::log::warn("[PapyrusAPI] SetTheftCleared called with null actor");
-                return;
-            }
-
-            std::string uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(akActor->GetFormID());
-            if (uuid.empty()) {
-                SKSE::log::warn("[PapyrusAPI] SetTheftCleared: Unable to get UUID for actor {}", akActor->GetName());
-                return;
-            }
-
-            SKSE::log::debug("[PapyrusAPI] SetTheftCleared called for {} (FormID: 0x{:X}, UUID: {})",
-                           akActor->GetName(), akActor->GetFormID(), uuid);
-
-            // Clear ALL stolen volumes for this actor - they wrote a new diary entry
-            DiaryTheftHandler::ClearStolenVolumes(uuid);
-
-            SKSE::log::debug("[PapyrusAPI] Cleared all stolen volumes for {} (UUID: {}) - diary entry written",
-                           akActor->GetName(), uuid);
-        } catch (const std::exception& e) {
-            SKSE::log::error("[PapyrusAPI] SetTheftCleared exception: {}", e.what());
-        } catch (...) {
-            SKSE::log::error("[PapyrusAPI] SetTheftCleared: unknown exception");
         }
     }
 
@@ -272,9 +189,6 @@ namespace SkyrimNetDiaries::PapyrusAPI {
 
         a_vm->RegisterFunction("UpdateDiaryForActor",  "SkyrimNetDiaries_Native", UpdateDiaryForActorWrapper);
         a_vm->RegisterFunction("UpdateDiaryFromEvent", "SkyrimNetDiaries_Native", UpdateDiaryFromEventWrapper);
-        a_vm->RegisterFunction("GetDiaryTheftStatus", "SkyrimNetDiaries_API", GetDiaryTheftStatus);
-        a_vm->RegisterFunction("IsDiaryStolen",       "SkyrimNetDiaries_API", IsDiaryStolen);
-        a_vm->RegisterFunction("SetTheftCleared",     "SkyrimNetDiaries_API", SetTheftCleared);
 
         // MCM Debug log
         a_vm->RegisterFunction("GetDebugLog", "SkyrimNetDiaries_MCM", MCM_GetDebugLog);

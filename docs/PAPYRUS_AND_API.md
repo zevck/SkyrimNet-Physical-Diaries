@@ -11,7 +11,6 @@ Code: `Source/Scripts/*.psc` → `Scripts/*.pex`, `src/PapyrusAPI.cpp`, `include
 | Script | Attached to | Role |
 |---|---|---|
 | `SkyrimNetDiaries_EventListener` | Quest in the ESP (`extends Quest`) | `OnInit`: registers for ModEvent `SkyrimNet_DiaryCreated` (the `snpd_diary_stolen` decorator is native, registered by the DLL; see [THEFT.md](THEFT.md)). `OnDiaryCreated`: passes the JSON payload to `SkyrimNetDiaries_Native.UpdateDiaryFromEvent`. Don't parse `actorFormId` in Papyrus: `as int` clamps FormIDs of `0x80000000` and up (ESL and high load-order NPCs) to `0x7FFFFFFF`. |
-| `SkyrimNetDiaries_API` | — (native declarations) | Public theft API (below) |
 | `SkyrimNetDiaries_Native` | — (native declarations) | `UpdateDiaryFromEvent(string json)`; legacy `UpdateDiaryForActor(int formId)` |
 | `SkyrimNetDiaries_MCM` | MCM quest (`SKI_ConfigBase`) | Settings and Maintenance pages. See [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md). |
 
@@ -23,12 +22,9 @@ All registered in `PapyrusAPI::RegisterFunctions`.
 |---|---|---|
 | `SkyrimNetDiaries_Native.UpdateDiaryFromEvent(String)` | `UpdateDiaryFromEventWrapper`: parses `actorFormId` from the event JSON, then `UpdateDiaryForFormID` (clears stolen volumes, then `UpdateDiaryForActorInternal`) | EventListener |
 | `SkyrimNetDiaries_Native.UpdateDiaryForActor(int)` | `UpdateDiaryForActorWrapper` → `UpdateDiaryForFormID`. Legacy, kept for older listener scripts; wrong for FormIDs ≥ `0x80000000` | Nothing in SNPD |
-| `SkyrimNetDiaries_API.IsDiaryStolen(Actor) → String` | `"true"` / `"false"` | Public API only |
-| `SkyrimNetDiaries_API.GetDiaryTheftStatus(Actor) → String` | JSON; see [THEFT.md](THEFT.md) | Public API only |
-| `SkyrimNetDiaries_API.SetTheftCleared(Actor)` | Clears stolen volumes | Public API only |
 | `SkyrimNetDiaries_MCM.*` (16 getters and setters, `RegenerateTextsOnly`, `ResetAllDiaries`) | `MCM_*` | MCM |
 
-`IsDiaryStolen`, `GetDiaryTheftStatus` and `SetTheftCleared` have no callers inside SNPD (the `snpd_diary_stolen` decorator is native). They are public API for other mods: keep them.
+The `SkyrimNetDiaries_API` script (`IsDiaryStolen`, `GetDiaryTheftStatus`, `SetTheftCleared`) was removed on 2026-09-27: nothing in SNPD called it once the decorator went native, and its `.pex` never shipped in a release up to v1.1.0, so no other mod could have relied on it. Other mods see theft state through SkyrimNet's `snpd_diary_stolen` decorator.
 
 ### Adding or changing a native (all four steps, every time)
 
