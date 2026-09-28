@@ -108,6 +108,8 @@ namespace SkyrimNetDiaries {
         bool AddStolenVolume(const std::string& actorUuid, int volumeNumber, double gameTime);
         bool RemoveStolenVolume(const std::string& actorUuid, int volumeNumber);
         bool HasAnyStolenVolumes(const std::string& actorUuid);
+        // Every actor with at least one stolen volume.
+        std::vector<std::string> LoadStolenActorUuids();
         bool ClearAllStolenVolumes(const std::string& actorUuid);
         // Drops thefts recorded after `gameTime`: after loading an earlier save they
         // happened in a timeline the player has left.  Returns how many were removed.

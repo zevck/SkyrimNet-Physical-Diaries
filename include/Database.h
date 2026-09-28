@@ -106,6 +106,11 @@ namespace SkyrimNetDiaries {
         // exactly when this is later than the current game time.
         static double GetPlayerLastEventTime();
 
+        // Registers a native prompt decorator (SkyrimNet public API v5+).  The callback
+        // runs on SkyrimNet's worker threads.  False if unavailable or refused.
+        static bool RegisterDecorator(const char* name, const char* description,
+                                      std::function<std::string(RE::Actor*)> callback);
+
         // Get bio template name for an actor FormID
         static std::string GetBioTemplateName(uint32_t formId);
 

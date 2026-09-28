@@ -329,6 +329,14 @@ namespace SkyrimNetDiaries {
         return hasStolen;
     }
 
+    std::vector<std::string> DiaryDB::LoadStolenActorUuids() {
+        std::vector<std::string> uuids;
+        if (!db_) return uuids;
+        Statement st(db_, "SELECT DISTINCT actor_uuid FROM stolen_volumes;", "LoadStolenActorUuids");
+        while (st.Next()) uuids.push_back(st.Text(0));
+        return uuids;
+    }
+
     bool DiaryDB::ClearAllStolenVolumes(const std::string& actorUuid) {
         if (!db_) return false;
         Statement st(db_, "DELETE FROM stolen_volumes WHERE actor_uuid=?1;", "ClearAllStolenVolumes");

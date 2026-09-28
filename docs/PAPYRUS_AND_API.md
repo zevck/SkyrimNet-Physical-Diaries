@@ -10,8 +10,7 @@ Code: `Source/Scripts/*.psc` → `Scripts/*.pex`, `src/PapyrusAPI.cpp`, `include
 
 | Script | Attached to | Role |
 |---|---|---|
-| `SkyrimNetDiaries_EventListener` | Quest in the ESP (`extends Quest`) | `OnInit`: registers for ModEvent `SkyrimNet_DiaryCreated` and registers the `snpd_diary_stolen` decorator (new game only; C++ re-registers it on every load). `OnDiaryCreated`: passes the JSON payload to `SkyrimNetDiaries_Native.UpdateDiaryFromEvent`. Don't parse `actorFormId` in Papyrus: `as int` clamps FormIDs of `0x80000000` and up (ESL and high load-order NPCs) to `0x7FFFFFFF`. |
-| `SkyrimNetDiaries_Decorators` | — (global functions) | `IsDiaryStolen(Actor)`: the function the decorator points at; forwards to the native |
+| `SkyrimNetDiaries_EventListener` | Quest in the ESP (`extends Quest`) | `OnInit`: registers for ModEvent `SkyrimNet_DiaryCreated` (the `snpd_diary_stolen` decorator is native, registered by the DLL; see [THEFT.md](THEFT.md)). `OnDiaryCreated`: passes the JSON payload to `SkyrimNetDiaries_Native.UpdateDiaryFromEvent`. Don't parse `actorFormId` in Papyrus: `as int` clamps FormIDs of `0x80000000` and up (ESL and high load-order NPCs) to `0x7FFFFFFF`. |
 | `SkyrimNetDiaries_API` | — (native declarations) | Public theft API (below) |
 | `SkyrimNetDiaries_Native` | — (native declarations) | `UpdateDiaryFromEvent(string json)`; legacy `UpdateDiaryForActor(int formId)` |
 | `SkyrimNetDiaries_MCM` | MCM quest (`SKI_ConfigBase`) | Settings and Maintenance pages. See [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md). |

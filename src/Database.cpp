@@ -209,6 +209,20 @@ namespace SkyrimNetDiaries {
         return entries;
     }
 
+    bool Database::RegisterDecorator(const char* name, const char* description,
+                                     std::function<std::string(RE::Actor*)> callback) {
+        if (!api_initialized_ && !InitializeAPI()) return false;
+        if (!PublicRegisterDecorator) {
+            SKSE::log::error("SkyrimNet's API has no decorator registration (needs API v5+) — '{}' not registered", name);
+            return false;
+        }
+        if (!PublicRegisterDecorator(name, description, std::move(callback))) {
+            SKSE::log::error("SkyrimNet refused decorator '{}' (name already taken?)", name);
+            return false;
+        }
+        return true;
+    }
+
     double Database::GetPlayerLastEventTime() {
         try {
             if (!api_initialized_ && !InitializeAPI()) return 0.0;

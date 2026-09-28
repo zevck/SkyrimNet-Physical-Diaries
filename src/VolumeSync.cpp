@@ -25,6 +25,7 @@
 #include "Config.h"
 #include "Database.h"
 #include "DiaryDB.h"
+#include "DiaryTheftHandler.h"
 #include "Localization.h"
 #include "SaveFolder.h"
 #include "TimelineGate.h"
@@ -695,6 +696,7 @@ namespace SkyrimNetDiaries {
                     diaryDb->ClearAllStolenVolumes(uuid);
                 }
                 SKSE::log::info("ResetAllDiariesInternal: deleted {} actor(s) from DiaryDB", dbRowsCleared);
+                DiaryTheftHandler::SyncStolenCache();
             } else {
                 SKSE::log::warn("ResetAllDiariesInternal: DiaryDB not open — DB rows NOT deleted "
                                 "(reload will restore the diaries)");

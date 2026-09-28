@@ -23,6 +23,7 @@
 #include "Database.h"
 #include "DiaryDB.h"
 #include <mutex>
+#include <unordered_set>
 
 namespace SkyrimNetDiaries::DiaryTheftHandler {
 
@@ -34,6 +35,10 @@ namespace SkyrimNetDiaries::DiaryTheftHandler {
         // (MenuTopicManager::speaker needs an id the VR Address Library lacks).
         bool g_dialogueIsOpen = false;
         bool g_consoleIsOpen = false;
+
+        // In-memory copy of the actors in stolen_volumes, for the decorator.
+        std::mutex g_stolenMutex;
+        std::unordered_set<std::string> g_stolenUuids;
         bool g_legitimateTradeActive = false;
         std::mutex g_menuMutex;
 
@@ -83,12 +88,14 @@ namespace SkyrimNetDiaries::DiaryTheftHandler {
             // stolen_at lets a later load of an earlier save drop the theft (ReconcileAfterLoad).
             SkyrimNetDiaries::DiaryDB::GetSingleton()->AddStolenVolume(
                 actorUuid, volumeNumber, SkyrimNetDiaries::CurrentGameTimeSeconds());
+            SyncStolenCache();
             SKSE::log::info("[Physical Diaries] Player stole '{}' (vol {}) from {}", bookName, volumeNumber, actorName);
         }
 
         void RecordReturn(const std::string& actorUuid, const std::string& actorName,
                           const std::string& bookName, int volumeNumber) {
             SkyrimNetDiaries::DiaryDB::GetSingleton()->RemoveStolenVolume(actorUuid, volumeNumber);
+            SyncStolenCache();
             SKSE::log::info("[Physical Diaries] '{}' (vol {}) returned to {} - removed from stolen list",
                             bookName, volumeNumber, actorName);
         }
@@ -198,30 +205,42 @@ namespace SkyrimNetDiaries::DiaryTheftHandler {
 
     void ClearStolenVolumes(const std::string& actorUuid) {
         SkyrimNetDiaries::DiaryDB::GetSingleton()->ClearAllStolenVolumes(actorUuid);
+        SyncStolenCache();
+    }
+
+    bool IsDiaryStolen(const std::string& actorUuid) {
+        std::lock_guard<std::mutex> lock(g_stolenMutex);
+        return g_stolenUuids.contains(actorUuid);
+    }
+
+    void SyncStolenCache() {
+        auto uuids = SkyrimNetDiaries::DiaryDB::GetSingleton()->LoadStolenActorUuids();
+        std::lock_guard<std::mutex> lock(g_stolenMutex);
+        g_stolenUuids = std::unordered_set<std::string>(std::make_move_iterator(uuids.begin()),
+                                                        std::make_move_iterator(uuids.end()));
+    }
+
+    void ClearStolenCache() {
+        std::lock_guard<std::mutex> lock(g_stolenMutex);
+        g_stolenUuids.clear();
     }
 
     void RegisterStolenDecorator() {
-        try {
-            // SkyrimNet clears decorator registrations on every load, and the Papyrus
-            // OnInit that also registers it only runs on a new game.
-            auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-            if (vm) {
-                std::unique_ptr<RE::BSScript::IFunctionArguments> args(RE::MakeFunctionArguments(
-                    RE::BSFixedString("snpd_diary_stolen"),
-                    RE::BSFixedString("SkyrimNetDiaries_Decorators"),
-                    RE::BSFixedString("IsDiaryStolen")));
-                RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> nullCb;
-                bool ok = vm->DispatchStaticCall(
-                    "SkyrimNetApi", "RegisterDecorator", args.get(), nullCb);
-                SKSE::log::info("kPostLoadGame: registered snpd_diary_stolen decorator via Papyrus VM ({})",
-                                ok ? "dispatched" : "FAILED");
-            } else {
-                SKSE::log::warn("kPostLoadGame: Papyrus VM not available — snpd_diary_stolen not registered");
-            }
-        } catch (const std::exception& e) {
-            SKSE::log::error("[DiaryTheftHandler] RegisterStolenDecorator exception: {}", e.what());
-        } catch (...) {
-            SKSE::log::error("[DiaryTheftHandler] RegisterStolenDecorator: unknown exception");
+        const bool ok = SkyrimNetDiaries::Database::RegisterDecorator(
+            "snpd_diary_stolen", "\"true\" if the player has stolen any of this NPC's diary volumes",
+            [](RE::Actor* actor) -> std::string {
+                if (!actor) return "";
+                try {
+                    const auto uuid = SkyrimNetDiaries::Database::GetUUIDFromFormID(actor->GetFormID());
+                    return !uuid.empty() && IsDiaryStolen(uuid) ? "true" : "false";
+                } catch (...) {
+                    return "";
+                }
+            });
+        if (ok) {
+            SKSE::log::info("Registered snpd_diary_stolen decorator (native)");
+        } else {
+            SKSE::log::error("[DiaryTheftHandler] snpd_diary_stolen decorator not registered — NPCs won't notice stolen diaries");
         }
     }
 
@@ -235,6 +254,7 @@ namespace SkyrimNetDiaries::DiaryTheftHandler {
             if (removed > 0) {
                 SKSE::log::info("[Theft Reconciliation] Dropped {} theft record(s) made after this save's game time", removed);
             }
+            SyncStolenCache();
         } catch (const std::exception& e) {
             SKSE::log::error("[DiaryTheftHandler] ReconcileAfterLoad exception: {}", e.what());
         } catch (...) {

@@ -76,6 +76,7 @@ namespace {
         SkyrimNetDiaries::BookManager::ClearActorCache();
         SkyrimNetDiaries::DiaryDB::GetSingleton()->Close();
         SkyrimNetDiaries::SaveFolder::Clear();
+        SkyrimNetDiaries::DiaryTheftHandler::ClearStolenCache();
         // Drops diary events still deferred from the previous session.
         SkyrimNetDiaries::SetPostLoadSyncReady(false);
     }
@@ -105,6 +106,11 @@ namespace {
                         SKSE::log::error("kDataLoaded: 'Dynamic Persistent Forms.esp' is not installed — diary books cannot be created");
                         ShowWarning(SkyrimNetDiaries::Localization::GetSingleton()->GetDpfMissingText());
                     }
+                }
+
+                // The stolen-diary decorator for SkyrimNet's prompts (native, registered once).
+                if (SkyrimNetDiaries::Database::InitializeAPI()) {
+                    SkyrimNetDiaries::DiaryTheftHandler::RegisterStolenDecorator();
                 }
 
                 // Verify the diary template books resolve.  If they don't, every
@@ -229,9 +235,6 @@ namespace {
                 const auto waited = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
                 SKSE::log::info("kPostLoadGame: SkyrimNet ready, starting post-load sync (waited {:.1f}s)", waited);
                 try {
-                    // SkyrimNet clears decorator registrations on every load.
-                    SkyrimNetDiaries::DiaryTheftHandler::RegisterStolenDecorator();
-
                     // Detect the save folder from SkyrimNet.log and open this save's DiaryDB.
                     SkyrimNetDiaries::SaveFolder::DetectFromLog();
                     auto* db = SkyrimNetDiaries::DiaryDB::GetSingleton();

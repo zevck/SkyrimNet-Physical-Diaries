@@ -70,6 +70,14 @@ std::string (*PublicGetEventPairCounts)(const char* formIdListCSV, int minShared
 /** Retrieve diary entries for an actor, optionally filtered by time range. */
 std::string (*PublicGetDiaryEntries)(uint32_t formId, int maxCount, double startTime, double endTime) = nullptr;
 
+// ---- v5+: Decorator registration ----
+
+/** Register a native decorator for prompt templates ({{ name(actor_uuid) }}).  The callback
+ *  runs on SkyrimNet's worker threads, so it must be thread-safe.  Return "" for an
+ *  invalid actor.  Register once (kDataLoaded); it survives loads. */
+bool (*PublicRegisterDecorator)(const char* name, const char* description,
+                                std::function<std::string(RE::Actor*)> callback) = nullptr;
+
 // ---- Plugin Configuration API ----
 
 /** Get the full JSON config for a registered plugin. */
@@ -143,6 +151,12 @@ inline bool FindFunctions() {
             if (version >= 4) {
                 PublicGetDiaryEntries = reinterpret_cast<std::string(*)(uint32_t, int, double, double)>(
                     GetProcAddress(hDLL, "PublicGetDiaryEntries"));
+            }
+
+            // v5+ functions
+            if (version >= 5) {
+                PublicRegisterDecorator = reinterpret_cast<bool(*)(const char*, const char*,
+                    std::function<std::string(RE::Actor*)>)>(GetProcAddress(hDLL, "PublicRegisterDecorator"));
             }
         }
         return true;

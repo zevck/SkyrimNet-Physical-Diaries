@@ -54,13 +54,7 @@ Found under **SkyrimNet Physical Diaries** in the Mod Configuration Menu.
 
 Install with a mod manager as normal. Load order: place after SkyrimNet and Dynamic Persistent Forms.
 
-Currently in order to enable diary theft awareness you must add the following to your `diary_entry.prompt` underneath `## Instructions`:
-
-```
-{% if snpd_diary_stolen(npc.UUID) == "true" %}
-    **IMPORTANT**: You notice that your diary has been stolen! Write about your reaction.
-{% endif %}
-```
+Diary theft awareness needs SkyrimNet Beta 25 or later. The mod ships a SkyrimNet plugin (`SKSE/Plugins/SkyrimNet/external/zevick.physical-diaries/`) that tells an NPC their diary was stolen when they write their next entry. It appears under **Plugins > Installed Plugins** in the SkyrimNet dashboard with an **External** badge. No prompt editing is needed; if you added the old snippet to `diary_entry.prompt` yourself, remove it.
 
 ---
 

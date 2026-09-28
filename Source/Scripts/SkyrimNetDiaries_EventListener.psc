@@ -5,12 +5,7 @@ Scriptname SkyrimNetDiaries_EventListener extends Quest
 Event OnInit()
     RegisterForModEvent("SkyrimNet_DiaryCreated", "OnDiaryCreated")
     Debug.Trace("[SkyrimNetDiaries] Registered for SkyrimNet_DiaryCreated ModEvent")
-    
-    ; Register decorator for SkyrimNet prompts.
-    ; NOTE: SkyrimNet resets decorators on every load. Re-registration on subsequent
-    ; loads is handled by the C++ plugin (kPostLoadGame → Papyrus VM dispatch).
-    SkyrimNetApi.RegisterDecorator("snpd_diary_stolen", "SkyrimNetDiaries_Decorators", "IsDiaryStolen")
-    Debug.Trace("[SkyrimNetDiaries] Registered snpd_diary_stolen decorator")
+    ; The snpd_diary_stolen decorator is registered natively by the DLL.
 EndEvent
 
 Event OnDiaryCreated(string eventName, string strArg, float numArg, Form sender)

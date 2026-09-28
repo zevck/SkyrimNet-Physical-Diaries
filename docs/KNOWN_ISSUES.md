@@ -28,7 +28,7 @@ Fixed on 2026-09-26, for reference: `SkyrimNetDiaries_API.pex` had never shipped
 
 ## Blocked upstream
 
-14. **NPCs don't reliably write about a stolen diary.** The only way the NPC learns about a theft is the `snpd_diary_stolen` decorator in SkyrimNet's diary prompt (see [THEFT.md](THEFT.md#how-skyrimnet-learns-about-it)). SNPD registers it and it returns the right value, but getting SNPD's instruction into the prompt depends on SkyrimNet: a dedicated diary render mode was requested so it could be added without shipping (and overwriting) `diary_entry.prompt`; the alternative SkyrimNet suggested works only about half the time. The manual edit in the README's Installation section is the reliable route. SNPD's side is unaffected: the theft record is still cleared on the NPC's next entry, and that entry starts a new volume. So in-game testing of "the NPC writes about the theft" waits on SkyrimNet.
+14. **The theft prompt relies on SkyrimNet's current prompt layout.** SNPD's SkyrimNet plugin puts the stolen-diary line in `system_head`, gated on `rendering_diary` (see [THEFT.md](THEFT.md#how-skyrimnet-learns-about-it)). That is reliable only because the diary is the one `"full"`-mode `system_head` render with no response target; a future SkyrimNet prompt that breaks that, or a diary render mode other than `"full"`, would silently drop the line. The proper fixes are upstream (SkyrimNet #283 / #979): add `rendering_diary` to the render cache key, and give diaries their own submodule. The two leftovers: a decorator result and the `system_head` block are cached for 55 s, so two diaries for the same NPC within 55 s around a theft can get the old answer. Needs an in-game check that the line reaches every diary render.
 
 ## Open decision
 

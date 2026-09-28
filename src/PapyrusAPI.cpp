@@ -107,7 +107,7 @@ namespace SkyrimNetDiaries::PapyrusAPI {
                 return "{\"stolen\": false}";  // Unknown actor = no theft tracking
             }
 
-            bool hasStolen = SkyrimNetDiaries::DiaryDB::GetSingleton()->HasAnyStolenVolumes(uuid);
+            bool hasStolen = DiaryTheftHandler::IsDiaryStolen(uuid);
 
             // If any volume is stolen, diary is stolen
             if (hasStolen) {
@@ -136,7 +136,7 @@ namespace SkyrimNetDiaries::PapyrusAPI {
                 return "false";  // Unknown actor = no theft tracking
             }
 
-            bool hasStolen = SkyrimNetDiaries::DiaryDB::GetSingleton()->HasAnyStolenVolumes(uuid);
+            bool hasStolen = DiaryTheftHandler::IsDiaryStolen(uuid);
 
             SKSE::log::debug("[IsDiaryStolen] {} (UUID: {}) - has stolen volumes: {}",
                            akActor->GetName(), uuid, hasStolen ? "YES" : "NO");

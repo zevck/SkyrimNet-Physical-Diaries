@@ -27,9 +27,18 @@ namespace SkyrimNetDiaries::DiaryTheftHandler {
     // volume.
     void ClearStolenVolumes(const std::string& actorUuid);
 
-    // Registers the snpd_diary_stolen decorator with SkyrimNet.  SkyrimNet clears
-    // decorator registrations on every load, so call this on every kPostLoadGame.
+    // Registers the native snpd_diary_stolen decorator with SkyrimNet (public API v5+).
+    // Once, at kDataLoaded: native registrations survive loads.
     void RegisterStolenDecorator();
+
+    // Whether the actor has any stolen volume.  Thread-safe (SkyrimNet calls the
+    // decorator on its worker threads): reads an in-memory copy of stolen_volumes.
+    bool IsDiaryStolen(const std::string& actorUuid);
+
+    // Reloads that copy from DiaryDB.  Game thread; call after any stolen_volumes change.
+    void SyncStolenCache();
+    // Empties it (a session ended; DiaryDB is closed).
+    void ClearStolenCache();
 
     // kPostLoadGame: drops thefts recorded after the loaded save's game time (they
     // belong to a timeline the player has left).  See docs/THEFT.md.
