@@ -75,6 +75,11 @@ namespace SkyrimNetDiaries {
         const std::string& GetEditDelete() const { return editDelete_; }
         const std::string& GetEditKeep() const { return editKeep_; }
         const std::string& GetEditDeleteFailed() const { return editDeleteFailed_; }
+        // Why writing can't start (SkyrimNet too old; the book menu doesn't pause the game),
+        // and the hint when a save leaves an emptied entry as it was.
+        const std::string& GetEditNeedsSkyrimNet() const { return editNeedsSkyrimNet_; }
+        const std::string& GetEditNeedsPause() const { return editNeedsPause_; }
+        const std::string& GetEditEmptiedHint() const { return editEmptiedHint_; }
 
         // Detected language as uppercase string (e.g. "RUSSIAN")
         const std::string& GetLanguageString() const { return languageString_; }
@@ -120,6 +125,9 @@ namespace SkyrimNetDiaries {
         std::string editDelete_;
         std::string editKeep_;
         std::string editDeleteFailed_;
+        std::string editNeedsSkyrimNet_;
+        std::string editNeedsPause_;
+        std::string editEmptiedHint_;
     };
 
 }  // namespace SkyrimNetDiaries

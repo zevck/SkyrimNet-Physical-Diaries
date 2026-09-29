@@ -15,7 +15,9 @@ Code: `src/VolumeSync.cpp` (`CreateAllVolumesForActor`, `UpdateDiaryForActorInte
 | `actor_uuid`, `actor_name` | SkyrimNet identity. The UUID is deterministic per NPC and stable across saves. |
 | `entry_date` | In-game time, **seconds** since game start. Compare with `RE::Calendar::GetCurrentGameTime() * 86400.0`. |
 | `creation_time` | Real-world write time. Breaks ties between entries with the same `entry_date`. |
-| `content` | The entry text (SkyrimNet's other fields, such as `location`, aren't read). |
+| `content` | The entry text. |
+| `id` | SkyrimNet's entry id (stable: `AUTOINCREMENT`). Only the book editor uses it, to save and delete; 0 if SkyrimNet sent none. |
+| `tags` | SkyrimNet's tags. `snpd_player_written` marks an entry the player edited; its first line is then kept as written (see [BOOK_TEXT.md](BOOK_TEXT.md#cleaning-llm-output-sanitizebooktext)). SkyrimNet's other fields, such as `location`, aren't read. |
 
 The result is always sorted oldest first by `(entry_date, creation_time)` (`EntryOlder`). **The limit is applied by SkyrimNet to the newest entries** (its query is `ORDER BY entry_date DESC LIMIT n`), so a limited query returns the latest *n* entries in the range, not the first. The catch-up scan's backward paging, the recovery probe and `TimelineGate` rely on that. Whenever "a volume's entries" or "the first N" is meant, use `Database::GetVolumeEntries(formId, VolumeBounds, &ok)`, or `BookManager::GetLiveEntries(vol, …)`, which fills the bounds from the volume and its successor: it fetches the whole range and removes the entries the previous and next volumes own on a shared date (see [Volume boundaries](#volume-boundaries)). `formId = 0` returns entries for all actors (used by the catch-up scan). Volumes are bounded by timestamps, not entry ids. (SkyrimNet's ids are stable: `diary_entries.id` is `INTEGER PRIMARY KEY AUTOINCREMENT`, never reused or renumbered. The book editor saves and deletes by id; see [EDITING.md](EDITING.md).)
 
@@ -120,7 +122,7 @@ It replaces the old game-time rebuild ("not saved and `endTime` after now"), whi
 
 **KEEP (SkyrimNet kept entries SNPD never saw)** is also handled eagerly at load by `QueueNewEntryRecovery`, above.
 
-**Deletions SNPD makes** (tearing out an entry in the book editor) call `BookManager::ReconcileAfterDeletion` once SkyrimNet has deleted it: the same re-render and `endTime` move, without `RefreshVolumeOnOpen`'s count check (the editor has already re-rendered the volume with the new count). Deleting any entry, including one on a shared boundary date, leaves every other entry in its volume: both boundary filters in `GetVolumeEntries` match on `creation_time` as well as a count, so a deleted tie entry just lowers how many they find.
+**Deletions SNPD makes** (tearing out an entry in the book editor) call `BookManager::ReconcileAfterWrite` once SkyrimNet has finished the volume's pending writes: the same re-render and `endTime` move, without `RefreshVolumeOnOpen`'s count check (the editor has already re-rendered the volume with the new count). Deleting any entry, including one on a shared boundary date, leaves every other entry in its volume: both boundary filters in `GetVolumeEntries` match on `creation_time` as well as a count, so a deleted tie entry just lowers how many they find.
 
 **Deletions SNPD didn't see happen** (for example from the SkyrimNet dashboard) are handled lazily in `RefreshVolumeOnOpen`, which re-renders and **moves the volume's `endTime` back**. That `endTime` move is essential: without it, `QueueNewEntryRecovery` would look past the deleted entry's timestamp on the next load and create a duplicate volume. The two are coupled; don't change one without the other. Lazy is fine for CLEAR (nothing is wrong until someone reads the book), but `lastKnownEntryCount` stays stale until that volume is opened.
 

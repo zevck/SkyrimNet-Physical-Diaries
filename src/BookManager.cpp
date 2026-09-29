@@ -594,11 +594,11 @@ namespace SkyrimNetDiaries {
         }
     }
 
-    void BookManager::ReconcileAfterDeletion(DiaryBookData& vol) {
+    void BookManager::ReconcileAfterWrite(DiaryBookData& vol) {
         bool ok = false;
         const auto liveEntries = GetShownEntries(vol, &ok);
         if (!ok) {
-            SKSE::log::warn("[SNPD] {} vol {}: couldn't read entries after a deletion", vol.actorName, vol.volumeNumber);
+            SKSE::log::warn("[SNPD] {} vol {}: couldn't read entries after an edit", vol.actorName, vol.volumeNumber);
             return;
         }
         MoveEndTimeBack(vol, liveEntries);

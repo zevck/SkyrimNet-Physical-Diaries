@@ -103,6 +103,7 @@ Levels: `debug` for routine tracing, `info` for state changes worth seeing in a 
 | `[LoadFromDB]`, `[FindActorForBook]` | Matching DiaryDB's volumes against the save's books, and NPC lookup |
 | `[Recovery]`, `QueueBatchCatchUpScan`, `DiscoveryBatch`, `CatchUp` | Load-time sync (see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md)) |
 | `[SNPD]` | `RefreshVolumeOnOpen` re-renders |
+| `[BookEditor]` | The diary editor: entering and leaving edit mode, saves and tear-outs (and SkyrimNet's answers), held-back closes; plus the diagnostics listed in [EDITING.md](EDITING.md#diagnostics-to-remove) |
 | `[Physical Diaries]`, `[Theft Reconciliation]` | Theft |
 | `[DiaryDB]`, `[BookManager]`, `[Localization]`, `[PapyrusAPI]` | As named |
 
@@ -133,7 +134,9 @@ Check these whenever CommonLib or the game runtime changes.
 | `TESObjectBOOK` fields | `ConfigureDiaryForm` | `data.type`, `data.flags`, `inventoryModel`, `itemCardDescription`, world model (`SetModel`), `boundData`, `pickupSound`, `putdownSound`, keywords, `weight`, `value`; `teaches` is never written |
 | `TESDescription::GetDescription` entry hook | `GetDescriptionHook::Install` (`BookTextHook.cpp`) | `RELOCATION_ID(14399, 14552)`, VR reuses the SE id (VR `0x1A01B0`). MinHook, because other plugins (e.g. Description Framework) hook it too. The book menu's three callers pass `book + 0xA8` with no parent; recheck that after a runtime update (see [BOOK_TEXT.md](BOOK_TEXT.md#delivery-the-getdescription-hook)). |
 | `MessageBoxData::QueueMessage` entry hook | `TimelineGate::Install` | `RELOCATION_ID(51422, 52271)`, VR reuses the SE id. A MinHook detour, because SkyrimNet (also MinHook) hooks the same function; MinHook copes with a prologue another plugin has already patched. `IMessageBoxCallback::Run(std::uint8_t)` and `MessageBoxData::{bodyText, callback, buttonPressOffset}` are relied on. |
-| Event sinks | `DiaryTheftHandler`, `RetiredBookSweeper` (`BookCreation.cpp`) | `TESContainerChangedEvent`, `MenuOpenCloseEvent`, `TESCellAttachDetachEvent` |
+| `BookMenu::ProcessMessage` vtable hook | `BookEditor::Register` | `VTABLE_BookMenu[0]`, vfunc 4, the same on SE, AE and VR. Relies on the UI's handling of the result: `kIgnore` on a `kHide` keeps the menu open (and the menu resends the hide every frame), `kHandled` lets the UI remove it; the gamepad's B arrives first as a `kUserEvent` "Cancel" (`BSUIMessageData::fixedStr`) that the menu answers with its close animation. See [EDITING.md](EDITING.md#closing). |
+| Book menu input and movie | `BookEditor` (`InputSink`, `BookMovie`) | A sink prepended to `BSInputDeviceManager` (it must run before `MenuControls`); `ButtonEvent::SetUserEvent` to blank keys; the book menu reads its page keys by key code; `ControlMap::AllowTextInput`; `BookMenu::GetRuntimeData().book` (the `book.swf` movie), `BookMenu::GetTargetForm`; `UI::GameIsPaused`; `MessageBoxMenu::QueueMessage` with `cancelButtonIndex`. |
+| Event sinks | `DiaryTheftHandler`, `RetiredBookSweeper` (`BookCreation.cpp`), `BookEditor` | `TESContainerChangedEvent`, `MenuOpenCloseEvent`, `TESCellAttachDetachEvent` |
 | Retired-book sweep and world copies | `SweepRetiredBooks`, `RebuildLoadedWorldCopies` | `TES::ForEachReference`, `GetInventory(filter, noInit = true)`, `TESFaction::vendorData.merchantContainer`, `TESObjectREFR::Disable`/`Enable`/`SetDelete`/`RemoveItem` |
 | Avoided on VR | — | `BSPointerHandle::get()` (`RELOCATION_ID(12785, 12922)`) is missing from the VR Address Library and crashes; use `Actor::LookupByHandle` (12204/12332) if a handle ever needs resolving. `MenuTopicManager::speaker` likewise. |
 

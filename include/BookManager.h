@@ -104,13 +104,13 @@ namespace SkyrimNetDiaries {
         // Update a volume's endTime (after an update, a seal or a deletion), in memory and DiaryDB
         void UpdateBookEndTime(const std::string& actorUuid, int volumeNumber, double endTime);
 
-        // SkyrimNet's entries for `vol`, oldest first, up to `endTime` (0 = open-ended).
-        // The next volume's boundary data decides who owns entries on a date both share.
-        // `ok` is false when the query failed (as opposed to returning no entries).
         // Game thread: the entries the volume's book shows now (what RefreshVolumeOnOpen
         // renders).  `ok` false: SkyrimNet couldn't be read or the actor isn't resolved.
         std::vector<DiaryEntry> GetShownEntries(DiaryBookData& vol, bool* ok);
 
+        // SkyrimNet's entries for `vol`, oldest first, up to `endTime` (0 = open-ended).
+        // The next volume's boundary data decides who owns entries on a date both share.
+        // `ok` is false when the query failed (as opposed to returning no entries).
         std::vector<DiaryEntry> GetLiveEntries(const DiaryBookData& vol, RE::FormID actorFormId,
                                                double endTime, bool* ok);
 
@@ -144,10 +144,11 @@ namespace SkyrimNetDiaries {
         // moves the volume's endTime back if entries were deleted.
         void RefreshVolumeOnOpen(DiaryBookData* vol);
 
-        // Game thread, after SNPD deleted one of the volume's entries: re-render from SkyrimNet
-        // and move endTime back, whatever the last render's count (the editor re-renders at
-        // once, so RefreshVolumeOnOpen's count check would miss the deletion).
-        void ReconcileAfterDeletion(DiaryBookData& vol);
+        // Game thread, when SkyrimNet has finished the book editor's writes to the volume:
+        // re-render from SkyrimNet and move endTime back if entries were deleted, whatever the
+        // last render's count (the editor re-renders at once, so RefreshVolumeOnOpen's count
+        // check would miss a deletion).
+        void ReconcileAfterWrite(DiaryBookData& vol);
 
         // New game or load: clears the in-memory volumes (DiaryDB stays).
         void Revert();

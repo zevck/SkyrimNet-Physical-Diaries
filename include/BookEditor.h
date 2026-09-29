@@ -21,13 +21,14 @@
 
 #include "PCH.h"
 
-// DEV HARNESS for the in-book editor: the edit mode in swf/book's BookMenu.as,
-// driven from here (ported from the `letters` branch).  F3 arms edit mode; the next
-// book or note opened enters it.  Keys are turned into characters with the active
-// keyboard layout and fed to the SWF.  Not tied to diaries or storage yet.
+// The player writing in their own diary in the book menu.  See docs/EDITING.md.
 namespace SkyrimNetDiaries::BookEditor {
 
-    // Once, at kDataLoaded: the book-menu and keyboard sinks.
+    // Once, at kDataLoaded: the book-menu and keyboard sinks and the close hook.
     void Register();
+
+    // A session ended (load or new game): drop the edit state; writes still in SkyrimNet
+    // finish without touching the new session.
+    void Reset();
 
 } // namespace SkyrimNetDiaries::BookEditor

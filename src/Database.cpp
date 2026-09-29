@@ -249,6 +249,11 @@ namespace SkyrimNetDiaries {
         }
     }
 
+    bool Database::CanWriteDiaries() {
+        if (!api_initialized_ && !InitializeAPI()) return false;
+        return PublicUpdateDiaryEntry && PublicDeleteDiaryEntry;
+    }
+
     bool Database::UpdateDiaryEntry(int entryId, const std::string& content, const std::string& tagsCSV) {
         try {
             if (!api_initialized_ && !InitializeAPI()) return false;
@@ -259,6 +264,9 @@ namespace SkyrimNetDiaries {
             return PublicUpdateDiaryEntry(entryId, content.c_str(), tagsCSV.c_str());
         } catch (const std::exception& e) {
             SKSE::log::error("PublicUpdateDiaryEntry({}) threw: {}", entryId, e.what());
+            return false;
+        } catch (...) {
+            SKSE::log::error("PublicUpdateDiaryEntry({}) threw an unknown exception", entryId);
             return false;
         }
     }
@@ -273,6 +281,9 @@ namespace SkyrimNetDiaries {
             return PublicDeleteDiaryEntry(entryId);
         } catch (const std::exception& e) {
             SKSE::log::error("PublicDeleteDiaryEntry({}) threw: {}", entryId, e.what());
+            return false;
+        } catch (...) {
+            SKSE::log::error("PublicDeleteDiaryEntry({}) threw an unknown exception", entryId);
             return false;
         }
     }

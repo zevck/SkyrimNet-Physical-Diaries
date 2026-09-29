@@ -1,10 +1,10 @@
 # Player Diary Editing
 
-The player can edit their own diary in the game's book menu: the pages look as they do when reading, and the entries' text is editable in place. Saving writes the changed entries back to SkyrimNet.
+The player can write in their own diary in the game's book menu: the pages look as they do when reading, and the entries' text is editable in place. Saving writes the changed entries back to SkyrimNet; an entry can also be torn out (deleted).
 
-Status (2026-09-28, branch `player-writing`): editing existing entries works on AE. New entries, deleting an entry, SE, VR and the Convenient Reading variant are not done or not tested. See [Not done yet](#not-done-yet).
+Status (2026-09-29, branch `player-writing`): editing, saving, going back to reading and tearing out entries work on AE. New entries, SE, VR, the Convenient Reading variant and Cyrillic text are not done or not tested, and there is no FOMOD yet. See [Not done yet](#not-done-yet).
 
-Code: `swf/book/scripts/__Packages/BookMenu.as` (the edit mode in the book menu's SWF), `src/BookEditor.cpp` (the plugin side), `Database::UpdateDiaryEntry` (SkyrimNet public API v11).
+Code: `swf/book/scripts/__Packages/BookMenu.as` (the edit mode in the book menu's SWF), `src/BookEditor.cpp` (the plugin side), `Database::UpdateDiaryEntry` / `Database::DeleteDiaryEntry` (SkyrimNet public API v11), `BookManager::ReconcileAfterWrite`.
 
 ---
 
@@ -13,20 +13,22 @@ Code: `swf/book/scripts/__Packages/BookMenu.as` (the edit mode in the book menu'
 - **Only the player's own diary.** A volume is editable only when its owner's UUID is the player's (`Database::GetUUIDFromFormID(0x14)`). An NPC's diary entries are also that NPC's memories in SkyrimNet; editing one would rewrite what they remember.
 - **Only changed entries are written.** An entry the player didn't touch stays exactly as SkyrimNet has it, including the lines the reading view hides (see [Text](#text)).
 - **Headings and the title page are not editable.** Each entry's date heading is the anchor that ties the text under it to one SkyrimNet entry id.
+- **Nothing the player writes may be lost silently.** Writing doesn't start unless it can be saved, a refused save keeps the text for the next edit, and a text that can't be read back is reported, not dropped.
 
 ---
 
 ## Opening
 
 1. While the player reads a book, the **edit key** (`[Diary] EditKey`, default F3, set in the MCM) queues `EnterEditMode` as a UI task. The book menu doesn't get the key. Nothing on screen mentions the key; the README and the MCM tooltip tell players.
-2. `EnterEditMode`:
-   - `SendDiaryContent`: the open book (`BookMenu::GetTargetForm`) → `BookManager::GetBookForFormID` → the player check → `BookManager::GetShownEntries` (the same entries `RefreshVolumeOnOpen` renders). It sends the SWF `SetEditContent(font, title size, small size, date size, content size, title, dates, entries)`, with the entries packed as `heading \x1F body`, joined by `\x1E`, and keeps each entry's id, text and tags (`g_loaded`).
-   - Any other book, and another actor's diary above all, isn't editable: nothing happens (logged).
-   - `SetEditMode(true)`. The SWF builds the editor at once, since the book's text (and whether it's a note) is already known; if edit mode were ever asked for before the engine's `SetBookText`, it waits for it (`bEditPending`).
-   - **Editing starts on the page being read.** The SWF takes the reading view's page (`iLeftPageNumber`) and, for a book, which engine slots its spread is in (`iLeftPageNumber - iPageSetIndex`), and turns the editor there. Both views break pages the same way, so it's the same page. The caret goes to the first place to type on it; on the title spread the view stays and the caret waits on the first entry.
-3. Text input is allowed (`ControlMap::AllowTextInput`) while editing.
+2. `EnterEditMode` → `SendDiaryContent` checks, in order, and does nothing (logged) if one fails:
+   - the open book (`BookMenu::GetTargetForm`) is one of SNPD's volumes (`BookManager::GetBookForFormID`) and the player's (any other book, and another actor's diary above all, isn't editable);
+   - **SkyrimNet can save** (`Database::CanWriteDiaries`: both v11 functions resolved), or the player gets `EditNeedsSkyrimNet`;
+   - **the book menu pauses the game** (`UI::GameIsPaused`), or the player gets `EditNeedsPause`. Key handling runs straight from the input sink and relies on the paused menu's input arriving on the main thread (Skyrim Souls RE, for one, can unpause the book menu).
+3. The entries: `BookManager::GetShownEntries` (the same entries `RefreshVolumeOnOpen` renders), or the editor's own copy if writes to this volume are still in SkyrimNet (see [Saving](#saving)). They go to the SWF as `SetEditContent(font, title size, small size, date size, content size, title, dates, entries)`, packed as `heading \x1F body` and joined by `\x1E`. The plugin keeps each one in `g_edit`: the whole `DiaryEntry` plus the text it was given (`savedBody`).
+4. The SWF's `EnterEditMode` builds the editor. **Editing starts on the page being read:** the SWF takes the reading view's page (`iLeftPageNumber`) and, for a book, which engine slots its spread is in (`iLeftPageNumber - iPageSetIndex`), and turns the editor there. Both views break pages the same way, so it's the same page. The caret goes to the first place to type on it; on the title spread the view stays and the caret waits on the first entry (typing shows its page).
+5. Text input is allowed (`ControlMap::AllowTextInput`) while editing.
 
-A `SetEditContent` or `SetEditMode` that fails means the loaded `book.swf` isn't SNPD's (another mod's won the file conflict); edit mode stays off.
+A `SetEditContent` or `EnterEditMode` that fails means the loaded `book.swf` isn't SNPD's (another mod's won the file conflict); edit mode stays off.
 
 ---
 
@@ -44,9 +46,9 @@ All the text is in one input `TextField` (a copy of the reference page clip) tha
 |---|---|---|
 | 0 | Nothing: the blank first page | No |
 | 1 | `\r` + blank lines, the title (title size, centred), the date range (small size, centred) | No |
-| 2 … | Locked: `\r`, then the heading (date size) and `\r\r` if headings are on. Body: the entry's text (content size) | Body only |
+| 2 … | Locked: `\r\r`, then the heading (date size) and `\r\r` if headings are on. Body: the entry's text (content size) | Body only |
 
-Every segment after the first starts with a locked `\r` and a new page, as entries do when reading. Without content (a note, dev harness) there is one editable segment.
+Every segment after the first starts with a locked `\r` and a new page, as entries do when reading. Line breaks are formatted as reading has them (`FormatBreaks`): the blank line between paragraphs in the page's own font and size, a line break inside a paragraph at the content size. Without content there is one editable segment (unused by SNPD; kept for the planned letters mod).
 
 Every edit goes through the SWF's own functions (`AppendEditChar`, `EditBackspace`, `EditDelete`, `EditMoveCursor`), so each one adjusts exactly one body's length. The caret is only ever inside a body: `EditSnap` moves it out of locked text in the direction of travel, typing outside a body goes to the next one, Backspace stops at a body's start and Delete at its end. `EditGetBodies` returns the bodies in order, joined by `\x1E`, with `\n` line breaks; it returns `undefined` once the editor is gone.
 
@@ -62,13 +64,14 @@ Every edit goes through the SWF's own functions (`AppendEditChar`, `EditBackspac
 
 ## Input
 
-The input sink is **prepended** to `BSInputDeviceManager`, so it runs before the menu's own input handling.
+The input sink is **prepended** to `BSInputDeviceManager`, so it runs before the menu's own input handling. While writing, the game is paused and input arrives on the main thread (checked when writing starts).
 
-- **Keys** are turned into text with the active keyboard layout (`ToUnicode`), with held-key repeat, and sent to the SWF. Arrows, Home and End move the caret; Backspace, Delete and Enter edit.
+- **Keys** are turned into text with the active keyboard layout (`ToUnicode`; a dead key that doesn't combine gives both characters), with held-key repeat, and sent to the SWF. Arrows, Home and End move the caret; Backspace, Delete and Enter edit.
 - **Every keyboard event's user event is blanked**, so no key acts as a game or menu control while typing (E types an "e" instead of taking the book).
 - **The book menu turns pages on the arrow keys, A and D by key code, not by user event** (found in game: the arrows reached our sink already without a user event), so blanking can't stop it. Instead every key event (press, held repeat, release) calls `EditSuppressTurn`, and the SWF refuses turns for 200 ms after it. A click never comes with a key event.
 - **The mouse** keeps the book's own page turns: left click previous, right click next (the `Book` context of `controlmap.txt`). Clicking doesn't place the caret.
-- **The edit key** saves and goes back to reading (see [Saving](#saving)).
+- **The edit key** saves and goes back to reading (see [Saving](#saving)); **the delete key** asks to tear out the entry under the caret (see [Tearing out an entry](#tearing-out-an-entry)). Neither is typed.
+- While a prompt is open over the book, the sink leaves every key to it.
 
 ---
 
@@ -76,15 +79,18 @@ The input sink is **prepended** to `BSInputDeviceManager`, so it runs before the
 
 Two ways: the **edit key** while writing (`SaveAndRead`: save, then back to reading), or **Save** on the close prompt (save, then close).
 
-`Save` reads the bodies (`ReadBodies`) and compares each with the text it was given (`g_loaded`, line breaks normalized to `\n` as the SWF returns them). For each changed entry:
+`Save` reads the bodies (`ReadBodies`) and compares each with its `savedBody` (line breaks normalized to `\n` as the SWF returns them). An entry is written if its text changed, or if its last save was refused (`unsaved`). For each:
 
-- The editor's copy of the entries (`g_entries`) takes the new text and the tag, and the volume is re-rendered from it at once (`SetVolumeText`): the book, its text snapshot and DiaryDB's cache show the edit before SkyrimNet has it. (`RefreshVolumeOnOpen` alone would not: it re-renders only when the entry count changes.)
-- The entry's tags plus `snpd_player_written` (`kPlayerWrittenTag`) are sent with the new text to `PublicUpdateDiaryEntry`, on a detached thread: SkyrimNet re-embeds the entry's memory, which blocks.
-- When the writes are done, a game-thread task re-renders the volume from SkyrimNet (`GetShownEntries`, `SetVolumeText`).
-- **Until then SkyrimNet still has the old text,** so editing the same volume again (the edit key right after saving) starts from the saved entries (`g_pending`), not from SkyrimNet.
-- If SkyrimNet refuses (for example while its keep/clear timeline check is pending) or the call fails, the player gets the `EditSaveFailed` notification.
+- The entry in `g_edit` takes the new text and the `snpd_player_written` tag (`kPlayerWrittenTag`, keeping its other tags), and the volume is re-rendered from the edited entries at once (`SetVolumeText`): the book, its text snapshot and DiaryDB's cache show the edit before SkyrimNet has it. (`RefreshVolumeOnOpen` alone would not: it re-renders only when the entry count changes.)
+- An update job goes to the **write queue**: one worker thread that runs the editor's writes in order (`PublicUpdateDiaryEntry` blocks while SkyrimNet re-embeds the entry's memory), so two quick saves of the same entry can't land out of order.
+- Each finished job queues a game-thread task. When a volume's last pending write is done, `BookManager::ReconcileAfterWrite` re-renders it from SkyrimNet (and moves `endTime` back after a deletion).
+- **Pending writes, per volume** (`g_pending`): until they are done SkyrimNet still has the old text, so editing that volume again (the edit key right after saving) starts from the editor's saved entries, not from SkyrimNet.
+- **A refused or failed save** (for example while SkyrimNet's keep/clear timeline check is pending) shows `EditSaveFailed`. The entry's text stays in `g_pending`, marked unsaved, so the next edit of that volume starts from it and saving writes it again. (The book shows SkyrimNet's text meanwhile.)
+- **A load or new game** (`BookEditor::Reset`, from `EndSession`) bumps a generation and drops the edit state: a write that finishes afterwards is ignored instead of touching a volume in the new session.
 
-**An emptied entry is left as it was** (logged): removing an entry is tearing it out (below), which asks first.
+**The editor's text can't be read** (the SWF returned nothing, or not one text per entry): the edit key and the prompt's Save show `EditSaveFailed` and stay in edit mode, so nothing is thrown away while the player can still see it. A close with unreadable text goes through (logged): there is nothing to save.
+
+**An emptied entry is left as it was**, with a hint (`EditEmptiedHint`): removing an entry is tearing it out (below), which asks first.
 
 **Back to reading** (`ReturnToReading` in the SWF): the plugin renders the volume from the edited entries (`FormatDiaryEntries`, then `BookTextHook::ForBookMenu`, the book menu's Win-1251 step), ends edit mode, and hands the text to the SWF. The SWF drops the editor and the old reading pages and lays the text out as the engine's `SetBookText` does, on the spread being edited: `iLeftPageNumber` is that spread's left page and `iPageSetIndex` puts it in the engine slots it is shown in (`iEditShownFrom`). A spread in slots 2–3 on the first spread leaves slots 0–1 before page 0, so `UpdatePages` skips page numbers below 0.
 
@@ -96,10 +102,12 @@ The **delete key** (`[Diary] DeleteKey`, default F10, set in the MCM) while writ
 
 **Tear out** (`TearOut`) acts at once:
 
-- The SWF removes the entry's segment, heading and text (`EditRemoveEntry`); the caret goes to the end of the entry before. The editor's lists (`g_loaded`, `g_entries`) drop it, so the other entries keep their indexes in step with the SWF. Their unsaved changes stay in the editor.
-- The volume is re-rendered from the remaining entries, and the edit-again guard (`g_pending`) holds them until SkyrimNet is done.
-- `PublicDeleteDiaryEntry` deletes the entry and its memory, on a detached thread. Then a game-thread task runs `BookManager::ReconcileAfterDeletion`: a re-render from SkyrimNet and the `endTime` move (see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md)). On failure (refused while SkyrimNet's timeline check is pending, or an error) the player gets `EditDeleteFailed`, and the reconcile puts the entry back in the book.
+- The SWF removes the entry's segment, heading and text (`EditRemoveEntry`); the caret goes to the end of the entry before. `g_edit` drops it, so the other entries keep their indexes in step with the SWF. Their unsaved changes stay in the editor.
+- The volume is re-rendered from the remaining entries, and a delete job goes to the write queue (`PublicDeleteDiaryEntry`: the entry and its memory), counted in the volume's pending writes like a save.
+- On failure the player gets `EditDeleteFailed`; the volume's pending entries are dropped when its writes finish (they lack an entry SkyrimNet still has), and the reconcile puts the entry back in the book.
 - Tearing out every entry leaves the title page; back to reading shows the "all entries removed" page.
+
+Deleting an entry never moves another entry to a different volume, and the reconcile's `endTime` move stops the next load from making a duplicate volume: see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md).
 
 ---
 
@@ -132,17 +140,16 @@ The editor gets the text the reading view shows, as plain text: `EditableEntryTe
 
 ## Diagnostics (to remove)
 
-- **F4:** the SWF's `DebugState` (layout, pages, segments, turns, clips) in the log.
-- **F5:** what a save would write, without writing.
-- The state after entering edit mode and after the first three keys; every book-menu message while editing (except updates and Scaleform events); mouse buttons' user events; where a body differs from what was loaded, with the bytes around it.
+- **F4** (while writing): the SWF's `DebugState` (layout, pages, segments, turns, clips) in the log.
+- **F5** (while writing): what a save would write, without writing.
+- The state after entering edit mode and after the first three keys; every book-menu message while editing (except updates and Scaleform events); where a body differs from what was loaded, with the bytes around it.
 
 ---
 
 ## Not done yet
 
-- **Going back to reading without closing the book.** The only way out of edit mode is closing it.
 - **New entries.** Deliberately left for later (how to start one immersively).
-- **SE, VR and the Convenient Reading variant** are untested. VR also needs a keyboard story.
+- **Shipping the SWF.** `Interface/book.swf` replaces the book menu for every book and note. It needs a FOMOD (vanilla, Convenient Reading, none), a SWF interface version the plugin checks, and a message to the player (not just the log) when another mod's `book.swf` won. The planned Physical Letters mod will ship the same SWF, so its interface must stay mod-neutral (no `SNPD_` events).
+- **SE, VR and the Convenient Reading variant** are untested, including plain reading through SNPD's `book.swf` on VR. VR also needs a keyboard story.
 - **Cyrillic.** Reading needs Win-1251 because Scaleform's pagination mixes byte and character offsets; the editor gets UTF-8. Untested with Cyrillic text.
-- **Translations** of the five `[Messages] Edit…` strings: only English has them; other languages show the English defaults.
-- **The shared `book.swf`.** The planned Physical Letters mod will ship the same SWF, and whichever mod wins the file conflict serves both. The SWF needs a version the plugin checks before enabling editing, and its interface must stay mod-neutral (no `SNPD_` events).
+- **Translations** of the twelve `[Messages] Edit…` strings: only English has them; other languages show the English defaults.

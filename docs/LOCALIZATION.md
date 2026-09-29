@@ -34,6 +34,8 @@ The folder is located from **the DLL's own path** (`GetModuleHandleExA` on a fun
 | `[Messages] EditSaveFailed` | Notification when SkyrimNet doesn't save an edit. Same fallback. | |
 | `[Messages] EditDeletePrompt`, `EditDelete`, `EditKeep` | The prompt when the player tears out an entry, and its two buttons ([EDITING.md](EDITING.md#tearing-out-an-entry)). Same fallback. | `{Date}` the entry's date (prompt only) |
 | `[Messages] EditDeleteFailed` | Notification when SkyrimNet doesn't delete an entry. Same fallback. | |
+| `[Messages] EditNeedsSkyrimNet`, `EditNeedsPause` | Notifications when writing can't start: SkyrimNet is older than public API v11, or the book menu doesn't pause the game ([EDITING.md](EDITING.md#opening)). Same fallback. | |
+| `[Messages] EditEmptiedHint` | Notification when a save keeps an emptied entry (removing one is tearing it out). Same fallback. | |
 | `[Months]`, `[Days]` | Optional name overrides, keyed by the English name | |
 
 Anything missing falls back to English.

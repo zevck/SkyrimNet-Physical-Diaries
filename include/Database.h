@@ -120,6 +120,10 @@ namespace SkyrimNetDiaries {
         static bool RegisterDecorator(const char* name, const char* description,
                                       std::function<std::string(RE::Actor*)> callback);
 
+        // True when SkyrimNet can save and delete diary entries (public API v11): the book
+        // editor needs both before the player writes anything.
+        static bool CanWriteDiaries();
+
         // Any thread but the game thread (SkyrimNet re-embeds the entry's memory): replace an
         // entry's text and tags.  False when SkyrimNet refuses (its keep/clear timeline check
         // is pending), the entry is gone, the API is older than v11, or the call failed.

@@ -37,7 +37,7 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 | [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md) | Entries → volumes, boundaries, update and seal, load-time recovery and catch-up, refresh on open, save reverts, save-folder detection |
 | [BOOK_TEXT.md](BOOK_TEXT.md) | Rendering, dates, cleaning LLM output, the `GetDescription` hook (the book menu and other readers), UTF-8 → Win-1251 |
 | [THEFT.md](THEFT.md) | Theft, return and handover; the decorator; clearing; save reverts |
-| [EDITING.md](EDITING.md) | The player editing their own diary in the book menu: the SWF's edit mode, input, saving to SkyrimNet, the close hook |
+| [EDITING.md](EDITING.md) | The player writing in their own diary in the book menu: the SWF's edit mode, input, saving to SkyrimNet, back to reading, tearing out an entry, the close hook |
 | [LOCALIZATION.md](LOCALIZATION.md) | Language choice, locale files, GMST names, MCM translations |
 
 ### Data, settings and interfaces

@@ -235,6 +235,9 @@ namespace SkyrimNetDiaries {
                 else if (key == "EditDelete") editDelete_ = text;
                 else if (key == "EditKeep") editKeep_ = text;
                 else if (key == "EditDeleteFailed") editDeleteFailed_ = text;
+                else if (key == "EditNeedsSkyrimNet") editNeedsSkyrimNet_ = text;
+                else if (key == "EditNeedsPause") editNeedsPause_ = text;
+                else if (key == "EditEmptiedHint") editEmptiedHint_ = text;
             } else if (currentSection == "months") {
                 for (auto& [mk, idx] : monthKeys) {
                     if (key == mk) {
@@ -363,6 +366,9 @@ namespace SkyrimNetDiaries {
         editDelete_ = "Tear out";
         editKeep_ = "Keep it";
         editDeleteFailed_ = "The entry couldn't be torn out. See SkyrimNetPhysicalDiaries.log.";
+        editNeedsSkyrimNet_ = "Writing in your diary needs a newer SkyrimNet.";
+        editNeedsPause_ = "Writing in your diary needs the book menu to pause the game.";
+        editEmptiedHint_ = "An emptied entry is kept. To remove an entry, tear it out.";
 
         // Load locale file (may override formats, months, days)
         LoadLocaleFile(languageString_);

@@ -70,6 +70,7 @@ namespace {
     void EndSession() {
         ++g_loadGeneration;
         SkyrimNetDiaries::TimelineGate::Reset();
+        SkyrimNetDiaries::BookEditor::Reset();
         SkyrimNetDiaries::BookManager::ClearActorCache();
         SkyrimNetDiaries::DiaryDB::GetSingleton()->Close();
         SkyrimNetDiaries::SaveFolder::Clear();
@@ -131,7 +132,7 @@ namespace {
                 // Needs the forms loaded: find SkyrimNet's keep/clear prompt text.
                 SkyrimNetDiaries::TimelineGate::OnDataLoaded();
 
-                // DEV HARNESS: F3 arms the in-book editor (swf/book edit mode).
+                // The player's diary editor (docs/EDITING.md).
                 SkyrimNetDiaries::BookEditor::Register();
 
                 // Now that GMSTs are loaded, read localized month/day names

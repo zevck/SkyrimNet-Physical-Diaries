@@ -45,8 +45,6 @@ class BookMenu extends MovieClip
    var oEditContent;     // what the plugin sent (SetEditContent) for the next edit mode, or undefined: blank page
    var oContentFmt;      // entry text's format (config font, content size)
    var oBreakFmt;        // blank lines' format, as reading has them (see EditBuildContent)
-   var bTextReceived;    // the game has sent this book's text (SetBookText): note/book is known
-   var bEditPending;     // edit mode was requested before that: enter it when the text arrives
 
    function BookMenu()
    {
@@ -94,36 +92,16 @@ class BookMenu extends MovieClip
       gfx.io.GameDelegate.addCallBack("SetBookText",this,"SetBookText");
       gfx.io.GameDelegate.addCallBack("TurnPage",this,"TurnPage");
       gfx.io.GameDelegate.addCallBack("PrepForClose",this,"PrepForClose");
-
-      // New edit mode callbacks
-      gfx.io.GameDelegate.addCallBack("SetEditMode",this,"SetEditMode");
    }
 
    // ================================================================
-   // EDIT MODE
+   // EDIT MODE (docs/EDITING.md). The plugin calls these through the movie; the book is open,
+   // so SetBookText has run and bNote is known.
    // ================================================================
-
-   function SetEditMode(abEnabled)
-   {
-      if(abEnabled && !this.bTextReceived)
-      {
-         // The layout depends on note vs book, which SetBookText tells us.
-         this.bEditPending = true;
-         return;
-      }
-      this.bEditMode = abEnabled;
-      if(abEnabled)
-      {
-         this.EnterEditMode();
-      }
-      else
-      {
-         this.ExitEditMode();
-      }
-   }
 
    function EnterEditMode()
    {
+      this.bEditMode = true;
       // The page being read (at the book's opening: page 0). A book's spread is in engine
       // slots 0-1 or 2-3 (see iEditShownFrom); editing starts on the same page and slots.
       var readPage = this.iLeftPageNumber;
@@ -202,16 +180,15 @@ class BookMenu extends MovieClip
       var start = this.EditSnap(0, 1);
       Selection.setSelection(start, start);
       this.EditLayout();
-      if(readPage > 0)
-      {
-         this.iEditShownFrom = readShownFrom;
-         this.EditGoToPage(readPage);
-      }
+      // Show the page being read; on a page with nowhere to type (the title spread) the view
+      // stays there and the caret waits on the first entry.
+      this.iEditShownFrom = readShownFrom;
+      this.EditGoToPage(readPage);
    }
 
    // ---- Content: locked text and editable bodies ----
 
-   // From the plugin, before SetEditMode: a diary volume laid out as the book shows it. Title
+   // From the plugin, before EnterEditMode: a diary volume laid out as the book shows it. Title
    // and dates go on the title page; entries is "heading\x1Fbody" per entry, joined by \x1E.
    // Headings are locked; each body is editable (entry i of EditGetBodies).
    function SetEditContent(font, titleSize, smallSize, dateSize, contentSize, title, dates, entries)
@@ -659,11 +636,6 @@ class BookMenu extends MovieClip
       return p;
    }
 
-   // After the plugin forwards a click: the caret may have moved.
-   function EditRefresh()
-   {
-      this.EditLayout();
-   }
 
    function EditCaret()
    {
@@ -965,7 +937,7 @@ class BookMenu extends MovieClip
 
    function DebugState()
    {
-      var s = "note=" + this.bNote + " edit=" + this.bEditMode + " pending=" + this.bEditPending + " textIn=" + this.bTextReceived + " sizes=" + BookMenu.FONT_SIZE_B + "/" + BookMenu.FONT_SIZE_N + " editPage=" + this.iEditPage + " maxPageH=" + this.iMaxPageHeight + " left=" + this.iLeftPageNumber + " set=" + this.iPageSetIndex + " pageInfo=" + this.PageInfoA.length + " pagination=" + this.iPaginationIndex;
+      var s = "note=" + this.bNote + " edit=" + this.bEditMode + " sizes=" + BookMenu.FONT_SIZE_B + "/" + BookMenu.FONT_SIZE_N + " editPage=" + this.iEditPage + " maxPageH=" + this.iMaxPageHeight + " left=" + this.iLeftPageNumber + " set=" + this.iPageSetIndex + " pageInfo=" + this.PageInfoA.length + " pagination=" + this.iPaginationIndex;
       s += " | editPages=" + this.EditPageCount() + " tops=" + this.aEditPageTops.join(",") + " firstLines=" + this.aEditPageLines.join(",") + " shows=" + this.iShowCalls + " segs=" + BookMenu.DescribeSegs(this.aSegs) + " lastShow=" + this.iLastShowOffset + " shownFrom=" + this.iEditShownFrom + " editPage=" + this.iEditPage + " turns=" + this.sTurnLog + (this.EditField == undefined ? "" : " fieldY=" + this.EditField._y + " maskY=" + this.EditMask._y + " maskH=" + this.EditMask._height + " clipVis=" + this.EditClip._visible);
       s += " | stage{w=" + Stage.width + " h=" + Stage.height + " mode=" + Stage.scaleMode + " rect=" + Stage.visibleRect.x + "," + Stage.visibleRect.y + "," + Stage.visibleRect.width + "," + Stage.visibleRect.height + "}";
       s += " | focus=" + Selection.getFocus() + " caret=" + Selection.getBeginIndex();
@@ -1053,14 +1025,6 @@ class BookMenu extends MovieClip
    function SetBookText(astrText, abNote)
    {
       this.bNote = abNote;
-      this.bTextReceived = true;
-      if(this.bEditPending)
-      {
-         this.bEditPending = false;
-         this.bEditMode = true;
-         this.EnterEditMode();
-         return;
-      }
       // Don't overwrite text while in edit mode
       if(this.bEditMode)
       {

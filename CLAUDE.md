@@ -6,7 +6,7 @@ SKSE plugin (CommonLibSSE-NG, C++23; one DLL for SE, AE and VR) that turns the d
 
 ## Ground rules
 
-- SNPD **presents** SkyrimNet's data. The one exception: the player editing their **own** diary in the book menu writes the changed entries back to SkyrimNet ([docs/EDITING.md](docs/EDITING.md)). Never write an NPC's entries (they are that NPC's memories). DiaryDB holds SNPD's own bookkeeping plus a render cache.
+- SNPD **presents** SkyrimNet's data. The one exception: the player writing in their **own** diary in the book menu saves the changed entries back to SkyrimNet and can tear one out (delete it and its memory) ([docs/EDITING.md](docs/EDITING.md)). Never write or delete an NPC's entries (they are that NPC's memories). DiaryDB holds SNPD's own bookkeeping plus a render cache.
 - Identify books by **base FormID** (`BookManager::GetBookForFormID`) and NPCs by **SkyrimNet UUID**. Never by name (localized; same-named NPCs share an identity) and never by a stored FormID without a UUID back-check.
 - Every persistence change must survive: save → reload, reload without saving, loading an older save with SkyrimNet **KEEP and CLEAR**, and a second character. See [docs/VOLUMES_AND_SYNC.md](docs/VOLUMES_AND_SYNC.md).
 - Book forms are runtime forms the engine saves itself (`DynamicForms`). Never pick a FormID yourself; a volume that goes away is retired (`BookManager::RetireBook`): its form stays in the save, never removed, or a world copy of it crashes the game on load. See [docs/BOOK_FORMS.md](docs/BOOK_FORMS.md).
