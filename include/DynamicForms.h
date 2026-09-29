@@ -34,7 +34,8 @@
 // A form the owner no longer needs is retired instead: kept, and flagged.
 //
 // Knows nothing about SkyrimNet Physical Diaries, so it can move into other mods.
-// Thread-safe.  See docs/BOOK_FORMS.md.
+// Physical Letters has a copy: keep the two in step (docs/BOOK_FORMS.md, "Reuse in
+// other mods").  Thread-safe.  See docs/BOOK_FORMS.md.
 namespace DynamicForms {
 
     // What a form is, in its owner's terms.

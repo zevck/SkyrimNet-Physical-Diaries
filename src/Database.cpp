@@ -263,6 +263,20 @@ namespace SkyrimNetDiaries {
         }
     }
 
+    bool Database::DeleteDiaryEntry(int entryId) {
+        try {
+            if (!api_initialized_ && !InitializeAPI()) return false;
+            if (!PublicDeleteDiaryEntry) {
+                SKSE::log::warn("SkyrimNet has no PublicDeleteDiaryEntry (needs public API v11)");
+                return false;
+            }
+            return PublicDeleteDiaryEntry(entryId);
+        } catch (const std::exception& e) {
+            SKSE::log::error("PublicDeleteDiaryEntry({}) threw: {}", entryId, e.what());
+            return false;
+        }
+    }
+
     std::string Database::GetBioTemplateName(uint32_t formId) {
         try {
             if (!api_initialized_ && !InitializeAPI()) {

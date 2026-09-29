@@ -77,6 +77,10 @@ std::string (*PublicGetDiaryEntries)(uint32_t formId, int maxCount, double start
  *  SkyrimNet's keep/clear timeline check is pending), the entry is gone, or it failed. */
 bool (*PublicUpdateDiaryEntry)(int entryId, const char* content, const char* tagsCSV) = nullptr;
 
+/** Delete a diary entry and its memory.  False when refused (while SkyrimNet's keep/clear
+ *  timeline check is pending), the entry is gone, or it failed. */
+bool (*PublicDeleteDiaryEntry)(int entryId) = nullptr;
+
 // ---- v5+: Decorator registration ----
 
 /** Register a native decorator for prompt templates ({{ name(actor_uuid) }}).  The callback
@@ -170,6 +174,8 @@ inline bool FindFunctions() {
             if (version >= 11) {
                 PublicUpdateDiaryEntry = reinterpret_cast<bool(*)(int, const char*, const char*)>(
                     GetProcAddress(hDLL, "PublicUpdateDiaryEntry"));
+                PublicDeleteDiaryEntry = reinterpret_cast<bool(*)(int)>(
+                    GetProcAddress(hDLL, "PublicDeleteDiaryEntry"));
             }
         }
         return true;

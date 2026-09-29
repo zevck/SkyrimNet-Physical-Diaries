@@ -41,6 +41,8 @@ namespace SkyrimNetDiaries {
     std::string EditableEntryText(const DiaryEntry& entry);
     // Its date heading; empty when [Diary] ShowDateHeaders is off.
     std::string EntryHeading(const DiaryEntry& entry);
+    // Its date as a heading shows it, whether headings are on or not.
+    std::string EntryDate(const DiaryEntry& entry);
     // The title page's date range ("" for no entries).
     std::string TitlePageDates(const std::vector<DiaryEntry>& entries);
 

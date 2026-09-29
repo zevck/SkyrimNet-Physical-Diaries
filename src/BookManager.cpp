@@ -577,17 +577,32 @@ namespace SkyrimNetDiaries {
         if (liveCount < vol->lastKnownEntryCount) {
             SKSE::log::info("[SNPD] {} vol {} shrank {} → {} entries on open",
                 vol->actorName, vol->volumeNumber, vol->lastKnownEntryCount, liveCount);
-            if (vol->endTime > 0.0 && !liveEntries.empty()) {
-                double newEnd = liveEntries.back().entry_date;
-                if (newEnd != vol->endTime) {
-                    SKSE::log::debug("[SNPD]   endTime updated {:.2f} → {:.2f}", vol->endTime, newEnd);
-                    DiaryDB::GetSingleton()->UpdateEndTime(vol->actorUuid, vol->volumeNumber, newEnd);
-                    vol->endTime = newEnd;
-                }
-            }
+            MoveEndTimeBack(*vol, liveEntries);
         }
 
         SetVolumeText(*vol, liveEntries);
+    }
+
+    void BookManager::MoveEndTimeBack(DiaryBookData& vol, const std::vector<DiaryEntry>& liveEntries) {
+        if (vol.endTime > 0.0 && !liveEntries.empty()) {
+            double newEnd = liveEntries.back().entry_date;
+            if (newEnd != vol.endTime) {
+                SKSE::log::debug("[SNPD]   endTime updated {:.2f} → {:.2f}", vol.endTime, newEnd);
+                DiaryDB::GetSingleton()->UpdateEndTime(vol.actorUuid, vol.volumeNumber, newEnd);
+                vol.endTime = newEnd;
+            }
+        }
+    }
+
+    void BookManager::ReconcileAfterDeletion(DiaryBookData& vol) {
+        bool ok = false;
+        const auto liveEntries = GetShownEntries(vol, &ok);
+        if (!ok) {
+            SKSE::log::warn("[SNPD] {} vol {}: couldn't read entries after a deletion", vol.actorName, vol.volumeNumber);
+            return;
+        }
+        MoveEndTimeBack(vol, liveEntries);
+        SetVolumeText(vol, liveEntries);
     }
 
 } // namespace SkyrimNetDiaries

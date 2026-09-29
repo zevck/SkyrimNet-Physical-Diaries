@@ -144,10 +144,19 @@ namespace SkyrimNetDiaries {
         // moves the volume's endTime back if entries were deleted.
         void RefreshVolumeOnOpen(DiaryBookData* vol);
 
+        // Game thread, after SNPD deleted one of the volume's entries: re-render from SkyrimNet
+        // and move endTime back, whatever the last render's count (the editor re-renders at
+        // once, so RefreshVolumeOnOpen's count check would miss the deletion).
+        void ReconcileAfterDeletion(DiaryBookData& vol);
+
         // New game or load: clears the in-memory volumes (DiaryDB stays).
         void Revert();
 
     private:
+        // Entries were deleted: endTime becomes the last live entry's date, or
+        // QueueNewEntryRecovery looks past the gap on the next load and makes a duplicate volume.
+        void MoveEndTimeBack(DiaryBookData& vol, const std::vector<DiaryEntry>& liveEntries);
+
         BookManager() = default;
         BookManager(const BookManager&) = delete;
         BookManager& operator=(const BookManager&) = delete;

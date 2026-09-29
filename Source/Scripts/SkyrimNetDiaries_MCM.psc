@@ -26,6 +26,8 @@ int  Function GetFontSizeSmall()                 global native
      Function SetFontSizeSmall(int value)        global native
 int  Function GetEditKey()                       global native
      Function SetEditKey(int value)              global native
+int  Function GetDeleteKey()                     global native
+     Function SetDeleteKey(int value)            global native
 string Function GetFontFace()                    global native
        Function SetFontFace(string value)        global native
 
@@ -41,6 +43,7 @@ int oidFontSizeContent   = -1
 int oidFontSizeSmall     = -1
 int oidFontFace          = -1
 int oidEditKey           = -1
+int oidDeleteKey         = -1
 int oidResetAll          = -1
 
 ; Font presets
@@ -136,6 +139,7 @@ event OnPageReset(string page)
     oidFontSizeSmall    = -1
     oidFontFace         = -1
     oidEditKey          = -1
+    oidDeleteKey        = -1
     oidResetAll         = -1
 
     if page == Pages[0]
@@ -160,6 +164,7 @@ function RenderSettingsPage()
 
     AddHeaderOption("$SNPD_HeaderWriting")
     oidEditKey = AddKeyMapOption("$SNPD_EditKey", GetEditKey())
+    oidDeleteKey = AddKeyMapOption("$SNPD_DeleteKey", GetDeleteKey())
 endfunction
 
 function RenderMaintenancePage()
@@ -291,6 +296,9 @@ event OnOptionKeyMapChange(int oid, int keyCode, string conflictControl, string 
     if oid == oidEditKey && keyCode > 0
         SetEditKey(keyCode)
         SetKeyMapOptionValue(oid, keyCode)
+    elseif oid == oidDeleteKey && keyCode > 0
+        SetDeleteKey(keyCode)
+        SetKeyMapOptionValue(oid, keyCode)
     endif
 endevent
 
@@ -317,6 +325,8 @@ event OnOptionHighlight(int oid)
         SetInfoText("$SNPD_TipSmallFontSize")
     elseif oid == oidEditKey
         SetInfoText("$SNPD_TipEditKey")
+    elseif oid == oidDeleteKey
+        SetInfoText("$SNPD_TipDeleteKey")
     elseif oid == oidResetAll
         SetInfoText("$SNPD_TipResetAll")
     endif
@@ -355,5 +365,8 @@ event OnOptionDefault(int oid)
     elseif oid == oidEditKey
         SetEditKey(61)
         SetKeyMapOptionValue(oid, 61)
+    elseif oid == oidDeleteKey
+        SetDeleteKey(68)
+        SetKeyMapOptionValue(oid, 68)
     endif
 endevent

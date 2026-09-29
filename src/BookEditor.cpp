@@ -209,6 +209,7 @@ namespace SkyrimNetDiaries::BookEditor {
             }
             std::vector<std::string> bodies;
             std::string_view all = result.GetString();
+            if (all.empty() && g_loaded.empty()) return bodies;  // every entry was torn out
             for (std::size_t start = 0;;) {
                 const auto end = all.find('\x1E', start);
                 bodies.emplace_back(all.substr(start, end == std::string_view::npos ? all.npos : end - start));
@@ -420,6 +421,91 @@ namespace SkyrimNetDiaries::BookEditor {
             }
         };
 
+        // ---- Tearing out an entry ----
+
+        // Delete entry i (page order) now: from the editor, the book and SkyrimNet (the entry
+        // and its memory).  Other entries' unsaved changes stay in the editor.  The book shows
+        // the deletion at once; when SkyrimNet is done the volume is reconciled (endTime).
+        void TearOut(std::size_t i) {
+            if (i >= g_loaded.size() || g_loaded[i].id == 0) return;
+            const int id = g_loaded[i].id;
+            RE::GFxValue arg;
+            arg.SetNumber(static_cast<double>(i));
+            auto* movie = BookMovie();
+            RE::GFxValue removed;
+            if (!movie || !movie->Invoke("_root.BookMenu_mc.EditRemoveEntry", &removed, &arg, 1) ||
+                !removed.IsBool() || !removed.GetBool()) {
+                SKSE::log::warn("[BookEditor] The SWF couldn't remove entry {}", i);
+                return;
+            }
+            g_loaded.erase(g_loaded.begin() + static_cast<std::ptrdiff_t>(i));
+            g_entries.erase(g_entries.begin() + static_cast<std::ptrdiff_t>(i));
+            SKSE::log::info("[BookEditor] Tearing out entry {}", id);
+
+            auto* manager = BookManager::GetSingleton();
+            if (auto* vol = manager->GetBookForFormID(g_bookFormId)) manager->SetVolumeText(*vol, g_entries);
+            if (g_pending.bookFormId != g_bookFormId) g_pending.count = 0;
+            g_pending.bookFormId = g_bookFormId;
+            g_pending.entries = g_entries;
+            ++g_pending.count;
+
+            std::thread([id, bookFormId = g_bookFormId]() {
+                const bool ok = Database::DeleteDiaryEntry(id);
+                if (ok) {
+                    SKSE::log::info("[BookEditor] Tore out entry {}", id);
+                } else {
+                    SKSE::log::error("[BookEditor] SkyrimNet didn't delete entry {}", id);
+                }
+                SKSE::GetTaskInterface()->AddTask([bookFormId, ok]() {
+                    if (g_pending.bookFormId == bookFormId && g_pending.count > 0) --g_pending.count;
+                    if (!ok) RE::SendHUDMessage::ShowHUDMessage(Localization::GetSingleton()->GetEditDeleteFailed().c_str());
+                    auto* manager = BookManager::GetSingleton();
+                    if (auto* vol = manager->GetBookForFormID(bookFormId)) manager->ReconcileAfterDeletion(*vol);
+                });
+            }).detach();
+        }
+
+        class TearOutCallback : public RE::IMessageBoxCallback {
+        public:
+            explicit TearOutCallback(std::size_t a_entry) : entry_(a_entry) {}
+            void Run(std::uint8_t a_button) override {
+                g_prompting = false;
+                if (!g_active) return;
+                SetTextInput(true);
+                if (a_button == 0) TearOut(entry_);
+            }
+
+        private:
+            std::size_t entry_;
+        };
+
+        // The delete key while writing: ask about the entry under the caret.
+        void ShowTearOutPrompt() {
+            auto* movie = BookMovie();
+            RE::GFxValue result;
+            if (!movie || !movie->Invoke("_root.BookMenu_mc.EditCurrentEntry", &result, nullptr, 0) ||
+                !result.IsNumber() || result.GetNumber() < 0) {
+                return;  // the caret isn't in an entry
+            }
+            const auto entry = static_cast<std::size_t>(result.GetNumber());
+            if (entry >= g_entries.size()) return;
+            auto* data = RE::UIMessageDataFactory::Create<RE::MessageBoxData>();
+            if (!data) return;
+            auto* loc = Localization::GetSingleton();
+            std::string body = loc->GetEditDeletePrompt();
+            if (const auto at = body.find("{Date}"); at != std::string::npos) {
+                body.replace(at, 6, EntryDate(g_entries[entry]));
+            }
+            data->bodyText = body.c_str();
+            data->buttonText.push_back(loc->GetEditDelete().c_str());
+            data->buttonText.push_back(loc->GetEditKeep().c_str());
+            data->cancelButtonIndex = 1;  // Escape on the prompt: keep it
+            data->callback = RE::BSTSmartPointer<RE::IMessageBoxCallback>(new TearOutCallback(entry));
+            g_prompting = true;
+            SetTextInput(false);
+            RE::MessageBoxMenu::QueueMessage(data);
+        }
+
         void ShowSavePrompt() {
             auto* data = RE::UIMessageDataFactory::Create<RE::MessageBoxData>();
             if (!data) return;
@@ -579,6 +665,11 @@ namespace SkyrimNetDiaries::BookEditor {
                         Invoke("EditSuppressTurn");
                         // Keys are text: blank the user event for anything that does go by it.
                         button->SetUserEvent("");
+                    }
+                    // The delete key while writing: tear out the entry under the caret (asks first).
+                    if (g_active && code == Config::GetSingleton()->GetDeleteKey()) {
+                        if (button->IsDown()) ShowTearOutPrompt();
+                        continue;
                     }
                     // The edit key while writing: save and go back to reading.
                     if (g_active && code == Config::GetSingleton()->GetEditKey()) {

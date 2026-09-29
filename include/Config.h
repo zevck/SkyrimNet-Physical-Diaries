@@ -119,13 +119,16 @@ namespace SkyrimNetDiaries {
         // diary, and saves and goes back to reading while they write (61 = F3).  Not a key that
         // types: while writing it can't also type.
         static constexpr IntSetting kEditKey          { "Diary",   "EditKey",          61, 1, 255 };
+        // DirectX scan code of the key that tears out the entry under the caret while the
+        // player writes (68 = F10).  Not a key that types.
+        static constexpr IntSetting kDeleteKey        { "Diary",   "DeleteKey",        68, 1, 255 };
         static constexpr IntSetting kFontSizeTitle    { "Fonts",   "TitleSize",        18, 8, 24 };
         static constexpr IntSetting kFontSizeDate     { "Fonts",   "DateSize",         16, 8, 24 };
         static constexpr IntSetting kFontSizeContent  { "Fonts",   "ContentSize",      14, 8, 24 };
         static constexpr IntSetting kFontSizeSmall    { "Fonts",   "SmallSize",        12, 8, 24 };
         // INI order.  Language (string) is written first in [General], FontFace last in [Fonts].
         static constexpr IntSetting kIntSettings[] = {
-            kDebugLog, kShowDateHeaders, kEntriesPerVolume, kEditKey,
+            kDebugLog, kShowDateHeaders, kEntriesPerVolume, kEditKey, kDeleteKey,
             kFontSizeTitle, kFontSizeDate, kFontSizeContent, kFontSizeSmall,
         };
 
@@ -142,6 +145,7 @@ namespace SkyrimNetDiaries {
         bool GetShowDateHeaders() const { return Get(kShowDateHeaders) != 0; }
         int GetEntriesPerVolume() const { return Get(kEntriesPerVolume); }
         std::uint32_t GetEditKey() const { return static_cast<std::uint32_t>(Get(kEditKey)); }
+        std::uint32_t GetDeleteKey() const { return static_cast<std::uint32_t>(Get(kDeleteKey)); }
         int GetFontSizeTitle() const { return Get(kFontSizeTitle); }
         int GetFontSizeDate() const { return Get(kFontSizeDate); }
         int GetFontSizeContent() const { return Get(kFontSizeContent); }
@@ -153,6 +157,7 @@ namespace SkyrimNetDiaries {
         void SetShowDateHeaders(bool v) { Set(kShowDateHeaders, v ? 1 : 0); }
         void SetEntriesPerVolume(int v) { Set(kEntriesPerVolume, v); }
         void SetEditKey(int v)          { Set(kEditKey, v); }
+        void SetDeleteKey(int v)        { Set(kDeleteKey, v); }
         void SetFontSizeTitle(int v)    { Set(kFontSizeTitle, v); }
         void SetFontSizeDate(int v)     { Set(kFontSizeDate, v); }
         void SetFontSizeContent(int v)  { Set(kFontSizeContent, v); }

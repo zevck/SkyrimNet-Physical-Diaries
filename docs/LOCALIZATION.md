@@ -32,6 +32,8 @@ The folder is located from **the DLL's own path** (`GetModuleHandleExA` on a fun
 | `[Messages] TemplatesMissing` | The startup warning shown when the template books are missing. One line; `\n` is a line break. The button uses the game's own `sOk` string. | |
 | `[Messages] EditSavePrompt`, `EditSave`, `EditDiscard`, `EditKeepWriting` | The book editor's prompt when the player closes their diary with unsaved changes, and its three buttons ([EDITING.md](EDITING.md#closing)). Only ENGLISH.ini has them so far; other languages get the English defaults from `Localization.cpp`. | |
 | `[Messages] EditSaveFailed` | Notification when SkyrimNet doesn't save an edit. Same fallback. | |
+| `[Messages] EditDeletePrompt`, `EditDelete`, `EditKeep` | The prompt when the player tears out an entry, and its two buttons ([EDITING.md](EDITING.md#tearing-out-an-entry)). Same fallback. | `{Date}` the entry's date (prompt only) |
+| `[Messages] EditDeleteFailed` | Notification when SkyrimNet doesn't delete an entry. Same fallback. | |
 | `[Months]`, `[Days]` | Optional name overrides, keyed by the English name | |
 
 Anything missing falls back to English.

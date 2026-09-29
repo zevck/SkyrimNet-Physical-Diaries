@@ -231,6 +231,10 @@ namespace SkyrimNetDiaries {
                 else if (key == "EditDiscard") editDiscard_ = text;
                 else if (key == "EditKeepWriting") editKeepWriting_ = text;
                 else if (key == "EditSaveFailed") editSaveFailed_ = text;
+                else if (key == "EditDeletePrompt") editDeletePrompt_ = text;
+                else if (key == "EditDelete") editDelete_ = text;
+                else if (key == "EditKeep") editKeep_ = text;
+                else if (key == "EditDeleteFailed") editDeleteFailed_ = text;
             } else if (currentSection == "months") {
                 for (auto& [mk, idx] : monthKeys) {
                     if (key == mk) {
@@ -355,6 +359,10 @@ namespace SkyrimNetDiaries {
         editDiscard_ = "Discard";
         editKeepWriting_ = "Keep writing";
         editSaveFailed_ = "Your diary couldn't be saved. See SkyrimNetPhysicalDiaries.log.";
+        editDeletePrompt_ = "Tear out the entry from {Date}?\n\nIt will be gone from your diary and from your memory.";
+        editDelete_ = "Tear out";
+        editKeep_ = "Keep it";
+        editDeleteFailed_ = "The entry couldn't be torn out. See SkyrimNetPhysicalDiaries.log.";
 
         // Load locale file (may override formats, months, days)
         LoadLocaleFile(languageString_);

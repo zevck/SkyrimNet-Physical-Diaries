@@ -418,6 +418,59 @@ class BookMenu extends MovieClip
       return after >= 0 ? after : before;
    }
 
+   // The entry the caret is in (its index among the entries, as EditGetBodies orders them),
+   // or -1.
+   function EditCurrentEntry()
+   {
+      if(this.aSegs == undefined || this.EditField == undefined)
+      {
+         return -1;
+      }
+      var k = this.EditableSegAt(this.EditCaret());
+      if(k < 0)
+      {
+         return -1;
+      }
+      var entry = 0;
+      var j = 0;
+      while(j < k)
+      {
+         if(this.aSegs[j].editable)
+         {
+            entry++;
+         }
+         j++;
+      }
+      return entry;
+   }
+
+   // Take entry i's pages out of the editor (heading and text): it was torn out. The caret
+   // goes to the end of the entry before it, or the start of the one after.
+   function EditRemoveEntry(i)
+   {
+      var k = 0;
+      var entry = -1;
+      while(k < this.aSegs.length)
+      {
+         if(this.aSegs[k].editable && ++entry == i)
+         {
+            break;
+         }
+         k++;
+      }
+      if(k >= this.aSegs.length)
+      {
+         return false;
+      }
+      var start = this.SegStart(k);
+      this.EditField.replaceText(start, start + this.aSegs[k].locked + this.aSegs[k].body, "");
+      this.aSegs.splice(k, 1);
+      var pos = this.EditSnap(start, -1);
+      this.EditSetCaret(pos < 0 ? 0 : pos);
+      this.EditLayout();
+      return true;
+   }
+
    // Leave edit mode and read again, on the spread being edited, with the book's text as
    // it is now (the plugin renders it from the saved entries). Lays the text out as the
    // engine's SetBookText does, keeping the engine's page slots where they are.

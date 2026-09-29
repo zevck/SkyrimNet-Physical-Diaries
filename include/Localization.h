@@ -69,6 +69,12 @@ namespace SkyrimNetDiaries {
         const std::string& GetEditDiscard() const { return editDiscard_; }
         const std::string& GetEditKeepWriting() const { return editKeepWriting_; }
         const std::string& GetEditSaveFailed() const { return editSaveFailed_; }
+        // Tearing out an entry: the prompt ({Date} = the entry's date) and its buttons, and the
+        // notification when SkyrimNet doesn't delete it.
+        const std::string& GetEditDeletePrompt() const { return editDeletePrompt_; }
+        const std::string& GetEditDelete() const { return editDelete_; }
+        const std::string& GetEditKeep() const { return editKeep_; }
+        const std::string& GetEditDeleteFailed() const { return editDeleteFailed_; }
 
         // Detected language as uppercase string (e.g. "RUSSIAN")
         const std::string& GetLanguageString() const { return languageString_; }
@@ -110,6 +116,10 @@ namespace SkyrimNetDiaries {
         std::string editDiscard_;
         std::string editKeepWriting_;
         std::string editSaveFailed_;
+        std::string editDeletePrompt_;
+        std::string editDelete_;
+        std::string editKeep_;
+        std::string editDeleteFailed_;
     };
 
 }  // namespace SkyrimNetDiaries

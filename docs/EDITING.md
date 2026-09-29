@@ -84,9 +84,22 @@ Two ways: the **edit key** while writing (`SaveAndRead`: save, then back to read
 - **Until then SkyrimNet still has the old text,** so editing the same volume again (the edit key right after saving) starts from the saved entries (`g_pending`), not from SkyrimNet.
 - If SkyrimNet refuses (for example while its keep/clear timeline check is pending) or the call fails, the player gets the `EditSaveFailed` notification.
 
-**An emptied entry is left as it was** (logged): deleting an entry moves the volume boundaries (`VOLUMES_AND_SYNC.md`), which isn't handled yet.
+**An emptied entry is left as it was** (logged): removing an entry is tearing it out (below), which asks first.
 
 **Back to reading** (`ReturnToReading` in the SWF): the plugin renders the volume from the edited entries (`FormatDiaryEntries`, then `BookTextHook::ForBookMenu`, the book menu's Win-1251 step), ends edit mode, and hands the text to the SWF. The SWF drops the editor and the old reading pages and lays the text out as the engine's `SetBookText` does, on the spread being edited: `iLeftPageNumber` is that spread's left page and `iPageSetIndex` puts it in the engine slots it is shown in (`iEditShownFrom`). A spread in slots 2–3 on the first spread leaves slots 0–1 before page 0, so `UpdatePages` skips page numbers below 0.
+
+---
+
+## Tearing out an entry
+
+The **delete key** (`[Diary] DeleteKey`, default F10, set in the MCM) while writing asks about the entry the caret is in (`EditCurrentEntry`): "Tear out the entry from {Date}? It will be gone from your diary and from your memory." (`EditDeletePrompt`, with `EntryDate`, so the date shows even with headings off), **Tear out** or **Keep it** (the cancel button). The caret outside any entry does nothing.
+
+**Tear out** (`TearOut`) acts at once:
+
+- The SWF removes the entry's segment, heading and text (`EditRemoveEntry`); the caret goes to the end of the entry before. The editor's lists (`g_loaded`, `g_entries`) drop it, so the other entries keep their indexes in step with the SWF. Their unsaved changes stay in the editor.
+- The volume is re-rendered from the remaining entries, and the edit-again guard (`g_pending`) holds them until SkyrimNet is done.
+- `PublicDeleteDiaryEntry` deletes the entry and its memory, on a detached thread. Then a game-thread task runs `BookManager::ReconcileAfterDeletion`: a re-render from SkyrimNet and the `endTime` move (see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md)). On failure (refused while SkyrimNet's timeline check is pending, or an error) the player gets `EditDeleteFailed`, and the reconcile puts the entry back in the book.
+- Tearing out every entry leaves the title page; back to reading shows the "all entries removed" page.
 
 ---
 
@@ -129,7 +142,6 @@ The editor gets the text the reading view shows, as plain text: `EditableEntryTe
 
 - **Going back to reading without closing the book.** The only way out of edit mode is closing it.
 - **New entries.** Deliberately left for later (how to start one immersively).
-- **Deleting an entry** (an emptied body): needs the volume-boundary handling.
 - **SE, VR and the Convenient Reading variant** are untested. VR also needs a keyboard story.
 - **Cyrillic.** Reading needs Win-1251 because Scaleform's pagination mixes byte and character offsets; the editor gets UTF-8. Untested with Cyrillic text.
 - **Translations** of the five `[Messages] Edit…` strings: only English has them; other languages show the English defaults.

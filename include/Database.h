@@ -125,6 +125,11 @@ namespace SkyrimNetDiaries {
         // is pending), the entry is gone, the API is older than v11, or the call failed.
         static bool UpdateDiaryEntry(int entryId, const std::string& content, const std::string& tagsCSV);
 
+        // Any thread: delete an entry and its memory.  False when SkyrimNet refuses (its
+        // keep/clear timeline check is pending), the entry is gone, the API is older than v11,
+        // or the call failed.
+        static bool DeleteDiaryEntry(int entryId);
+
         // Get bio template name for an actor FormID
         static std::string GetBioTemplateName(uint32_t formId);
 

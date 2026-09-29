@@ -326,6 +326,10 @@ namespace SkyrimNetDiaries {
         return SanitizePlain(entry.content, !IsPlayerWritten(entry));
     }
 
+    std::string EntryDate(const DiaryEntry& entry) {
+        return FormatGameDate(entry.entry_date);
+    }
+
     std::string EntryHeading(const DiaryEntry& entry) {
         return SkyrimNetDiaries::Config::GetSingleton()->GetShowDateHeaders() ? FormatGameDate(entry.entry_date)
                                                                               : std::string();
