@@ -173,6 +173,14 @@ namespace SkyrimNetDiaries::PapyrusAPI {
         SkyrimNetDiaries::Config::GetSingleton()->Save();
     }
 
+    std::int32_t MCM_GetEditKey(RE::StaticFunctionTag*) {
+        return static_cast<std::int32_t>(SkyrimNetDiaries::Config::GetSingleton()->GetEditKey());
+    }
+    void MCM_SetEditKey(RE::StaticFunctionTag*, std::int32_t v) {
+        SkyrimNetDiaries::Config::GetSingleton()->SetEditKey(static_cast<int>(v));
+        SkyrimNetDiaries::Config::GetSingleton()->Save();
+    }
+
     RE::BSFixedString MCM_GetFontFace(RE::StaticFunctionTag*) {
         return SkyrimNetDiaries::Config::GetSingleton()->GetFontFace().c_str();
     }
@@ -211,6 +219,8 @@ namespace SkyrimNetDiaries::PapyrusAPI {
         a_vm->RegisterFunction("SetFontSizeSmall",    "SkyrimNetDiaries_MCM", MCM_SetFontSizeSmall);
         a_vm->RegisterFunction("GetShowDateHeaders",  "SkyrimNetDiaries_MCM", MCM_GetShowDateHeaders);
         a_vm->RegisterFunction("SetShowDateHeaders",  "SkyrimNetDiaries_MCM", MCM_SetShowDateHeaders);
+        a_vm->RegisterFunction("GetEditKey",          "SkyrimNetDiaries_MCM", MCM_GetEditKey);
+        a_vm->RegisterFunction("SetEditKey",          "SkyrimNetDiaries_MCM", MCM_SetEditKey);
         a_vm->RegisterFunction("GetFontFace",         "SkyrimNetDiaries_MCM", MCM_GetFontFace);
         a_vm->RegisterFunction("SetFontFace",         "SkyrimNetDiaries_MCM", MCM_SetFontFace);
 

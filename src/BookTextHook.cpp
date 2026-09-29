@@ -229,7 +229,7 @@ namespace
                             if (const auto text = books->GetBookTextSnapshot(bookId); !text.empty()) {
                                 SKSE::log::info("[BookTextHook] Opening diary 0x{:X} (textLen={})", bookId, text.size());
                                 // Win-1251 for Cyrillic: Scaleform's pagination needs one byte per character.
-                                a_out = (HasCyrillic(text) ? Utf8ToWin1251(text) : text).c_str();
+                                a_out = SkyrimNetDiaries::BookTextHook::ForBookMenu(text).c_str();
                                 return;
                             }
                         }
@@ -261,6 +261,11 @@ namespace
     };
 
 } // anonymous namespace
+
+std::string SkyrimNetDiaries::BookTextHook::ForBookMenu(const std::string& text)
+{
+    return HasCyrillic(text) ? Utf8ToWin1251(text) : text;
+}
 
 void SkyrimNetDiaries::BookTextHook::Install()
 {

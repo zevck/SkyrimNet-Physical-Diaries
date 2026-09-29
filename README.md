@@ -20,6 +20,9 @@ Stealing an NPC's diary has consequences. The NPC will be aware their diary is m
 ### Automatic Updates
 When an NPC writes a new entry, their physical diary updates to include it. If they fill the current volume, a new one is created automatically. This happens in the background without any player action needed.
 
+### Writing in Your Own Diary
+While reading your own diary, press **F3** (configurable in the MCM) to write in it, right on the page. Press it again to save and go back to reading. Only the entries' text can be changed; the dates stay. Closing the book while writing asks whether to save your changes. Your changes go back into SkyrimNet, so the diary entry and the memory made from it both change. NPCs' diaries can only be read: their entries are their memories.
+
 ## 📝 MCM Settings
 
 Found under **SkyrimNet Physical Diaries** in the Mod Configuration Menu.
@@ -28,6 +31,7 @@ Found under **SkyrimNet Physical Diaries** in the Mod Configuration Menu.
 - **Entries Per Volume** - How many diary entries fit in one book before a new volume begins (default: 10, range: 1–50)
 - **Font Sizes** - Separate sliders for title, date, body text, and small text in the diary books
 - **Book Font** - Switch font faces for readability
+- **Edit Your Diary Key** - Starts writing while you read your own diary, and saves when pressed again (default: F3). Pick a key that doesn't type a character.
 
 **Maintenance**
 - **Reset All Diaries** - Removes all physical diary books from NPCs and clears all tracking. Your SkyrimNet diary entries are untouched; books will regenerate automatically on next load.

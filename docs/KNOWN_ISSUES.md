@@ -20,7 +20,7 @@ Fixed on 2026-09-28 (2.0.0): Dynamic Persistent Forms is replaced by runtime for
 
 2. **The new book forms are not yet run in game on VR.** The engine behaviour they rely on (save, recreate, the created-reference builder, the book menu's `GetDescription` call) was checked in the VR binary, and everything was run on AE. To do on VR: create a book, restart and load, drop a book and reload, hover the item card, open a book, Reset and reload. See [BOOK_FORMS.md](BOOK_FORMS.md#the-engine-behaviour-this-rests-on).
 
-5. **Diary editing is a dev harness** (branch `player-writing`): started by F3, with diagnostic keys and logging, untested on SE, VR and the Convenient Reading variant, no new entries, and an emptied entry isn't deleted. See [EDITING.md](EDITING.md#not-done-yet).
+5. **Diary editing is unfinished** (branch `player-writing`): diagnostic keys and logging still in, untested on SE, VR and the Convenient Reading variant, no new entries, and an emptied entry isn't deleted. See [EDITING.md](EDITING.md#not-done-yet).
 6. **A volume isn't re-rendered when an entry's text changes outside SNPD.** `RefreshVolumeOnOpen` re-renders only when the entry count changes, so an edit made in SkyrimNet's dashboard (or by another mod) shows only after the count changes or an MCM Regenerate. SNPD's own editor re-renders after saving. SkyrimNet API v11 gives entries an `updated_at` to compare against.
 
 ## Waiting on a SkyrimNet API

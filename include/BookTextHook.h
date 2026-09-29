@@ -25,4 +25,8 @@
 namespace SkyrimNetDiaries::BookTextHook
 {
     void Install();
+
+    // A book text as the book menu gets it: Win-1251 when it contains Cyrillic (Scaleform's
+    // pagination needs one byte per character), else unchanged.
+    std::string ForBookMenu(const std::string& text);
 } // namespace SkyrimNetDiaries::BookTextHook

@@ -24,6 +24,8 @@ int  Function GetFontSizeContent()               global native
      Function SetFontSizeContent(int value)      global native
 int  Function GetFontSizeSmall()                 global native
      Function SetFontSizeSmall(int value)        global native
+int  Function GetEditKey()                       global native
+     Function SetEditKey(int value)              global native
 string Function GetFontFace()                    global native
        Function SetFontFace(string value)        global native
 
@@ -38,6 +40,7 @@ int oidFontSizeDate      = -1
 int oidFontSizeContent   = -1
 int oidFontSizeSmall     = -1
 int oidFontFace          = -1
+int oidEditKey           = -1
 int oidResetAll          = -1
 
 ; Font presets
@@ -132,6 +135,7 @@ event OnPageReset(string page)
     oidFontSizeContent  = -1
     oidFontSizeSmall    = -1
     oidFontFace         = -1
+    oidEditKey          = -1
     oidResetAll         = -1
 
     if page == Pages[0]
@@ -153,6 +157,9 @@ function RenderSettingsPage()
     oidFontSizeDate    = AddSliderOption("$SNPD_DateFontSize",    GetFontSizeDate(),    "{0}")
     oidFontSizeContent = AddSliderOption("$SNPD_ContentFontSize", GetFontSizeContent(), "{0}")
     oidFontSizeSmall   = AddSliderOption("$SNPD_SmallFontSize",   GetFontSizeSmall(),   "{0}")
+
+    AddHeaderOption("$SNPD_HeaderWriting")
+    oidEditKey = AddKeyMapOption("$SNPD_EditKey", GetEditKey())
 endfunction
 
 function RenderMaintenancePage()
@@ -275,6 +282,19 @@ event OnOptionSliderAccept(int oid, float value)
 endevent
 
 ; ============================================================================
+; Key map (edit key)
+; ============================================================================
+
+event OnOptionKeyMapChange(int oid, int keyCode, string conflictControl, string conflictName)
+    ; The key only acts while the player reads their own diary, where game controls
+    ; don't apply, so a conflict with one doesn't matter.
+    if oid == oidEditKey && keyCode > 0
+        SetEditKey(keyCode)
+        SetKeyMapOptionValue(oid, keyCode)
+    endif
+endevent
+
+; ============================================================================
 ; Highlight / tooltip
 ; ============================================================================
 
@@ -295,6 +315,8 @@ event OnOptionHighlight(int oid)
         SetInfoText("$SNPD_TipContentFontSize")
     elseif oid == oidFontSizeSmall
         SetInfoText("$SNPD_TipSmallFontSize")
+    elseif oid == oidEditKey
+        SetInfoText("$SNPD_TipEditKey")
     elseif oid == oidResetAll
         SetInfoText("$SNPD_TipResetAll")
     endif
@@ -330,5 +352,8 @@ event OnOptionDefault(int oid)
     elseif oid == oidFontSizeSmall
         SetFontSizeSmall(12)
         SetSliderOptionValue(oid, 12.0, "{0}")
+    elseif oid == oidEditKey
+        SetEditKey(61)
+        SetKeyMapOptionValue(oid, 61)
     endif
 endevent

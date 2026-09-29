@@ -43,6 +43,8 @@ class BookMenu extends MovieClip
    var sTurnLog;         // DIAGNOSTIC: engine page turns in edit mode (delta, and whether it turned)
    var aSegs;            // the text as segments: {locked, body, editable} lengths, in order (see EditBuildContent)
    var oEditContent;     // what the plugin sent (SetEditContent) for the next edit mode, or undefined: blank page
+   var oContentFmt;      // entry text's format (config font, content size)
+   var oBreakFmt;        // blank lines' format, as reading has them (see EditBuildContent)
    var bTextReceived;    // the game has sent this book's text (SetBookText): note/book is known
    var bEditPending;     // edit mode was requested before that: enter it when the text arrives
 
@@ -122,6 +124,10 @@ class BookMenu extends MovieClip
 
    function EnterEditMode()
    {
+      // The page being read (at the book's opening: page 0). A book's spread is in engine
+      // slots 0-1 or 2-3 (see iEditShownFrom); editing starts on the same page and slots.
+      var readPage = this.iLeftPageNumber;
+      var readShownFrom = this.bNote ? 0 : this.iLeftPageNumber - this.iPageSetIndex;
       // Hide ALL existing display pages
       var i = 0;
       while(i < this.BookPages.length)
@@ -161,7 +167,8 @@ class BookMenu extends MovieClip
       var fmt = new TextFormat();
       fmt.font = "$HandwrittenFont";
       fmt.size = this.bNote ? BookMenu.FONT_SIZE_N : BookMenu.FONT_SIZE_B;
-      fmt.color = 0x1B1410;
+      // The page's own ink, as when reading (vanilla black; the Convenient Reading variant's own).
+      fmt.color = this.RefTextFieldTextFormat.color == undefined ? 0 : this.RefTextFieldTextFormat.color;
       fmt.letterSpacing = 0;
       fmt.kerning = true;
       this.EditField.setNewTextFormat(fmt);
@@ -195,6 +202,11 @@ class BookMenu extends MovieClip
       var start = this.EditSnap(0, 1);
       Selection.setSelection(start, start);
       this.EditLayout();
+      if(readPage > 0)
+      {
+         this.iEditShownFrom = readShownFrom;
+         this.EditGoToPage(readPage);
+      }
    }
 
    // ---- Content: locked text and editable bodies ----
@@ -212,9 +224,11 @@ class BookMenu extends MovieClip
       return str.split("\r\n").join("\r").split("\n").join("\r");
    }
 
-   // Fill EditField and aSegs. Every segment after the first starts with a locked "\r" and a
-   // new page (entries each have their own page, as when reading). Without content: one
-   // editable segment, the blank page.
+   // Fill EditField and aSegs with FormatDiaryEntries' layout as the book menu lays it out, so
+   // each page matches the reading view line for line. Every segment after the first starts
+   // with a locked "\r" and a new page, the "[pagebreak]" line's end. Line breaks are where
+   // reading differs from plain text: see FormatBreaks. Without content: one editable
+   // segment, the blank page.
    function EditBuildContent(baseFmt)
    {
       var c = this.oEditContent;
@@ -227,13 +241,14 @@ class BookMenu extends MovieClip
       var text = "";
       var styles = [];   // {start, end, size, align}
       var segs = [];
-      // Blank first page, then the title page (FormatDiaryEntries' layout).
+      // Blank first page, then the title page: seven blank lines, the title, two blank
+      // lines, the date range.
       segs.push({locked:0, body:0, editable:false});
-      var title = "\r\r\r\r\r\r\r";
+      var title = "\r\r\r\r\r\r\r\r";
       var tStart = title.length;
       title += BookMenu.FieldText(c.title);
       styles.push({start:tStart, end:title.length, size:c.titleSize, align:"center"});
-      title += "\r\r";
+      title += "\r\r\r";
       var dStart = title.length;
       title += BookMenu.FieldText(c.dates);
       styles.push({start:dStart, end:title.length, size:c.smallSize, align:"center"});
@@ -245,10 +260,11 @@ class BookMenu extends MovieClip
          var parts = c.entries[i].split(String.fromCharCode(31));
          var heading = BookMenu.FieldText(parts[0]);
          var body = BookMenu.FieldText(parts[1] == undefined ? "" : parts[1]);
-         var locked = "\r";
+         // An entry's page: a blank line, then the heading and a blank line (if headings are on).
+         var locked = "\r\r";
          if(heading.length)
          {
-            styles.push({start:text.length + 1, end:text.length + 1 + heading.length, size:c.dateSize, align:"left"});
+            styles.push({start:text.length + 2, end:text.length + 2 + heading.length, size:c.dateSize, align:"left"});
             locked += heading + "\r\r";
          }
          segs.push({locked:locked.length, body:body.length, editable:true});
@@ -274,6 +290,62 @@ class BookMenu extends MovieClip
          i++;
       }
       this.aSegs = segs;
+      this.oContentFmt = baseFmt;
+      // The page field's own font and the book text's outer size: what reading gives the line
+      // breaks outside SNPD's font tags (the page's default font, in BookMenu's size wrapper).
+      this.oBreakFmt = new TextFormat();
+      this.oBreakFmt.font = this.RefTextFieldTextFormat.font;
+      this.oBreakFmt.size = this.bNote ? BookMenu.FONT_SIZE_N : BookMenu.FONT_SIZE_B;
+      var k = 0;
+      while(k < segs.length)
+      {
+         var start = this.SegStart(k);
+         var j = start;
+         while(j < start + segs[k].locked)
+         {
+            if(text.charAt(j) == "\r")
+            {
+               this.EditField.setTextFormat(j, j + 1, this.oBreakFmt);
+            }
+            j++;
+         }
+         if(segs[k].editable)
+         {
+            this.FormatBreaks(k);
+         }
+         k++;
+      }
+   }
+
+   // Body k's formats as FormatDiaryEntries gives them: every paragraph (split on "\r\r") at the
+   // content size, and each "\r\r" between paragraphs outside the font tags, in the page's font
+   // and outer size, which sets a blank line's height. A single line break stays in its
+   // paragraph. Re-run after every edit to the body.
+   function FormatBreaks(k)
+   {
+      if(this.oBreakFmt == undefined)
+      {
+         return undefined;
+      }
+      var start = this.BodyStart(k);
+      var end = this.BodyEnd(k);
+      if(end <= start)
+      {
+         return undefined;
+      }
+      this.EditField.setTextFormat(start, end, this.oContentFmt);
+      var text = this.EditField.text;
+      var pos = start;
+      while(true)
+      {
+         var found = text.indexOf("\r\r", pos);
+         if(found < 0 || found + 2 > end)
+         {
+            break;
+         }
+         this.EditField.setTextFormat(found, found + 2, this.oBreakFmt);
+         pos = found + 2;
+      }
    }
 
    function SegStart(k)
@@ -344,6 +416,31 @@ class BookMenu extends MovieClip
          return before >= 0 ? before : after;
       }
       return after >= 0 ? after : before;
+   }
+
+   // Leave edit mode and read again, on the spread being edited, with the book's text as
+   // it is now (the plugin renders it from the saved entries). Lays the text out as the
+   // engine's SetBookText does, keeping the engine's page slots where they are.
+   function ReturnToReading(text)
+   {
+      var page = this.iEditPage;
+      var left = this.bNote ? page : page - page % 2;
+      var setIndex = this.bNote ? page : left - this.iEditShownFrom;
+      this.ExitEditMode();
+      if(this.iPaginationIndex != -1)
+      {
+         clearInterval(this.iPaginationIndex);
+         this.iPaginationIndex = -1;
+      }
+      while(this.BookPages.length)
+      {
+         this.BookPages.pop().removeMovieClip();
+      }
+      this.PageInfoA = new Array();
+      this.SetBookText(text, this.bNote);
+      this.iLeftPageNumber = left;
+      this.iPageSetIndex = setIndex;
+      this.UpdatePages();
    }
 
    // Each body's text, in segment order, joined by \x1E (line breaks as \n). Blank page: one body.
@@ -547,6 +644,7 @@ class BookMenu extends MovieClip
       this.EditField.replaceText(pos, pos, ch);
       this.EditField.setTextFormat(pos, pos + ch.length, this.EditField.getNewTextFormat());
       this.aSegs[k].body += ch.length;
+      this.FormatBreaks(k);
       this.EditSetCaret(pos + ch.length);
       this.EditLayout();
    }
@@ -564,6 +662,7 @@ class BookMenu extends MovieClip
       {
          this.EditField.replaceText(pos - 1, pos, "");
          this.aSegs[k].body -= 1;
+         this.FormatBreaks(k);
          this.EditSetCaret(pos - 1);
       }
       this.EditLayout();
@@ -581,6 +680,7 @@ class BookMenu extends MovieClip
       {
          this.EditField.replaceText(pos, pos + 1, "");
          this.aSegs[k].body -= 1;
+         this.FormatBreaks(k);
          this.EditSetCaret(pos);
       }
       this.EditLayout();
@@ -747,6 +847,30 @@ class BookMenu extends MovieClip
       return label + "{x=" + tf._x + " y=" + tf._y + " w=" + tf._width + " h=" + tf._height + " vis=" + tf._visible + " a=" + tf._alpha + " len=" + tf.text.length + " html=" + tf.htmlText.length + " tw=" + tf.textWidth + " th=" + tf.textHeight + " scroll=" + tf.scroll + "/" + tf.maxscroll + " bottom=" + tf.bottomScroll + " lines=" + tf.numLines + " type=" + tf.type + " embed=" + tf.embedFonts + " color=" + tf.textColor.toString(16) + " wrap=" + tf.wordWrap + " multi=" + tf.multiline + " auto=" + tf.autoSize + " fmt=" + fmt.font + "/" + fmt.size + "/" + (fmt.color == undefined ? "?" : fmt.color.toString(16)) + " newfmt=" + nfmt.font + "/" + nfmt.size + " text='" + tf.text.substring(0, 40) + "'}";
    }
 
+   // DIAGNOSTIC: a field's paragraph format and its first lines' geometry, to compare the
+   // reading pages with the editor.
+   static function DescribeLayout(tf)
+   {
+      if(tf == undefined)
+      {
+         return "layout=undefined";
+      }
+      var f = tf.getTextFormat(0);
+      var out = "layout{fmt0=" + f.font + "/" + f.size + " align=" + f.align + " lm=" + f.leftMargin + " rm=" + f.rightMargin + " indent=" + f.indent + " lead=" + f.leading + " block=" + f.blockIndent + " kern=" + f.kerning + " ls=" + f.letterSpacing + " lines:";
+      var i = 0;
+      var y = 0;
+      while(i < tf.numLines && i < 6)
+      {
+         var m = tf.getLineMetrics(i);
+         var off = tf.getLineOffset(i);
+         var lf = tf.getTextFormat(off < tf.length ? off : 0);
+         out += " [" + i + " y=" + y + " x=" + m.x + " w=" + Math.round(m.width) + " h=" + m.height + " asc=" + m.ascent + " desc=" + m.descent + " lead=" + m.leading + " size=" + lf.size + " '" + tf.text.substr(off, 12) + "']";
+         y += m.height;
+         i++;
+      }
+      return out + "}";
+   }
+
    static function DescribeSegs(segs)
    {
       if(segs == undefined)
@@ -795,11 +919,11 @@ class BookMenu extends MovieClip
       s += " | " + BookMenu.DescribeClip("menu", this);
       s += " | " + BookMenu.DescribeClip("ref", this.ReferenceText_mc) + " " + BookMenu.DescribeField("refField", this.ReferenceTextField);
       s += " | refRuns{" + BookMenu.DescribeRuns(this.ReferenceTextField) + "} refHtml{" + String(this.ReferenceTextField.htmlText).substr(0,2000) + "}";
-      s += " | " + BookMenu.DescribeClip("edit", this.EditClip) + " " + BookMenu.DescribeField("editField", this.EditField);
+      s += " | " + BookMenu.DescribeClip("edit", this.EditClip) + " " + BookMenu.DescribeField("editField", this.EditField) + " " + BookMenu.DescribeLayout(this.EditField);
       var i = 0;
       while(i < this.BookPages.length)
       {
-         s += " | page" + this.BookPages[i].pageNum + ":" + BookMenu.DescribeClip("", this.BookPages[i]);
+         s += " | page" + this.BookPages[i].pageNum + ":" + BookMenu.DescribeClip("", this.BookPages[i]) + " " + BookMenu.DescribeField("field", this.BookPages[i].PageTextField) + " " + BookMenu.DescribeLayout(this.BookPages[i].PageTextField);
          i++;
       }
       for(var name in this)
@@ -1035,7 +1159,7 @@ class BookMenu extends MovieClip
             }
             _loc2_ = _loc2_ + 1;
          }
-         if(!_loc3_ && (this.PageInfoA.length > this.iPageSetIndex + _loc4_ + 1 || this.iPaginationIndex == -1 && this.PageInfoA.length > this.iPageSetIndex + _loc4_))
+         if(!_loc3_ && this.iPageSetIndex + _loc4_ >= 0 && (this.PageInfoA.length > this.iPageSetIndex + _loc4_ + 1 || this.iPaginationIndex == -1 && this.PageInfoA.length > this.iPageSetIndex + _loc4_))
          {
             this.CreateDisplayPage(this.PageInfoA[this.iPageSetIndex + _loc4_].pageTop,this.PageInfoA[this.iPageSetIndex + _loc4_].pageTop + this.PageInfoA[this.iPageSetIndex + _loc4_].pageHeight,this.iPageSetIndex + _loc4_);
          }
