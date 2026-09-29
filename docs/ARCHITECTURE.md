@@ -23,6 +23,7 @@ The repo has the layout of an MO2 mod folder. Builds are deployed as a `Physical
 | `SKSE/Plugins/SkyrimNet/external/zevick.physical-diaries/` | SkyrimNet Beta 25+ plugin (external layer): `manifest.json` and `prompts/submodules/system_head/0500_diary_stolen.prompt`, which puts the stolen-diary line in the diary prompt. See [THEFT.md](THEFT.md#how-skyrimnet-learns-about-it). |
 | `SKSE/Plugins/SkyrimNetPhysicalDiaries/Locales/*.ini` | Per-language date and title formats. See [LOCALIZATION.md](LOCALIZATION.md). |
 | `Interface/Translations/SkyrimNet Physical Diaries_*.txt` | MCM translations (UTF-16 LE with BOM) |
+| `swf/<name>/` → `Interface/<name>.swf` | Flash UI: base movies as JPEXS XML (the default plus variants for other UI mods) and our ActionScript classes, built by `Build_Local.ps1` (the SWFs are gitignored). `swf/book/` is the book menu with SNPD's edit mode: vanilla, and a Convenient Reading variant. See [DEVELOPMENT.md](DEVELOPMENT.md#swf). |
 | `docs/` | These developer docs |
 | Root `*.md` other than `README.md` | Old design notes from single investigations. Most are gitignored. They predate the current code. |
 

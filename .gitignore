@@ -23,3 +23,6 @@ LETTERS_MOD_DESIGN.md
 Build_Config_Local.ps1
 *.pex
 *.dll
+
+# Built SWFs (sources in swf/)
+Interface/*.swf

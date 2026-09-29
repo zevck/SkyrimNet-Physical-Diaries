@@ -35,6 +35,7 @@ set(sources
     src/main.cpp
     src/ActorLookup.cpp
     src/BookCreation.cpp
+    src/BookEditor.cpp
     src/BookManager.cpp
     src/BookText.cpp
     src/BookTextHook.cpp

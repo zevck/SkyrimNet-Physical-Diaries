@@ -18,6 +18,7 @@
  */
 
 #include "BookCreation.h"
+#include "BookEditor.h"
 #include "BookManager.h"
 #include "BookTextHook.h"
 #include "Config.h"
@@ -129,6 +130,9 @@ namespace {
 
                 // Needs the forms loaded: find SkyrimNet's keep/clear prompt text.
                 SkyrimNetDiaries::TimelineGate::OnDataLoaded();
+
+                // DEV HARNESS: F3 arms the in-book editor (swf/book edit mode).
+                SkyrimNetDiaries::BookEditor::Register();
 
                 // Now that GMSTs are loaded, read localized month/day names
                 SkyrimNetDiaries::Localization::GetSingleton()->ReadGMSTs();

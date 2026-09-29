@@ -5,7 +5,9 @@
 #      rebuilds the vendored CommonLib project (hundreds of files, minutes).
 #   2. Compiles Papyrus with Pyro using skyrimse.ppj - the same project the VS Code
 #      papyrus-lang "pyro: Compile Project" task uses. Pyro builds incrementally.
-#   3. Deploys to $defaultOutputPath and every $additionalOutputPaths entry
+#   3. Builds each swf\<name>\ (<name>.xml + scripts\) into Interface\<name>.swf with
+#      JPEXS ffdec-cli, when its sources changed (docs/DEVELOPMENT.md#swf).
+#   4. Deploys to $defaultOutputPath and every $additionalOutputPaths entry
 #      (Build_Config_Local.ps1): one MO2 mod folder per test instance
 #      (MO2 = AE, Nolvus = SE, FUS = VR). meta.ini is never touched, so each
 #      instance keeps its own MO2 metadata.
@@ -13,6 +15,7 @@
 #   .\Build_Local.ps1                 # build + Pyro + deploy to all instances
 #   .\Build_Local.ps1 -noDeploy       # build (+ Pyro) only
 #   .\Build_Local.ps1 -skipScripts    # skip Pyro
+#   .\Build_Local.ps1 -skipSwf        # skip the SWF build
 #   .\Build_Local.ps1 -fresh          # cmake --fresh reconfigure first
 #
 # Every terminal outcome prints a timestamped PASS/FAIL banner and writes the same
@@ -29,6 +32,7 @@ param(
     [int]$threads,
     [switch]$noDeploy,
     [switch]$skipScripts,
+    [switch]$skipSwf,
     [switch]$fresh
 )
 $ErrorActionPreference = "Stop"
@@ -103,11 +107,15 @@ trap {
 #   $additionalOutputPaths = @(...) further MO2 mod folders (other instances)
 #   $ckPath                = Creation Kit install (Pyro's --game-path)
 #   $pyroPath              = optional; defaults to the VS Code papyrus-lang extension's pyro.exe
+#   $ffdecPath             = JPEXS ffdec-cli.exe (the SWF build)
+#   $swfVariant            = optional; deploy this SWF variant instead (e.g. "convenient-reading")
 #   $defaultThreads        = build parallelism
 $defaultOutputPath     = ""
 $additionalOutputPaths = @()
 $ckPath                = ""
 $pyroPath              = ""
+$ffdecPath             = ""
+$swfVariant            = ""
 $defaultThreads        = 16
 if (Test-Path .\Build_Config_Local.ps1) { . .\Build_Config_Local.ps1 }
 if ($env:SNPD_OUTPUT_PATH) { $defaultOutputPath = $env:SNPD_OUTPUT_PATH }
@@ -166,21 +174,65 @@ if (-not $skipScripts) {
     if ($missing) { Complete-Build -Status 'FAILURE' -Stage 'scripts' -Message ("No .pex for: " + (($missing | ForEach-Object BaseName) -join ', ')) }
 }
 
+# --- SWF (JPEXS ffdec-cli) -------------------------------------------------------
+# swf\<name>\<name>[.<variant>].xml is a base movie (JPEXS XML; its scripts are
+# compiled bytecode) and swf\<name>\scripts\ holds our ActionScript source, which
+# replaces the matching classes in every base.  <name>.xml builds the shipped
+# Interface\<name>.swf; each variant (a patch for another UI mod, a FOMOD option)
+# builds build\variants\<variant>\Interface\<name>.swf.  Built only when the base or
+# a script is newer than the output.
+if (-not $skipSwf -and (Test-Path swf)) {
+    foreach ($dir in Get-ChildItem swf -Directory) {
+        $scriptsNewest = Get-ChildItem (Join-Path $dir.FullName "scripts") -Recurse -File -ErrorAction SilentlyContinue |
+                         Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        foreach ($xml in Get-ChildItem $dir.FullName -Filter "$($dir.Name)*.xml" -File) {
+            $variant = $xml.BaseName.Substring($dir.Name.Length).TrimStart('.')
+            $output  = if ($variant) { "build\variants\$variant\Interface\$($dir.Name).swf" } else { "Interface\$($dir.Name).swf" }
+            $sourceTime = @($xml.LastWriteTime, $scriptsNewest.LastWriteTime) | Sort-Object -Descending | Select-Object -First 1
+            if ((Test-Path -LiteralPath $output) -and (Get-Item $output).LastWriteTime -ge $sourceTime) { continue }
+
+            if (-not $ffdecPath -or -not (Test-Path -LiteralPath $ffdecPath)) {
+                Complete-Build -Status 'FAILURE' -Stage 'swf' -Message "ffdec-cli.exe not found ('$ffdecPath'). Set `$ffdecPath in Build_Config_Local.ps1, or pass -skipSwf."
+            }
+            Write-Host "Building $output (JPEXS)..." -ForegroundColor Cyan
+            $baseSwf = Join-Path $PSScriptRoot "build\swf\$($xml.BaseName)_base.swf"
+            New-Item -ItemType Directory -Force -Path (Split-Path $baseSwf), (Split-Path (Join-Path $PSScriptRoot $output)) | Out-Null
+            $log = & $ffdecPath -xml2swf $xml.FullName $baseSwf 2>&1
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $baseSwf)) {
+                $log | ForEach-Object { Write-Host "  $_" }
+                Complete-Build -Status 'FAILURE' -Stage 'swf' -Code $LASTEXITCODE -Message "xml2swf failed for $($xml.Name)"
+            }
+            $log = & $ffdecPath -importScript $baseSwf (Join-Path $PSScriptRoot $output) $dir.FullName 2>&1
+            if ($LASTEXITCODE -ne 0 -or ($log | Where-Object { "$_" -match '(?i)error|exception' })) {
+                $log | ForEach-Object { Write-Host "  $_" }
+                Complete-Build -Status 'FAILURE' -Stage 'swf' -Code $LASTEXITCODE -Message "importScript failed for $($xml.Name)"
+            }
+        }
+    }
+}
+
 # --- Deploy ------------------------------------------------------------------
 function Deploy-To {
     param([string]$dest)
     Write-Host "Deploying to: $dest" -ForegroundColor Cyan
     New-Item -ItemType Directory -Force -Path (Join-Path $dest "SKSE\Plugins") | Out-Null
 
-    # The DLL is locked while that instance's game is running - report it for this
-    # instance and carry on with the others.
+    # The DLL is locked while that instance's game is running - report it, but still
+    # copy everything else: a SWF change can be tested without restarting.
+    $dllLocked = $false
     try {
         Copy-Item -LiteralPath $builtDll -Destination (Join-Path $dest "SKSE\Plugins\$target.dll") -Force
     } catch {
-        $script:deployFailed += "$dest (DLL locked - is that instance's game running?)"
-        return
+        $dllLocked = $true
     }
-    Copy-Item -LiteralPath $espName -Destination (Join-Path $dest $espName) -Force
+    try { Copy-Item -LiteralPath $espName -Destination (Join-Path $dest $espName) -Force } catch { $dllLocked = $true }
+    # The shipped SWFs, then the chosen variant's on top ($swfVariant).
+    $swfSources = @("Interface")
+    if ($swfVariant) { $swfSources += "build\variants\$swfVariant\Interface" }
+    foreach ($swfFile in $swfSources | ForEach-Object { Get-ChildItem "$_\*.swf" -ErrorAction SilentlyContinue }) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $dest "Interface") | Out-Null
+        Copy-Item -LiteralPath $swfFile.FullName -Destination (Join-Path $dest "Interface\$($swfFile.Name)") -Force
+    }
 
     foreach ($folder in $mirroredFolders) {
         robocopy $folder (Join-Path $dest $folder) /MIR /XF meta.ini /NFL /NDL /NJH /NJS /NP /R:2 /W:2 | Out-Null
@@ -189,6 +241,10 @@ function Deploy-To {
             $script:deployFailed += "$dest (robocopy $folder exit $LASTEXITCODE)"
             return
         }
+    }
+    if ($dllLocked) {
+        $script:deployFailed += "$dest (DLL/ESP locked - is that instance's game running? Other files were updated)"
+        return
     }
     $script:deployed += $dest
 }
