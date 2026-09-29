@@ -76,6 +76,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 | Inter-plugin API | `src/InterPluginAPI.cpp`, `include/InterPluginAPI.h` | Answers `SNPD_QUERY_*` SKSE messages. See [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md#inter-plugin-api-skse-messaging). |
 | Persistence | `src/DiaryDB.cpp`, `include/DiaryDB.h` | Per-save SQLite: volumes, actor templates, stolen volumes. See [DATABASE.md](DATABASE.md). |
 | SkyrimNet client | `src/Database.cpp`, `include/Database.h`, `include/SkyrimNetPublicAPI.h` | Loads SkyrimNet's exported functions, parses diary JSON, UUID ↔ FormID, names, bio template names |
+| Diary editing | `src/BookEditor.cpp`, `include/BookEditor.h`, `swf/book/scripts/__Packages/BookMenu.as` | The player editing their own diary in the book menu: loading the volume into the SWF's edit mode, keyboard input, saving changed entries to SkyrimNet, the `BookMenu::ProcessMessage` hook that turns a close with unsaved changes into a save prompt. Dev harness (F3) for now. See [EDITING.md](EDITING.md). |
 | Text injection | `src/BookTextHook.cpp`, `include/BookTextHook.h` | Hook on `TESDescription::GetDescription`: the book menu's text (no parent form: refresh, styled, Win-1251 for Cyrillic) and other readers' (SkyrimNet's book-read event, Immersive Reading: cached UTF-8). See [BOOK_TEXT.md](BOOK_TEXT.md). |
 | Theft | `src/DiaryTheftHandler.cpp`, `include/DiaryTheftHandler.h` | Container-change and menu sinks that record theft, returns and willing handovers; the `snpd_diary_stolen` decorator registration and post-load theft reconciliation. See [THEFT.md](THEFT.md). |
 | Papyrus natives | `src/PapyrusAPI.cpp`, `include/PapyrusAPI.h` | MCM getters and setters, the theft API, `UpdateDiaryFromEvent` |
@@ -133,7 +134,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 | Any thread | The text hook: it reads `BookManager`'s text snapshot and description index, which are under their own mutex, never `books_`. The book-open refresh runs inline only on the main thread while paused; otherwise it is queued as a task. |
 | The "Poll controls" job (during play) | Every `AddTask` body, then input polling, one after the other. Player activation happens here, so a book read from the world asks the text hook from this job. |
 | Whichever thread queues a message box | The `QueueMessage` hook (`TimelineGate`): it only compares text and wraps a callback |
-| Detached `std::thread` | Sleepers that wait, then queue a game-thread task: the post-load readiness poll, `DeferUntilSyncReady` |
+| Detached `std::thread` | Sleepers that wait, then queue a game-thread task: the post-load readiness poll, `DeferUntilSyncReady`. Also the editor's saves: SkyrimNet blocks while it re-embeds an edited entry's memory, then a game-thread task re-renders the volume. |
 
 Rules: anything touching forms, inventories or references must run on the game thread (`SKSE::GetTaskInterface()->AddTask`). "Game thread" means wherever SKSE runs task bodies: the main thread while paused, the "Poll controls" job during play (SKSE calls its task queue from the empty `BSTaskPool` hook target, AE `0x140A4DF00`, which only `Main::Update` and that job call). It is not a fixed OS thread, so never compare against a thread id to decide whether `books_` may be touched. Don't register a native with `callableFromTasklets = true`: it would then run on a VM thread and race `books_`. `DynamicForms`, the actor cache and `BookManager`'s text snapshot (with the description index) each have their own mutex. `books_` has none and is only touched from the game thread, so keep it that way.
 
@@ -143,7 +144,7 @@ Rules: anything touching forms, inventories or references must run on the game t
 
 | Dependency | Why |
 |---|---|
-| SkyrimNet | The source of all diary content. SNPD resolves its exports from SkyrimNet's DLL at runtime (`SkyrimNetPublicAPI.h`), checks `PublicGetVersion`, and does nothing if they are missing. |
+| SkyrimNet | The source of all diary content. SNPD resolves its exports from SkyrimNet's DLL at runtime (`SkyrimNetPublicAPI.h`), checks `PublicGetVersion`, and does nothing if they are missing. Saving an edited diary needs public API v11 (`PublicUpdateDiaryEntry`). |
 | powerofthree's Tweaks **or** Native EditorID Fix | Templates are found with `LookupByEditorID`, which needs one of these. Don't read a form's own ID with `GetFormEditorID()`: it returns "" for books without Native EditorID Fix. |
 | SkyUI | MCM |
 | Address Library (SE/AE) or VR Address Library | The `GetDescription` and `QueueMessage` hooks. See [DEVELOPMENT.md](DEVELOPMENT.md#engine-touchpoints). |
@@ -158,5 +159,6 @@ Rules: anything touching forms, inventories or references must run on the game t
 - [BOOK_TEXT.md](BOOK_TEXT.md): formatting, sanitizing, the hook
 - [THEFT.md](THEFT.md): theft, return and handover
 - [DATABASE.md](DATABASE.md): DiaryDB and co-save
+- [EDITING.md](EDITING.md): the player editing their diary
 - [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md): scripts, natives, inter-plugin API
 - [DEVELOPMENT.md](DEVELOPMENT.md): build, deploy, logging, engine touchpoints

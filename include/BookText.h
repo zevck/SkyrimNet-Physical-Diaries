@@ -36,4 +36,12 @@ namespace SkyrimNetDiaries {
     std::string FormatDiaryEntries(const std::vector<DiaryEntry>& entries,
                                    const std::string& actorName);
 
+    // Plain-text pieces of that layout for the book editor (no markup, not escaped).
+    // An entry's text as its page shows it (the same cleanup as FormatDiaryEntries).
+    std::string EditableEntryText(const DiaryEntry& entry);
+    // Its date heading; empty when [Diary] ShowDateHeaders is off.
+    std::string EntryHeading(const DiaryEntry& entry);
+    // The title page's date range ("" for no entries).
+    std::string TitlePageDates(const std::vector<DiaryEntry>& entries);
+
 } // namespace SkyrimNetDiaries

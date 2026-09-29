@@ -505,6 +505,38 @@ namespace SkyrimNetDiaries {
         return invalidActors;
     }
 
+    std::vector<DiaryEntry> BookManager::GetShownEntries(DiaryBookData& vol, bool* ok) {
+        if (ok) *ok = false;
+
+        // Resolve the actor's FormID once per session from the UUID.  The stored
+        // actorFormId is only a fallback, and only if SkyrimNet maps it back to this
+        // UUID: after a load-order change it can belong to someone else, whose entries
+        // the book would then show.
+        if (vol.cachedActorFormId == 0) {
+            RE::FormID live = Database::GetFormIDForUUID(vol.actorUuid);
+            if (live == 0 && vol.actorFormId != 0 &&
+                Database::GetUUIDFromFormID(vol.actorFormId) == vol.actorUuid) {
+                live = vol.actorFormId;
+            }
+            vol.cachedActorFormId = live;
+        }
+        if (vol.cachedActorFormId == 0) return {};
+
+        // For the active (latest) volume use 0.0 so entries written after the
+        // last update are visible even if UpdateDiaryForActorInternal hasn't run yet.
+        // For an earlier volume (a newer one exists), vol.endTime is the upper cutoff.
+        double queryEnd = 0.0;
+        {
+            auto* allVols = GetAllVolumesForActor(vol.actorUuid);
+            if (allVols && !allVols->empty() &&
+                allVols->back().volumeNumber != vol.volumeNumber) {
+                // A newer volume exists: stop at this one's end.
+                queryEnd = vol.endTime;
+            }
+        }
+        return GetLiveEntries(vol, vol.cachedActorFormId, queryEnd, ok);
+    }
+
     void BookManager::RefreshVolumeOnOpen(DiaryBookData* vol) {
         if (!vol) return;
 
@@ -513,40 +545,15 @@ namespace SkyrimNetDiaries {
             vol->bioTemplateName = Database::GetTemplateNameByUUID(vol->actorUuid);
         }
 
-        // Resolve the actor's FormID once per session from the UUID.  The stored
-        // actorFormId is only a fallback, and only if SkyrimNet maps it back to this
-        // UUID: after a load-order change it can belong to someone else, whose entries
-        // the book would then show.
-        if (vol->cachedActorFormId == 0) {
-            RE::FormID live = Database::GetFormIDForUUID(vol->actorUuid);
-            if (live == 0 && vol->actorFormId != 0 &&
-                Database::GetUUIDFromFormID(vol->actorFormId) == vol->actorUuid) {
-                live = vol->actorFormId;
-            }
-            vol->cachedActorFormId = live;
-        }
-        if (vol->cachedActorFormId == 0) return;
-
-        // For the active (latest) volume use 0.0 so entries written after the
-        // last update are visible even if UpdateDiaryForActorInternal hasn't run yet.
-        // For an earlier volume (a newer one exists), vol->endTime is the upper cutoff.
-        double queryEnd = 0.0;
-        {
-            auto* allVols = GetAllVolumesForActor(vol->actorUuid);
-            if (allVols && !allVols->empty() &&
-                allVols->back().volumeNumber != vol->volumeNumber) {
-                // A newer volume exists: stop at this one's end.
-                queryEnd = vol->endTime;
-            }
-        }
-
         bool queryOk = false;
-        auto liveEntries = GetLiveEntries(*vol, vol->cachedActorFormId, queryEnd, &queryOk);
+        auto liveEntries = GetShownEntries(*vol, &queryOk);
         if (!queryOk) {
-            // Couldn't read SkyrimNet: keep what the book shows rather than treat the
-            // failure as "every entry was deleted".
-            SKSE::log::warn("[SNPD] {} vol {}: couldn't read entries from SkyrimNet — showing the cached text",
-                            vol->actorName, vol->volumeNumber);
+            // Couldn't read SkyrimNet (or the actor isn't known yet): keep what the book
+            // shows rather than treat the failure as "every entry was deleted".
+            if (vol->cachedActorFormId != 0) {
+                SKSE::log::warn("[SNPD] {} vol {}: couldn't read entries from SkyrimNet — showing the cached text",
+                                vol->actorName, vol->volumeNumber);
+            }
             return;
         }
         int liveCount = static_cast<int>(liveEntries.size());

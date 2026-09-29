@@ -226,6 +226,11 @@ namespace SkyrimNetDiaries {
                     }
                 }
                 if (key == "TemplatesMissing") templatesMissingText_ = text;
+                else if (key == "EditSavePrompt") editSavePrompt_ = text;
+                else if (key == "EditSave") editSave_ = text;
+                else if (key == "EditDiscard") editDiscard_ = text;
+                else if (key == "EditKeepWriting") editKeepWriting_ = text;
+                else if (key == "EditSaveFailed") editSaveFailed_ = text;
             } else if (currentSection == "months") {
                 for (auto& [mk, idx] : monthKeys) {
                     if (key == mk) {
@@ -345,6 +350,11 @@ namespace SkyrimNetDiaries {
             " - SkyrimNet Physical Diaries.esp is enabled\n"
             " - powerofthree's Tweaks or Native EditorID Fix is installed for your game version\n\n"
             "See SkyrimNetPhysicalDiaries.log for details.";
+        editSavePrompt_ = "Keep the changes to your diary?";
+        editSave_ = "Save";
+        editDiscard_ = "Discard";
+        editKeepWriting_ = "Keep writing";
+        editSaveFailed_ = "Your diary couldn't be saved. See SkyrimNetPhysicalDiaries.log.";
 
         // Load locale file (may override formats, months, days)
         LoadLocaleFile(languageString_);

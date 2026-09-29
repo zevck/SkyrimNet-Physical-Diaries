@@ -107,6 +107,10 @@ namespace SkyrimNetDiaries {
         // SkyrimNet's entries for `vol`, oldest first, up to `endTime` (0 = open-ended).
         // The next volume's boundary data decides who owns entries on a date both share.
         // `ok` is false when the query failed (as opposed to returning no entries).
+        // Game thread: the entries the volume's book shows now (what RefreshVolumeOnOpen
+        // renders).  `ok` false: SkyrimNet couldn't be read or the actor isn't resolved.
+        std::vector<DiaryEntry> GetShownEntries(DiaryBookData& vol, bool* ok);
+
         std::vector<DiaryEntry> GetLiveEntries(const DiaryBookData& vol, RE::FormID actorFormId,
                                                double endTime, bool* ok);
 

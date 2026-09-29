@@ -70,6 +70,13 @@ std::string (*PublicGetEventPairCounts)(const char* formIdListCSV, int minShared
 /** Retrieve diary entries for an actor, optionally filtered by time range. */
 std::string (*PublicGetDiaryEntries)(uint32_t formId, int maxCount, double startTime, double endTime) = nullptr;
 
+// ---- v11+: Diary edits ----
+
+/** Replace a diary entry's text and, unless tagsCSV is null, its tags.  Rebuilds the entry's
+ *  memory (blocks for the embedding: not on the game thread).  False when refused (while
+ *  SkyrimNet's keep/clear timeline check is pending), the entry is gone, or it failed. */
+bool (*PublicUpdateDiaryEntry)(int entryId, const char* content, const char* tagsCSV) = nullptr;
+
 // ---- v5+: Decorator registration ----
 
 /** Register a native decorator for prompt templates ({{ name(actor_uuid) }}).  The callback
@@ -157,6 +164,12 @@ inline bool FindFunctions() {
             if (version >= 5) {
                 PublicRegisterDecorator = reinterpret_cast<bool(*)(const char*, const char*,
                     std::function<std::string(RE::Actor*)>)>(GetProcAddress(hDLL, "PublicRegisterDecorator"));
+            }
+
+            // v11+ functions
+            if (version >= 11) {
+                PublicUpdateDiaryEntry = reinterpret_cast<bool(*)(int, const char*, const char*)>(
+                    GetProcAddress(hDLL, "PublicUpdateDiaryEntry"));
             }
         }
         return true;

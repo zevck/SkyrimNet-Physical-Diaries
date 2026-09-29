@@ -41,6 +41,8 @@ class BookMenu extends MovieClip
    var iShowCalls;       // DIAGNOSTIC: ShowPageAtOffset calls in edit mode
    var iLastShowOffset;  // DIAGNOSTIC
    var sTurnLog;         // DIAGNOSTIC: engine page turns in edit mode (delta, and whether it turned)
+   var aSegs;            // the text as segments: {locked, body, editable} lengths, in order (see EditBuildContent)
+   var oEditContent;     // what the plugin sent (SetEditContent) for the next edit mode, or undefined: blank page
    var bTextReceived;    // the game has sent this book's text (SetBookText): note/book is known
    var bEditPending;     // edit mode was requested before that: enter it when the text arrives
 
@@ -93,7 +95,6 @@ class BookMenu extends MovieClip
 
       // New edit mode callbacks
       gfx.io.GameDelegate.addCallBack("SetEditMode",this,"SetEditMode");
-      gfx.io.GameDelegate.addCallBack("GetLetterText",this,"onGetLetterText");
    }
 
    // ================================================================
@@ -189,9 +190,181 @@ class BookMenu extends MovieClip
       this.iEditShownFrom = 0;
       this.iShowCalls = 0;
       this.sTurnLog = "";
+      this.EditBuildContent(fmt);
       Selection.setFocus(this.EditField);
-      Selection.setSelection(0, 0);
+      var start = this.EditSnap(0, 1);
+      Selection.setSelection(start, start);
       this.EditLayout();
+   }
+
+   // ---- Content: locked text and editable bodies ----
+
+   // From the plugin, before SetEditMode: a diary volume laid out as the book shows it. Title
+   // and dates go on the title page; entries is "heading\x1Fbody" per entry, joined by \x1E.
+   // Headings are locked; each body is editable (entry i of EditGetBodies).
+   function SetEditContent(font, titleSize, smallSize, dateSize, contentSize, title, dates, entries)
+   {
+      this.oEditContent = {font:font, titleSize:titleSize, smallSize:smallSize, dateSize:dateSize, contentSize:contentSize, title:title, dates:dates, entries:entries.length ? entries.split(String.fromCharCode(30)) : []};
+   }
+
+   static function FieldText(str)
+   {
+      return str.split("\r\n").join("\r").split("\n").join("\r");
+   }
+
+   // Fill EditField and aSegs. Every segment after the first starts with a locked "\r" and a
+   // new page (entries each have their own page, as when reading). Without content: one
+   // editable segment, the blank page.
+   function EditBuildContent(baseFmt)
+   {
+      var c = this.oEditContent;
+      if(c == undefined)
+      {
+         this.aSegs = [{locked:0, body:0, editable:true}];
+         this.EditField.text = "";
+         return undefined;
+      }
+      var text = "";
+      var styles = [];   // {start, end, size, align}
+      var segs = [];
+      // Blank first page, then the title page (FormatDiaryEntries' layout).
+      segs.push({locked:0, body:0, editable:false});
+      var title = "\r\r\r\r\r\r\r";
+      var tStart = title.length;
+      title += BookMenu.FieldText(c.title);
+      styles.push({start:tStart, end:title.length, size:c.titleSize, align:"center"});
+      title += "\r\r";
+      var dStart = title.length;
+      title += BookMenu.FieldText(c.dates);
+      styles.push({start:dStart, end:title.length, size:c.smallSize, align:"center"});
+      segs.push({locked:title.length, body:0, editable:false});
+      text += title;
+      var i = 0;
+      while(i < c.entries.length)
+      {
+         var parts = c.entries[i].split(String.fromCharCode(31));
+         var heading = BookMenu.FieldText(parts[0]);
+         var body = BookMenu.FieldText(parts[1] == undefined ? "" : parts[1]);
+         var locked = "\r";
+         if(heading.length)
+         {
+            styles.push({start:text.length + 1, end:text.length + 1 + heading.length, size:c.dateSize, align:"left"});
+            locked += heading + "\r\r";
+         }
+         segs.push({locked:locked.length, body:body.length, editable:true});
+         text += locked + body;
+         i++;
+      }
+      this.EditField.text = text;
+      baseFmt.font = c.font;
+      baseFmt.size = c.contentSize;
+      baseFmt.align = "left";
+      this.EditField.setTextFormat(baseFmt);
+      this.EditField.setNewTextFormat(baseFmt);
+      i = 0;
+      while(i < styles.length)
+      {
+         var f = new TextFormat();
+         f.size = styles[i].size;
+         f.align = styles[i].align;
+         if(styles[i].end > styles[i].start)
+         {
+            this.EditField.setTextFormat(styles[i].start, styles[i].end, f);
+         }
+         i++;
+      }
+      this.aSegs = segs;
+   }
+
+   function SegStart(k)
+   {
+      var pos = 0;
+      var j = 0;
+      while(j < k)
+      {
+         pos += this.aSegs[j].locked + this.aSegs[j].body;
+         j++;
+      }
+      return pos;
+   }
+
+   function BodyStart(k)
+   {
+      return this.SegStart(k) + this.aSegs[k].locked;
+   }
+
+   function BodyEnd(k)
+   {
+      return this.BodyStart(k) + this.aSegs[k].body;
+   }
+
+   // The editable segment whose body contains pos (either end included), or -1.
+   function EditableSegAt(pos)
+   {
+      var k = 0;
+      while(k < this.aSegs.length)
+      {
+         if(this.aSegs[k].editable && pos >= this.BodyStart(k) && pos <= this.BodyEnd(k))
+         {
+            return k;
+         }
+         k++;
+      }
+      return -1;
+   }
+
+   // The nearest caret position in a body: pos itself if it is in one, else the nearest body
+   // end before it (dir < 0) or body start after it (dir > 0), else the other way, else -1.
+   function EditSnap(pos, dir)
+   {
+      if(this.EditableSegAt(pos) >= 0)
+      {
+         return pos;
+      }
+      var before = -1;
+      var after = -1;
+      var k = 0;
+      while(k < this.aSegs.length)
+      {
+         if(this.aSegs[k].editable)
+         {
+            if(this.BodyEnd(k) <= pos)
+            {
+               before = this.BodyEnd(k);
+            }
+            else if(after < 0 && this.BodyStart(k) >= pos)
+            {
+               after = this.BodyStart(k);
+            }
+         }
+         k++;
+      }
+      if(dir < 0)
+      {
+         return before >= 0 ? before : after;
+      }
+      return after >= 0 ? after : before;
+   }
+
+   // Each body's text, in segment order, joined by \x1E (line breaks as \n). Blank page: one body.
+   // Undefined once the editor is gone (PrepForClose): there is no text, not an empty one.
+   function EditGetBodies()
+   {
+      if(this.aSegs == undefined || this.EditField == undefined)
+      {
+         return undefined;
+      }
+      var out = [];
+      var k = 0;
+      while(k < this.aSegs.length)
+      {
+         if(this.aSegs[k].editable)
+         {
+            out.push(this.EditField.text.substring(this.BodyStart(k), this.BodyEnd(k)).split("\r").join("\n"));
+         }
+         k++;
+      }
+      return out.join(String.fromCharCode(30));
    }
 
    // ---- Pages ----
@@ -210,12 +383,24 @@ class BookMenu extends MovieClip
       var y = 2;   // Flash's text gutter: line 0 starts 2px down
       var caretLine = this.EditCaretLine();
       var caretPage = 0;
+      // Every segment after the first starts a page, on the line after its locked "\r".
+      var nextSeg = 1;
+      var nextSegLine = this.aSegs.length > 1 ? this.SegStart(1) + 1 : -1;
       var i = 0;
       while(i < tf.numLines)
       {
          var m = tf.getLineMetrics(i);
-         // Same rule as CalculatePagination: a line whose bottom passes the page starts a new page.
-         if(i > 0 && y + m.ascent + m.descent > tops[tops.length - 1] + this.iMaxPageHeight)
+         var off = tf.getLineOffset(i);
+         var forced = false;
+         while(nextSegLine >= 0 && nextSegLine <= off)
+         {
+            forced = forced || nextSegLine == off;
+            nextSeg++;
+            nextSegLine = nextSeg < this.aSegs.length ? this.SegStart(nextSeg) + 1 : -1;
+         }
+         // Same rule as CalculatePagination: a line whose bottom passes the page starts a new
+         // page; so does each segment's first line.
+         if(i > 0 && (forced || y + m.ascent + m.descent > tops[tops.length - 1] + this.iMaxPageHeight))
          {
             tops.push(y);
             firstLines.push(i);
@@ -295,10 +480,33 @@ class BookMenu extends MovieClip
       {
          pos = this.EditField.length;
       }
-      Selection.setFocus(this.EditField);
-      Selection.setSelection(pos, pos);
-      this.EditLayout();
+      pos = this.EditSnap(pos, 1);
+      var landed = pos < 0 ? -1 : this.PageOfPos(pos);
+      // A book's spread shows p and p + 1; a note one page.
+      if(landed == p || !this.bNote && landed == p + 1)
+      {
+         this.EditSetCaret(pos);
+         this.EditLayout();
+      }
+      else
+      {
+         // Nowhere to type on that page (the blank or title page): show it, keep the caret.
+         this.iEditPage = p;
+         this.ShowEditPage(p);
+      }
       return true;
+   }
+
+   function PageOfPos(pos)
+   {
+      var tf = this.EditField;
+      var line = pos >= tf.length ? tf.numLines - 1 : tf.getLineIndexOfChar(pos);
+      var p = 0;
+      while(p + 1 < this.aEditPageLines.length && this.aEditPageLines[p + 1] <= line)
+      {
+         p++;
+      }
+      return p;
    }
 
    // After the plugin forwards a click: the caret may have moved.
@@ -307,111 +515,126 @@ class BookMenu extends MovieClip
       this.EditLayout();
    }
 
+   function EditCaret()
+   {
+      var pos = Selection.getBeginIndex();
+      return pos < 0 ? this.EditField.length : pos;
+   }
+
+   function EditSetCaret(pos)
+   {
+      Selection.setFocus(this.EditField);
+      Selection.setSelection(pos, pos);
+   }
+
+   // Typing goes into the body at the caret; the caret is only ever in a body.
    function AppendEditChar(ch)
    {
-      if(this.EditField != undefined)
+      if(this.EditField == undefined)
       {
-         // Insert at cursor position
-         var pos = Selection.getBeginIndex();
-         if(pos < 0) pos = this.EditField.text.length;
-         this.EditField.replaceText(pos, pos, ch);
-         // Move cursor after inserted character
-         Selection.setFocus(this.EditField);
-         Selection.setSelection(pos + 1, pos + 1);
+         return undefined;
       }
+      if(ch == "\n")
+      {
+         ch = "\r";
+      }
+      var pos = this.EditSnap(this.EditCaret(), 1);
+      var k = this.EditableSegAt(pos);
+      if(k < 0)
+      {
+         return undefined;
+      }
+      this.EditField.replaceText(pos, pos, ch);
+      this.EditField.setTextFormat(pos, pos + ch.length, this.EditField.getNewTextFormat());
+      this.aSegs[k].body += ch.length;
+      this.EditSetCaret(pos + ch.length);
       this.EditLayout();
    }
 
+   // Stops at the start of the body: headings and the title page can't be deleted.
    function EditBackspace()
    {
-      if(this.EditField != undefined)
+      if(this.EditField == undefined)
       {
-         // Delete character before cursor position
-         var pos = Selection.getBeginIndex();
-         if(pos > 0)
-         {
-            this.EditField.replaceText(pos - 1, pos, "");
-            Selection.setFocus(this.EditField);
-            Selection.setSelection(pos - 1, pos - 1);
-         }
+         return undefined;
       }
-      this.EditLayout();
-   }
-
-   function EditMoveCursor(direction)
-   {
-      if(this.EditField != undefined)
+      var pos = this.EditCaret();
+      var k = this.EditableSegAt(pos);
+      if(k >= 0 && pos > this.BodyStart(k))
       {
-         var pos = Selection.getBeginIndex();
-         var len = this.EditField.text.length;
-         if(direction == "left" && pos > 0)
-         {
-            Selection.setFocus(this.EditField);
-            Selection.setSelection(pos - 1, pos - 1);
-         }
-         else if(direction == "right" && pos < len)
-         {
-            Selection.setFocus(this.EditField);
-            Selection.setSelection(pos + 1, pos + 1);
-         }
-         else if(direction == "home")
-         {
-            Selection.setFocus(this.EditField);
-            Selection.setSelection(0, 0);
-         }
-         else if(direction == "end")
-         {
-            Selection.setFocus(this.EditField);
-            Selection.setSelection(len, len);
-         }
-         else if(direction == "up")
-         {
-            // Move cursor up one line
-            var curLine = this.EditField.getLineIndexOfChar(pos);
-            if(curLine > 0)
-            {
-               var lineStart = this.EditField.getLineOffset(curLine);
-               var colOffset = pos - lineStart;
-               var prevLineStart = this.EditField.getLineOffset(curLine - 1);
-               var prevLineEnd = lineStart - 1;
-               var prevLineLen = prevLineEnd - prevLineStart;
-               var newPos = prevLineStart + Math.min(colOffset, prevLineLen);
-               Selection.setFocus(this.EditField);
-               Selection.setSelection(newPos, newPos);
-            }
-         }
-         else if(direction == "down")
-         {
-            // Move cursor down one line
-            var curLine2 = this.EditField.getLineIndexOfChar(pos);
-            if(curLine2 < this.EditField.numLines - 1)
-            {
-               var lineStart2 = this.EditField.getLineOffset(curLine2);
-               var colOffset2 = pos - lineStart2;
-               var nextLineStart = this.EditField.getLineOffset(curLine2 + 1);
-               var nextNextLineStart = this.EditField.getLineOffset(curLine2 + 2);
-               var nextLineLen = (nextNextLineStart >= 0 ? nextNextLineStart : len) - nextLineStart;
-               var newPos2 = nextLineStart + Math.min(colOffset2, nextLineLen);
-               Selection.setFocus(this.EditField);
-               Selection.setSelection(newPos2, newPos2);
-            }
-         }
+         this.EditField.replaceText(pos - 1, pos, "");
+         this.aSegs[k].body -= 1;
+         this.EditSetCaret(pos - 1);
       }
       this.EditLayout();
    }
 
    function EditDelete()
    {
-      if(this.EditField != undefined)
+      if(this.EditField == undefined)
       {
-         var pos = Selection.getBeginIndex();
-         if(pos >= 0 && pos < this.EditField.text.length)
+         return undefined;
+      }
+      var pos = this.EditCaret();
+      var k = this.EditableSegAt(pos);
+      if(k >= 0 && pos < this.BodyEnd(k))
+      {
+         this.EditField.replaceText(pos, pos + 1, "");
+         this.aSegs[k].body -= 1;
+         this.EditSetCaret(pos);
+      }
+      this.EditLayout();
+   }
+
+   // Moves like a text box, then out of any locked text in the direction of travel.
+   function EditMoveCursor(direction)
+   {
+      if(this.EditField == undefined)
+      {
+         return undefined;
+      }
+      var tf = this.EditField;
+      var pos = this.EditCaret();
+      var len = tf.length;
+      var target = pos;
+      var dir = 1;
+      if(direction == "left")
+      {
+         target = pos - 1;
+         dir = -1;
+      }
+      else if(direction == "right")
+      {
+         target = pos + 1;
+      }
+      else if(direction == "home")
+      {
+         target = 0;
+      }
+      else if(direction == "end")
+      {
+         target = len;
+         dir = -1;
+      }
+      else if(direction == "up" || direction == "down")
+      {
+         var line = pos >= len ? tf.numLines - 1 : tf.getLineIndexOfChar(pos);
+         var other = direction == "up" ? line - 1 : line + 1;
+         dir = direction == "up" ? -1 : 1;
+         if(other >= 0 && other < tf.numLines)
          {
-            this.EditField.replaceText(pos, pos + 1, "");
-            Selection.setFocus(this.EditField);
-            Selection.setSelection(pos, pos);
+            var col = pos - tf.getLineOffset(line);
+            var otherStart = tf.getLineOffset(other);
+            var otherEnd = other + 1 < tf.numLines ? tf.getLineOffset(other + 1) - 1 : len;
+            target = Math.min(otherStart + col, otherEnd);
          }
       }
+      if(target < 0 || target > len)
+      {
+         target = pos;
+      }
+      var snapped = this.EditSnap(target, dir);
+      this.EditSetCaret(snapped < 0 ? pos : snapped);
       this.EditLayout();
    }
 
@@ -431,11 +654,8 @@ class BookMenu extends MovieClip
       }
       this.bEditMode = false;
       this.iEditPage = 0;
-   }
-
-   function onGetLetterText()
-   {
-      skse.SendModEvent("SNPD_LetterText", this.EditField.text);
+      this.oEditContent = undefined;
+      this.aSegs = undefined;
    }
 
    // Override TurnPage to handle edit mode page flipping
@@ -527,6 +747,22 @@ class BookMenu extends MovieClip
       return label + "{x=" + tf._x + " y=" + tf._y + " w=" + tf._width + " h=" + tf._height + " vis=" + tf._visible + " a=" + tf._alpha + " len=" + tf.text.length + " html=" + tf.htmlText.length + " tw=" + tf.textWidth + " th=" + tf.textHeight + " scroll=" + tf.scroll + "/" + tf.maxscroll + " bottom=" + tf.bottomScroll + " lines=" + tf.numLines + " type=" + tf.type + " embed=" + tf.embedFonts + " color=" + tf.textColor.toString(16) + " wrap=" + tf.wordWrap + " multi=" + tf.multiline + " auto=" + tf.autoSize + " fmt=" + fmt.font + "/" + fmt.size + "/" + (fmt.color == undefined ? "?" : fmt.color.toString(16)) + " newfmt=" + nfmt.font + "/" + nfmt.size + " text='" + tf.text.substring(0, 40) + "'}";
    }
 
+   static function DescribeSegs(segs)
+   {
+      if(segs == undefined)
+      {
+         return "none";
+      }
+      var out = [];
+      var k = 0;
+      while(k < segs.length)
+      {
+         out.push((segs[k].editable ? "E" : "L") + segs[k].locked + "+" + segs[k].body);
+         k++;
+      }
+      return segs.length + "[" + out.join(",") + "]";
+   }
+
    static function DescribeRuns(tf)
    {
       if(tf == undefined || tf.length == 0)
@@ -553,7 +789,7 @@ class BookMenu extends MovieClip
    function DebugState()
    {
       var s = "note=" + this.bNote + " edit=" + this.bEditMode + " pending=" + this.bEditPending + " textIn=" + this.bTextReceived + " sizes=" + BookMenu.FONT_SIZE_B + "/" + BookMenu.FONT_SIZE_N + " editPage=" + this.iEditPage + " maxPageH=" + this.iMaxPageHeight + " left=" + this.iLeftPageNumber + " set=" + this.iPageSetIndex + " pageInfo=" + this.PageInfoA.length + " pagination=" + this.iPaginationIndex;
-      s += " | editPages=" + this.EditPageCount() + " tops=" + this.aEditPageTops.join(",") + " firstLines=" + this.aEditPageLines.join(",") + " shows=" + this.iShowCalls + " lastShow=" + this.iLastShowOffset + " shownFrom=" + this.iEditShownFrom + " editPage=" + this.iEditPage + " turns=" + this.sTurnLog + (this.EditField == undefined ? "" : " fieldY=" + this.EditField._y + " maskY=" + this.EditMask._y + " maskH=" + this.EditMask._height + " clipVis=" + this.EditClip._visible);
+      s += " | editPages=" + this.EditPageCount() + " tops=" + this.aEditPageTops.join(",") + " firstLines=" + this.aEditPageLines.join(",") + " shows=" + this.iShowCalls + " segs=" + BookMenu.DescribeSegs(this.aSegs) + " lastShow=" + this.iLastShowOffset + " shownFrom=" + this.iEditShownFrom + " editPage=" + this.iEditPage + " turns=" + this.sTurnLog + (this.EditField == undefined ? "" : " fieldY=" + this.EditField._y + " maskY=" + this.EditMask._y + " maskH=" + this.EditMask._height + " clipVis=" + this.EditClip._visible);
       s += " | stage{w=" + Stage.width + " h=" + Stage.height + " mode=" + Stage.scaleMode + " rect=" + Stage.visibleRect.x + "," + Stage.visibleRect.y + "," + Stage.visibleRect.width + "," + Stage.visibleRect.height + "}";
       s += " | focus=" + Selection.getFocus() + " caret=" + Selection.getBeginIndex();
       s += " | " + BookMenu.DescribeClip("menu", this);
@@ -581,7 +817,6 @@ class BookMenu extends MovieClip
    {
       if(this.bEditMode)
       {
-         this.onGetLetterText();
          this.ExitEditMode();
          return undefined;
       }

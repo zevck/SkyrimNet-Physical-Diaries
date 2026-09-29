@@ -31,12 +31,14 @@ The inter-plugin API splits the rendered text back apart on `"[pagebreak]\n\n"` 
 
 Applied to each entry's content:
 
-1. **Only when date headers are on** (SNPD adds its own, so the LLM's would be duplicates):
+1. **Only when date headers are on** (SNPD adds its own, so the LLM's would be duplicates), and **not for an entry the player wrote** (tag `snpd_player_written`, see [EDITING.md](EDITING.md#text)): a date the player starts their entry with is theirs.
    - a leading `#` heading line, and a leading line that is entirely `**bold**`;
    - a leading `9:28 AM`-style time line;
    - a leading date: Tamrielic day or month names (English plus the active locale), era markers (`4E `, `4Э `, `第四紀`), or ordinal-first forms (`17th of Last Seed`). A whole first line is removed. A date that starts a sentence is cut up to the first sentence end, but only if that is within 200 characters.
    - Single-character (CJK) day names are skipped to avoid false matches.
 2. **Always:** em and en dashes → `-`, curly quotes → straight, `…` → `...`, and Markdown `**`, `*`, `__` and leading `_` removed (the handwriting fonts have no bold or italic).
+
+The book editor gets the text after this cleanup but before the escaping below (`EditableEntryText`), so it edits what the page shows.
 
 **Last step: making the prose safe for the markup.** A literal `[pagebreak]` in an entry becomes `[page break]` (it would add a page and shift the entry numbering the inter-plugin API uses), and `&`, `<` and `>` are escaped (`&amp;` `&lt;` `&gt;`), because a `<` in prose ("<sigh>", "<3") would start a tag and swallow text. The NPC's name in the title is escaped the same way. The inter-plugin API turns the escapes back, so other mods get the prose as before.
 

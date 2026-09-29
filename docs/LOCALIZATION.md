@@ -30,6 +30,8 @@ The folder is located from **the DLL's own path** (`GetModuleHandleExA` on a fun
 | `[Format] VolumeSuffix` | Appended from volume 2 on (default `, v{n}`) | `{n}` number, `{cn}` Chinese numeral |
 | `[Format] EmptyVolumeText` | Page shown when all of a volume's entries were deleted | |
 | `[Messages] TemplatesMissing` | The startup warning shown when the template books are missing. One line; `\n` is a line break. The button uses the game's own `sOk` string. | |
+| `[Messages] EditSavePrompt`, `EditSave`, `EditDiscard`, `EditKeepWriting` | The book editor's prompt when the player closes their diary with unsaved changes, and its three buttons ([EDITING.md](EDITING.md#closing)). Only ENGLISH.ini has them so far; other languages get the English defaults from `Localization.cpp`. | |
+| `[Messages] EditSaveFailed` | Notification when SkyrimNet doesn't save an edit. Same fallback. | |
 | `[Months]`, `[Days]` | Optional name overrides, keyed by the English name | |
 
 Anything missing falls back to English.

@@ -72,7 +72,9 @@ namespace SkyrimNetDiaries {
             return text;
         }
 
-        std::string SanitizeBookText(const std::string& text) {
+        // An entry's text as the book shows it, before markup escaping.  `stripDates` false
+        // (the player wrote it) keeps a leading heading or date: it's theirs, not the LLM's.
+        std::string SanitizePlain(const std::string& text, bool stripDates) {
             std::string result = text;
 
                 // Strip leading date headers/prefixes that LLM sometimes includes.
@@ -82,7 +84,7 @@ namespace SkyrimNetDiaries {
                 // Only strip when ShowDateHeaders is enabled: we're supplying our own formatted headers
                 // so LLM-generated ones would duplicate. When ShowDateHeaders is disabled the user
                 // wants the LLM's dates to show through — don't strip them.
-                if (SkyrimNetDiaries::Config::GetSingleton()->GetShowDateHeaders())
+                if (stripDates && SkyrimNetDiaries::Config::GetSingleton()->GetShowDateHeaders())
                 {
                     // Step 1: Strip any leading markdown heading line unconditionally.
                     // A line starting with '#' is always AI formatting noise regardless of language.
@@ -270,7 +272,11 @@ namespace SkyrimNetDiaries {
                 result = std::move(out);
             }
 
-            return EscapeMarkup(NeutralizePageBreaks(std::move(result)));
+            return NeutralizePageBreaks(std::move(result));
+        }
+
+        std::string SanitizeBookText(const DiaryEntry& entry) {
+            return EscapeMarkup(SanitizePlain(entry.content, !IsPlayerWritten(entry)));
         }
 
         struct GameDate {
@@ -316,6 +322,22 @@ namespace SkyrimNetDiaries {
 
     } // namespace
 
+    std::string EditableEntryText(const DiaryEntry& entry) {
+        return SanitizePlain(entry.content, !IsPlayerWritten(entry));
+    }
+
+    std::string EntryHeading(const DiaryEntry& entry) {
+        return SkyrimNetDiaries::Config::GetSingleton()->GetShowDateHeaders() ? FormatGameDate(entry.entry_date)
+                                                                              : std::string();
+    }
+
+    std::string TitlePageDates(const std::vector<DiaryEntry>& entries) {
+        if (entries.empty()) return {};
+        std::string first = FormatGameDateShort(entries.front().entry_date);
+        std::string last = FormatGameDateShort(entries.back().entry_date);
+        return first == last ? first : first + " - " + last;
+    }
+
     std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& entries,
                                    const std::string& actorName) {
         std::string bookText;
@@ -343,15 +365,8 @@ namespace SkyrimNetDiaries {
                       + loc->GetEmptyVolumeText() + "</p></font>";
         } else {
             // Date range below title
-            std::string firstDate = FormatGameDateShort(entries.front().entry_date);
-            std::string lastDate = FormatGameDateShort(entries.back().entry_date);
-
             bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontSmall) + "'><p align='center'>";
-            if (firstDate == lastDate) {
-                bookText += firstDate;
-            } else {
-                bookText += firstDate + " - " + lastDate;
-            }
+            bookText += TitlePageDates(entries);
             bookText += "</p></font>\n\n";
 
             // Page break — entries start on the next page
@@ -372,7 +387,7 @@ namespace SkyrimNetDiaries {
                 }
 
                 // Entry content - wrap EACH paragraph in font tag since Skyrim resets after \n\n
-                std::string content = SanitizeBookText(entry.content);
+                std::string content = SanitizeBookText(entry);
 
                 // Split by double newlines (paragraph breaks) and wrap each
                 size_t pos = 0;

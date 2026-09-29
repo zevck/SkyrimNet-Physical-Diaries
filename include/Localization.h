@@ -63,6 +63,12 @@ namespace SkyrimNetDiaries {
 
         // Startup warning ([Messages] in the locale file).
         const std::string& GetTemplatesMissingText() const { return templatesMissingText_; }
+        // The book editor's prompt on closing with unsaved changes, and its buttons.
+        const std::string& GetEditSavePrompt() const { return editSavePrompt_; }
+        const std::string& GetEditSave() const { return editSave_; }
+        const std::string& GetEditDiscard() const { return editDiscard_; }
+        const std::string& GetEditKeepWriting() const { return editKeepWriting_; }
+        const std::string& GetEditSaveFailed() const { return editSaveFailed_; }
 
         // Detected language as uppercase string (e.g. "RUSSIAN")
         const std::string& GetLanguageString() const { return languageString_; }
@@ -99,6 +105,11 @@ namespace SkyrimNetDiaries {
         std::string volumeSuffixFmt_; // e.g. ", v{n}"
         std::string emptyVolumeText_;
         std::string templatesMissingText_;
+        std::string editSavePrompt_;
+        std::string editSave_;
+        std::string editDiscard_;
+        std::string editKeepWriting_;
+        std::string editSaveFailed_;
     };
 
 }  // namespace SkyrimNetDiaries

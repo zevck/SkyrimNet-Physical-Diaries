@@ -92,6 +92,10 @@ namespace SkyrimNetDiaries {
             for (const auto& item : jsonArray) {
                 DiaryEntry entry;
 
+                if (item.contains("id") && item["id"].is_number_integer()) {
+                    entry.id = item["id"].get<int>();
+                }
+
                 // Required fields
                 if (item.contains("actor_uuid") && item["actor_uuid"].is_number()) {
                     entry.actor_uuid = std::to_string(item["actor_uuid"].get<uint64_t>());
@@ -111,6 +115,12 @@ namespace SkyrimNetDiaries {
 
                 if (item.contains("creation_time") && item["creation_time"].is_number()) {
                     entry.creation_time = item["creation_time"].get<double>();
+                }
+
+                if (item.contains("tags") && item["tags"].is_array()) {
+                    for (const auto& tag : item["tags"]) {
+                        if (tag.is_string()) entry.tags.push_back(tag.get<std::string>());
+                    }
                 }
 
                 entries.push_back(entry);
@@ -236,6 +246,20 @@ namespace SkyrimNetDiaries {
         } catch (const std::exception& e) {
             SKSE::log::error("GetPlayerLastEventTime exception: {}", e.what());
             return 0.0;
+        }
+    }
+
+    bool Database::UpdateDiaryEntry(int entryId, const std::string& content, const std::string& tagsCSV) {
+        try {
+            if (!api_initialized_ && !InitializeAPI()) return false;
+            if (!PublicUpdateDiaryEntry) {
+                SKSE::log::warn("SkyrimNet has no PublicUpdateDiaryEntry (needs public API v11)");
+                return false;
+            }
+            return PublicUpdateDiaryEntry(entryId, content.c_str(), tagsCSV.c_str());
+        } catch (const std::exception& e) {
+            SKSE::log::error("PublicUpdateDiaryEntry({}) threw: {}", entryId, e.what());
+            return false;
         }
     }
 

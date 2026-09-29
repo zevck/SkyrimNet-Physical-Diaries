@@ -19,6 +19,12 @@
 
 #include "BookEditor.h"
 
+#include "BookManager.h"
+#include "BookText.h"
+#include "Config.h"
+#include "Database.h"
+#include "Localization.h"
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -28,6 +34,8 @@
 #include <Windows.h>
 #include <atomic>
 #include <chrono>
+#include <optional>
+#include <thread>
 
 namespace SkyrimNetDiaries::BookEditor {
 
@@ -67,7 +75,7 @@ namespace SkyrimNetDiaries::BookEditor {
                             ui && ui->GameIsPaused(), ok && result.IsString() ? result.GetString() : "DebugState failed");
         }
         int g_keysLogged = 0;  // input thread only
-        constexpr std::uint32_t kF4 = 0x3E;
+        constexpr std::uint32_t kF4 = 0x3E, kF5 = 0x3F, kS = 0x1F;
 
         void Invoke(const char* function, const char* argument = nullptr) {
             auto* movie = BookMovie();
@@ -84,12 +92,237 @@ namespace SkyrimNetDiaries::BookEditor {
             if (auto* controls = RE::ControlMap::GetSingleton()) controls->AllowTextInput(enabled);
         }
 
+        // The entries the editor was given, in page order: each one's SkyrimNet id and the text
+        // it started with (main thread only).  Saving compares against these.
+        struct LoadedEntry {
+            int id = 0;
+            std::string body;
+            std::vector<std::string> tags;
+        };
+        std::vector<LoadedEntry> g_loaded;
+        RE::FormID g_bookFormId = 0;           // the diary volume being edited (0: not a diary)
+        std::atomic<bool> g_prompting{ false };  // the save prompt is open: keys belong to it
+
+        enum class Content { Blank, Diary, Refused };
+
+        // "\r\n" and "\r" to "\n": what a body looks like after the SWF round trip (its field
+        // uses "\r"), so an untouched entry compares equal to what was loaded.
+        std::string NormalizeLineBreaks(const std::string& text) {
+            std::string out;
+            out.reserve(text.size());
+            for (std::size_t i = 0; i < text.size(); ++i) {
+                if (text[i] == '\r') {
+                    out += '\n';
+                    if (i + 1 < text.size() && text[i + 1] == '\n') ++i;
+                } else {
+                    out += text[i];
+                }
+            }
+            return out;
+        }
+
+        // The open book, if it's one of the player's diary volumes: its entries go to the SWF,
+        // laid out as the book shows them.  Another actor's diary can't be edited (its entries
+        // are that actor's memories).  Any other book gets the blank page (dev harness).
+        Content SendDiaryContent(RE::GFxMovieView* movie) {
+            g_loaded.clear();
+            g_bookFormId = 0;
+            auto* book = RE::BookMenu::GetTargetForm();
+            auto* manager = BookManager::GetSingleton();
+            auto* vol = book && manager ? manager->GetBookForFormID(book->GetFormID()) : nullptr;
+            if (!vol) return Content::Blank;
+
+            const std::string playerUuid = Database::GetUUIDFromFormID(0x14);
+            if (playerUuid.empty() || vol->actorUuid != playerUuid) {
+                SKSE::log::info("[BookEditor] {} vol {} isn't the player's diary: not editable", vol->actorName,
+                                vol->volumeNumber);
+                return Content::Refused;
+            }
+            bool ok = false;
+            const auto entries = manager->GetShownEntries(*vol, &ok);
+            if (!ok) {
+                SKSE::log::warn("[BookEditor] {} vol {}: couldn't read the entries from SkyrimNet", vol->actorName,
+                                vol->volumeNumber);
+                return Content::Refused;
+            }
+
+            // "heading\x1Fbody" per entry, joined by \x1E (BookMenu.as SetEditContent).
+            std::string packed;
+            std::string ids;
+            for (const auto& entry : entries) {
+                LoadedEntry loaded{ entry.id, NormalizeLineBreaks(EditableEntryText(entry)), entry.tags };
+                if (!packed.empty()) packed += '\x1E';
+                packed += EntryHeading(entry) + '\x1F' + loaded.body;
+                ids += std::format("{}{}", ids.empty() ? "" : ",", entry.id);
+                g_loaded.push_back(std::move(loaded));
+            }
+            auto* config = Config::GetSingleton();
+            const std::string font = config->GetFontFace();
+            const std::string title = Localization::GetSingleton()->FormatDiaryTitle(vol->actorName);
+            const std::string dates = TitlePageDates(entries);
+            RE::GFxValue args[8];
+            args[0].SetString(font.c_str());
+            args[1].SetNumber(config->GetFontSizeTitle());
+            args[2].SetNumber(config->GetFontSizeSmall());
+            args[3].SetNumber(config->GetFontSizeDate());
+            args[4].SetNumber(config->GetFontSizeContent());
+            args[5].SetString(title.c_str());
+            args[6].SetString(dates.c_str());
+            args[7].SetString(packed.c_str());
+            if (!movie->Invoke("_root.BookMenu_mc.SetEditContent", nullptr, args, 8)) {
+                SKSE::log::warn("[BookEditor] book.swf has no SetEditContent: it isn't SNPD's (check the load order)");
+                return Content::Refused;
+            }
+            g_bookFormId = vol->bookFormId;
+            SKSE::log::info("[BookEditor] {} vol {}: {} entries loaded for editing (ids {})", vol->actorName,
+                            vol->volumeNumber, entries.size(), ids);
+            return Content::Diary;
+        }
+
+        // Each entry's text as the editor has it now, in page order; nullopt if the SWF can't
+        // say or the count doesn't match what was loaded.
+        std::optional<std::vector<std::string>> ReadBodies() {
+            auto* movie = BookMovie();
+            RE::GFxValue result;
+            if (!movie || !movie->Invoke("_root.BookMenu_mc.EditGetBodies", &result, nullptr, 0) ||
+                !result.IsString()) {
+                SKSE::log::warn("[BookEditor] No text from the SWF");
+                return std::nullopt;
+            }
+            std::vector<std::string> bodies;
+            std::string_view all = result.GetString();
+            for (std::size_t start = 0;;) {
+                const auto end = all.find('\x1E', start);
+                bodies.emplace_back(all.substr(start, end == std::string_view::npos ? all.npos : end - start));
+                if (end == std::string_view::npos) break;
+                start = end + 1;
+            }
+            if (bodies.size() != g_loaded.size()) {
+                SKSE::log::warn("[BookEditor] {} texts from the SWF for {} loaded entries", bodies.size(),
+                                g_loaded.size());
+                return std::nullopt;
+            }
+            return bodies;
+        }
+
+        // DIAGNOSTIC (F5): what saving would do now, without writing anything.
+        void PreviewSave() {
+            const auto bodies = ReadBodies();
+            if (!bodies) return;
+            int changed = 0;
+            for (std::size_t i = 0; i < bodies->size(); ++i) {
+                const auto& body = (*bodies)[i];
+                if (body == g_loaded[i].body) continue;
+                ++changed;
+                SKSE::log::info("[BookEditor] save preview: entry {} (id {}) {}: {} -> {} chars | {}", i,
+                                g_loaded[i].id, body.empty() ? "emptied (left as is)" : "changed (update)",
+                                g_loaded[i].body.size(), body.size(), body.substr(0, 200));
+            }
+            SKSE::log::info("[BookEditor] save preview: {} of {} entries changed", changed, bodies->size());
+        }
+
+        // DIAGNOSTIC: where an entry's text first differs from what was loaded, with the
+        // bytes around it, to find anything the SWF round trip changes.
+        std::string Escaped(std::string_view text) {
+            std::string out;
+            for (const unsigned char c : text) {
+                if (c >= 32 && c < 127) out += static_cast<char>(c);
+                else out += std::format("\\x{:02X}", c);
+            }
+            return out;
+        }
+
+        void LogDifference(std::size_t index, const std::string& loaded, const std::string& now) {
+            std::size_t at = 0;
+            while (at < loaded.size() && at < now.size() && loaded[at] == now[at]) ++at;
+            const std::size_t from = at > 20 ? at - 20 : 0;
+            SKSE::log::info("[BookEditor] entry {} differs at byte {} ({} -> {} bytes): loaded '{}' | now '{}'", index,
+                            at, loaded.size(), now.size(), Escaped(std::string_view(loaded).substr(from, 40)),
+                            Escaped(std::string_view(now).substr(from, 40)));
+        }
+
+        bool HasChanges() {
+            if (g_bookFormId == 0) return false;
+            const auto bodies = ReadBodies();
+            if (!bodies) return false;
+            bool changed = false;
+            for (std::size_t i = 0; i < bodies->size(); ++i) {
+                if ((*bodies)[i] != g_loaded[i].body) {
+                    LogDifference(i, g_loaded[i].body, (*bodies)[i]);
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+
+        struct EntryUpdate {
+            int id = 0;
+            std::string text;
+            std::string tagsCSV;
+        };
+
+        // Writes the changed entries to SkyrimNet, then re-renders the volume.  Only entries
+        // whose text changed are written; each gets the player-written tag (keeping its other
+        // tags).  An emptied entry is left as it is: deleting one moves the volume boundaries,
+        // which isn't handled yet.
+        void Save() {
+            if (g_bookFormId == 0) return;
+            const auto bodies = ReadBodies();
+            if (!bodies) return;
+            std::vector<EntryUpdate> updates;
+            for (std::size_t i = 0; i < bodies->size(); ++i) {
+                auto& loaded = g_loaded[i];
+                const auto& body = (*bodies)[i];
+                if (body == loaded.body) continue;
+                if (body.empty()) {
+                    SKSE::log::info("[BookEditor] Entry {} emptied: not deleted (not supported yet), left as it was",
+                                    loaded.id);
+                    continue;
+                }
+                if (loaded.id == 0) {
+                    SKSE::log::warn("[BookEditor] Entry {} has no SkyrimNet id: can't save it", i);
+                    continue;
+                }
+                if (std::ranges::find(loaded.tags, kPlayerWrittenTag) == loaded.tags.end()) {
+                    loaded.tags.emplace_back(kPlayerWrittenTag);
+                }
+                std::string tags;
+                for (const auto& tag : loaded.tags) tags += (tags.empty() ? "" : ",") + tag;
+                updates.push_back({ loaded.id, body, std::move(tags) });
+                loaded.body = body;
+            }
+            if (updates.empty()) return;
+
+            // Off the game thread: SkyrimNet re-embeds each entry's memory.
+            std::thread([updates = std::move(updates), bookFormId = g_bookFormId]() {
+                std::size_t saved = 0;
+                for (const auto& update : updates) {
+                    if (Database::UpdateDiaryEntry(update.id, update.text, update.tagsCSV)) {
+                        ++saved;
+                        SKSE::log::info("[BookEditor] Saved entry {} ({} chars)", update.id, update.text.size());
+                    } else {
+                        SKSE::log::error("[BookEditor] SkyrimNet didn't save entry {}", update.id);
+                    }
+                }
+                SKSE::GetTaskInterface()->AddTask([bookFormId, failed = saved < updates.size()]() {
+                    if (failed) RE::SendHUDMessage::ShowHUDMessage(Localization::GetSingleton()->GetEditSaveFailed().c_str());
+                    auto* manager = BookManager::GetSingleton();
+                    auto* vol = manager->GetBookForFormID(bookFormId);
+                    if (!vol) return;
+                    bool ok = false;
+                    const auto entries = manager->GetShownEntries(*vol, &ok);
+                    if (ok) manager->SetVolumeText(*vol, entries);
+                });
+            }).detach();
+        }
+
         void EnterEditMode() {
             auto* movie = BookMovie();
             if (!movie) {
                 SKSE::log::warn("[BookEditor] No book movie to edit");
                 return;
             }
+            if (SendDiaryContent(movie) == Content::Refused) return;
             RE::GFxValue enabled;
             enabled.SetBoolean(true);
             // False when the loaded book.swf isn't ours (another mod's won): no edit mode.
@@ -106,8 +339,57 @@ namespace SkyrimNetDiaries::BookEditor {
 
         void LeaveEditMode() {
             if (!g_active.exchange(false)) return;
+            g_prompting = false;
             SetTextInput(false);
             SKSE::log::info("[BookEditor] Edit mode off");
+        }
+
+        // Ask the book menu to close.  While editing, the close hook turns it into the save
+        // prompt if there are unsaved changes.
+        void RequestClose() {
+            if (auto* queue = RE::UIMessageQueue::GetSingleton()) {
+                queue->AddMessage(RE::BookMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide, nullptr);
+            }
+        }
+
+        // Close without asking: edit mode ends first, so the close hook lets it through.
+        void CloseBook() {
+            LeaveEditMode();
+            RequestClose();
+        }
+
+        // Save / Discard / Keep writing, over the open book.
+        class SavePromptCallback : public RE::IMessageBoxCallback {
+        public:
+            void Run(std::uint8_t a_button) override {
+                if (!g_active) return;
+                if (a_button == 0) {
+                    Save();
+                    CloseBook();
+                } else if (a_button == 1) {
+                    SKSE::log::info("[BookEditor] Changes discarded");
+                    CloseBook();
+                } else {
+                    g_prompting = false;
+                    SetTextInput(true);
+                }
+            }
+        };
+
+        void ShowSavePrompt() {
+            auto* data = RE::UIMessageDataFactory::Create<RE::MessageBoxData>();
+            if (!data) return;
+            auto* loc = Localization::GetSingleton();
+            data->bodyText = loc->GetEditSavePrompt().c_str();
+            data->buttonText.push_back(loc->GetEditSave().c_str());
+            data->buttonText.push_back(loc->GetEditDiscard().c_str());
+            data->buttonText.push_back(loc->GetEditKeepWriting().c_str());
+            data->cancelButtonIndex = 2;  // Escape on the prompt: keep writing
+            data->callback = RE::BSTSmartPointer<RE::IMessageBoxCallback>(new SavePromptCallback());
+            // The prompt's own keys (Enter, Escape) must reach it.
+            g_prompting = true;
+            SetTextInput(false);
+            RE::MessageBoxMenu::QueueMessage(data);
         }
 
         class MenuSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
@@ -150,11 +432,13 @@ namespace SkyrimNetDiaries::BookEditor {
 
         void HandleKey(std::uint32_t scanCode) {
             if (scanCode == kEscape) {
-                // One press closes the book: text input would otherwise swallow it.
-                LeaveEditMode();
-                if (auto* queue = RE::UIMessageQueue::GetSingleton()) {
-                    queue->AddMessage(RE::BookMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide, nullptr);
-                }
+                // One press closes the book (text input would swallow it); with unsaved changes
+                // the close hook asks first.
+                RequestClose();
+                return;
+            }
+            if (scanCode == kS && (GetKeyState(VK_CONTROL) & 0x8000)) {
+                Save();
                 return;
             }
             static const std::unordered_map<std::uint32_t, const char*> kCursorKeys{
@@ -180,6 +464,59 @@ namespace SkyrimNetDiaries::BookEditor {
             }
         }
 
+        // Every way of closing the book (Escape, the menu's own buttons, a gamepad, another mod)
+        // reaches the menu as a kHide message.  While editing with unsaved changes it's held
+        // back and the save prompt opens instead; Save and Discard end edit mode and close
+        // again.  kForceHide (a load, the game shutting menus) always goes through.
+        struct BookMenuProcessMessage {
+            static RE::UI_MESSAGE_RESULTS thunk(RE::IMenu* a_menu, RE::UIMessage& a_message) {
+                const auto type = a_message.type.get();
+                if (g_active) {
+                    // DIAGNOSTIC: which messages each way of closing sends
+                    if (type != RE::UI_MESSAGE_TYPE::kUpdate && type != RE::UI_MESSAGE_TYPE::kScaleformEvent &&
+                        !(g_prompting && type == RE::UI_MESSAGE_TYPE::kHide)) {
+                        const auto* data = type == RE::UI_MESSAGE_TYPE::kUserEvent
+                                               ? static_cast<RE::BSUIMessageData*>(a_message.data)
+                                               : nullptr;
+                        SKSE::log::info("[BookEditor] book menu message {} {}", std::to_underlying(type),
+                                        data ? data->fixedStr.c_str() : "");
+                    }
+                    // A gamepad's B (and anything else sending Cancel): the menu would play its
+                    // close animation before its hide, so catch Cancel itself.  kHandled here
+                    // consumes it.
+                    if (type == RE::UI_MESSAGE_TYPE::kUserEvent) {
+                        const auto* data = static_cast<RE::BSUIMessageData*>(a_message.data);
+                        if (data && data->fixedStr == "Cancel") {
+                            if (g_prompting) return RE::UI_MESSAGE_RESULTS::kHandled;
+                            if (HasChanges()) {
+                                SKSE::log::info("[BookEditor] Cancel held back: unsaved changes");
+                                ShowSavePrompt();
+                                return RE::UI_MESSAGE_RESULTS::kHandled;
+                            }
+                            // Nothing to save: the book closes, and its SWF drops the editor
+                            // (PrepForClose), so later hides must not look for changes.
+                            LeaveEditMode();
+                        }
+                    }
+                    // kIgnore keeps the menu open; kHandled would tell the UI the hide was done,
+                    // and it removes the menu itself (found in game, 2026-09-28).
+                    if (type == RE::UI_MESSAGE_TYPE::kHide) {
+                        if (g_prompting) return RE::UI_MESSAGE_RESULTS::kIgnore;
+                        if (HasChanges()) {
+                            SKSE::log::info("[BookEditor] Close held back: unsaved changes");
+                            ShowSavePrompt();
+                            return RE::UI_MESSAGE_RESULTS::kIgnore;
+                        }
+                        // Letting it close: the menu sends another hide after its close
+                        // animation, by when its SWF has dropped the editor.
+                        LeaveEditMode();
+                    }
+                }
+                return func(a_menu, a_message);
+            }
+            static inline REL::Relocation<decltype(thunk)> func;
+        };
+
         class InputSink : public RE::BSTEventSink<RE::InputEvent*> {
         public:
             RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* a_event,
@@ -196,6 +533,8 @@ namespace SkyrimNetDiaries::BookEditor {
                         continue;
                     }
                     if (button->GetDevice() != RE::INPUT_DEVICE::kKeyboard) continue;
+                    // The save prompt is open: its keys are its own.
+                    if (g_prompting) continue;
                     if (g_active) {
                         // The book menu turns pages on the arrow keys, A and D by key code, not by
                         // user event, so it can't be kept from seeing them. Instead the SWF refuses
@@ -208,6 +547,10 @@ namespace SkyrimNetDiaries::BookEditor {
                     if (code == kF3 && button->IsDown()) {
                         g_armed = true;
                         SKSE::log::info("[BookEditor] F3: edit mode armed, open any book or note");
+                        continue;
+                    }
+                    if (code == kF5 && button->IsDown()) {
+                        PreviewSave();
                         continue;
                     }
                     if (code == kF4 && button->IsDown()) {
@@ -237,6 +580,8 @@ namespace SkyrimNetDiaries::BookEditor {
         if (auto* ui = RE::UI::GetSingleton()) ui->AddEventSink<RE::MenuOpenCloseEvent>(&menuSink);
         // First in line, ahead of MenuControls, so blanked keys never reach the menu.
         if (auto* input = RE::BSInputDeviceManager::GetSingleton()) input->PrependEventSink(&inputSink);
+        REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_BookMenu[0] };
+        BookMenuProcessMessage::func = vtable.write_vfunc(0x4, BookMenuProcessMessage::thunk);
         SKSE::log::info("[BookEditor] Dev harness registered: F3 arms edit mode for the next book opened");
     }
 

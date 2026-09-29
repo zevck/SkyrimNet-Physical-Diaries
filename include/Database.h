@@ -25,12 +25,21 @@
 namespace SkyrimNetDiaries {
 
     struct DiaryEntry {
+        int id = 0;                    // SkyrimNet's entry id (0 if the response had none)
         std::string actor_uuid;
         std::string actor_name;
         std::string content;
         double entry_date = 0.0;
         double creation_time = 0.0;
+        std::vector<std::string> tags;
     };
+
+    // Tag SNPD adds to an entry the player edited in their diary: shown exactly as written.
+    inline constexpr std::string_view kPlayerWrittenTag = "snpd_player_written";
+
+    inline bool IsPlayerWritten(const DiaryEntry& entry) {
+        return std::ranges::find(entry.tags, kPlayerWrittenTag) != entry.tags.end();
+    }
 
     // Where a volume's entry range starts and ends (docs/VOLUMES_AND_SYNC.md#volume-boundaries).
     // The prev* fields are the volume's own boundary data; the next* fields are the
@@ -110,6 +119,11 @@ namespace SkyrimNetDiaries {
         // runs on SkyrimNet's worker threads.  False if unavailable or refused.
         static bool RegisterDecorator(const char* name, const char* description,
                                       std::function<std::string(RE::Actor*)> callback);
+
+        // Any thread but the game thread (SkyrimNet re-embeds the entry's memory): replace an
+        // entry's text and tags.  False when SkyrimNet refuses (its keep/clear timeline check
+        // is pending), the entry is gone, the API is older than v11, or the call failed.
+        static bool UpdateDiaryEntry(int entryId, const std::string& content, const std::string& tagsCSV);
 
         // Get bio template name for an actor FormID
         static std::string GetBioTemplateName(uint32_t formId);
