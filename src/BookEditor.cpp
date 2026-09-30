@@ -26,6 +26,7 @@
 #include "BookTextHook.h"
 #include "Config.h"
 #include "Database.h"
+#include "DiaryDB.h"
 #include "Localization.h"
 #include "WritingTools.h"
 
@@ -69,9 +70,15 @@ namespace SkyrimNetDiaries::BookEditor {
         std::atomic<bool> g_active{ false };     // edit mode is on in the open book menu
         std::atomic<bool> g_prompting{ false };  // a prompt is open over the book: keys belong to it
         bool g_inked = false;                    // this writing session has used its ink
+        bool g_blood = false;                    // this writing session is in blood (no ink)
+        bool g_bloodChosen = false;              // the player chose blood: the next edit mode is in blood
+        bool g_newEntryAfterPrompt = false;      // the blood prompt came from the new-entry key
+        std::unordered_set<int> g_bloodPaid;     // entries (EntryKey) this session has bled for
 
         void ShowNotice(const std::string& body);
         void StartNewEntry();
+        void BeginWriting(bool a_newEntry);
+        void ShowBloodPrompt();
 
         // One entry being edited: SkyrimNet's entry (with saved edits applied), the text the
         // editor was given or last saved (what "changed" compares against), and whether its
@@ -94,6 +101,13 @@ namespace SkyrimNetDiaries::BookEditor {
 
         // An entry's key in the pending-write bookkeeping: its id, or its local key (negated).
         int EntryKey(const DiaryEntry& entry) { return entry.id != 0 ? entry.id : -entry.localKey; }
+
+        // An entry's heading for the SWF: between the blood markers if it was begun in blood.
+        std::string HeadingFor(const DiaryEntry& entry) {
+            const std::string heading = EntryHeading(entry);
+            if (!entry.bloodHeading || heading.empty()) return heading;
+            return std::format("{}{}{}", kBloodOpen, heading, kBloodClose);
+        }
 
         // The entries as the book shows them: a new entry that was never given text isn't one.
         std::vector<DiaryEntry> EditedEntries() {
@@ -132,6 +146,8 @@ namespace SkyrimNetDiaries::BookEditor {
             double entryDate = 0.0;  // Add only
             std::string text;
             std::string tagsCSV;
+            std::string blood;  // Add, Update: the text's red ranges (DiaryDB, once SkyrimNet has it)
+            bool bloodHeading = false;  // Add, Update: begun in blood (its heading red)
         };
 
         // Called on the game thread when a job is done.  An add's job carries its new id.
@@ -142,6 +158,14 @@ namespace SkyrimNetDiaries::BookEditor {
             }
             const bool isDelete = job.kind == WriteJob::Kind::Delete;
             const int key = job.entryId != 0 ? job.entryId : -job.localKey;
+            if (ok && job.entryId != 0) {
+                auto* db = DiaryDB::GetSingleton();
+                if (isDelete) {
+                    db->DeleteBlood(job.entryId);
+                } else {
+                    db->SetBlood(job.entryId, job.blood, job.text, job.bloodHeading);
+                }
+            }
             auto* loc = Localization::GetSingleton();
             auto it = g_pending.find(job.bookFormId);
             if (job.kind == WriteJob::Kind::Add && ok) {
@@ -365,6 +389,11 @@ namespace SkyrimNetDiaries::BookEditor {
                 ShowNotice(Localization::GetSingleton()->GetEditNeedsQuill());
                 return false;
             }
+            if (!g_bloodChosen && !WritingTools::HasInk()) {
+                SKSE::log::info("[BookEditor] No ink: offering blood");
+                ShowBloodPrompt();
+                return false;
+            }
 
             std::vector<DiaryEntry> entries;
             const PendingWrites* pending = nullptr;
@@ -390,7 +419,7 @@ namespace SkyrimNetDiaries::BookEditor {
                 EditedEntry edited{ entry, NormalizeLineBreaks(EditableEntryText(entry)),
                                     pending && pending->unsaved.contains(EntryKey(entry)) };
                 if (!packed.empty()) packed += '\x1E';
-                packed += EntryHeading(entry) + '\x1F' + edited.savedBody;
+                packed += HeadingFor(entry) + '\x1F' + edited.savedBody;
                 ids += std::format("{}{}", ids.empty() ? "" : ",", entry.id);
                 g_edit.push_back(std::move(edited));
             }
@@ -515,7 +544,9 @@ namespace SkyrimNetDiaries::BookEditor {
                 auto& e = g_edit[i];
                 const auto& body = (*bodies)[i];
                 if (!NeedsWrite(e, body)) continue;
-                if (body.empty()) {
+                // The text as SkyrimNet stores it, and the red ranges kept apart from it.
+                auto [content, blood] = SplitBlood(body);
+                if (content.empty()) {
                     // A new entry left empty is simply not written; an existing one is kept.
                     if (!e.IsNew() || g_addQueued.contains(e.entry.localKey)) emptied = true;
                     continue;
@@ -527,9 +558,17 @@ namespace SkyrimNetDiaries::BookEditor {
                 if (std::ranges::find(e.entry.tags, kPlayerWrittenTag) == e.entry.tags.end()) {
                     e.entry.tags.emplace_back(kPlayerWrittenTag);
                 }
+                const bool anyBlood = !blood.empty() || e.entry.bloodHeading;
+                const auto bloodTag = std::ranges::find(e.entry.tags, kBloodTag);
+                if (!anyBlood && bloodTag != e.entry.tags.end()) {
+                    e.entry.tags.erase(bloodTag);
+                } else if (anyBlood && bloodTag == e.entry.tags.end()) {
+                    e.entry.tags.emplace_back(kBloodTag);
+                }
                 std::string tags;
                 for (const auto& tag : e.entry.tags) tags += (tags.empty() ? "" : ",") + tag;
-                e.entry.content = body;
+                e.entry.content = content;
+                e.entry.blood = blood;
                 e.savedBody = body;
                 e.unsaved = false;
                 // A new entry's first save adds it; later ones update it (by local key until
@@ -539,8 +578,10 @@ namespace SkyrimNetDiaries::BookEditor {
                                  .entryId = e.entry.id,
                                  .localKey = e.entry.localKey,
                                  .entryDate = e.entry.entry_date,
-                                 .text = body,
-                                 .tagsCSV = std::move(tags) });
+                                 .text = std::move(content),
+                                 .tagsCSV = std::move(tags),
+                                 .blood = std::move(blood),
+                                 .bloodHeading = e.entry.bloodHeading });
             }
             if (emptied) Notify(Localization::GetSingleton()->GetEditEmptiedHint());
             if (jobs.empty()) return SaveResult::Nothing;
@@ -556,7 +597,10 @@ namespace SkyrimNetDiaries::BookEditor {
                 SKSE::log::warn("[BookEditor] No book movie to edit");
                 return;
             }
-            if (!SendDiaryContent(movie)) return;
+            if (!SendDiaryContent(movie)) {
+                g_bloodChosen = false;
+                return;
+            }
             // False when the loaded book.swf isn't ours (another mod's won): no edit mode.
             if (!movie->Invoke("_root.BookMenu_mc.EnterEditMode", nullptr, nullptr, 0)) {
                 SKSE::log::warn("[BookEditor] book.swf has no EnterEditMode: it isn't SNPD's (check the load order)");
@@ -564,6 +608,14 @@ namespace SkyrimNetDiaries::BookEditor {
             }
             g_active = true;
             g_inked = false;
+            g_blood = std::exchange(g_bloodChosen, false);
+            g_bloodPaid.clear();
+            if (g_blood) {
+                RE::GFxValue on;
+                on.SetBoolean(true);
+                movie->Invoke("_root.BookMenu_mc.EditSetBlood", nullptr, &on, 1);
+                SKSE::log::info("[BookEditor] Writing in blood");
+            }
             g_keysLogged = 0;
             SetTextInput(true);
             SKSE::log::info("[BookEditor] Edit mode on");
@@ -644,15 +696,54 @@ namespace SkyrimNetDiaries::BookEditor {
             ShowPrompt(body, { &Localization::GetSingleton()->GetEditOk() }, 0, new NoticeCallback());
         }
 
-        // The first change in a writing session uses ink (docs/EDITING.md#quill-and-ink).  False,
-        // and the key does nothing, with no ink.
-        bool Inked() {
+
+        // In blood, the first change to each entry costs 10% of the player's health, unless that
+        // would kill them (docs/EDITING.md#writing-in-blood).
+        bool BledForCaretEntry() {
+            auto* movie = BookMovie();
+            RE::GFxValue result;
+            if (!movie || !movie->Invoke("_root.BookMenu_mc.EditCurrentEntry", &result, nullptr, 0) ||
+                !result.IsNumber() || result.GetNumber() < 0) {
+                return false;
+            }
+            const auto index = static_cast<std::size_t>(result.GetNumber());
+            if (index >= g_edit.size()) return false;
+            const int key = EntryKey(g_edit[index].entry);
+            if (g_bloodPaid.contains(key)) return true;
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            auto* health = player ? player->AsActorValueOwner() : nullptr;
+            if (!health) return false;
+            const float cost = health->GetPermanentActorValue(RE::ActorValue::kHealth) * 0.1f;
+            if (health->GetActorValue(RE::ActorValue::kHealth) - cost < 1.0f) {
+                SKSE::log::info("[BookEditor] Too weak to write in blood");
+                ShowNotice(Localization::GetSingleton()->GetEditTooWeak());
+                return false;
+            }
+            health->DamageActorValue(RE::ActorValue::kHealth, cost);
+            g_bloodPaid.insert(key);
+            SKSE::log::info("[BookEditor] Bled {:.0f} health for entry {}", cost, key);
+            return true;
+        }
+
+        // The first change in a writing session uses ink (docs/EDITING.md#quill-and-ink); in blood,
+        // the first change to each entry costs health.  Only a key that changes an entry's text pays:
+        // with the caret in no entry it does nothing.  False, and the key does nothing, when the
+        // player can't write.
+        bool CanWrite() {
+            auto* movie = BookMovie();
+            RE::GFxValue entry;
+            if (!movie || !movie->Invoke("_root.BookMenu_mc.EditCurrentEntry", &entry, nullptr, 0) ||
+                !entry.IsNumber() || entry.GetNumber() < 0) {
+                return false;
+            }
+            if (g_blood) return BledForCaretEntry();
             if (g_inked) return true;
             auto* loc = Localization::GetSingleton();
             switch (WritingTools::UseInk()) {
             case WritingTools::Ink::None:
-                SKSE::log::info("[BookEditor] No ink: can't write");
-                ShowNotice(loc->GetEditNeedsInk());
+                // Checked when writing started; with the menu pausing the game it can't be gone.
+                SKSE::log::warn("[BookEditor] The ink is gone: can't write");
+                ShowNotice(loc->GetEditNeedsQuill());
                 return false;
             case WritingTools::Ink::RanDry:
                 Notify(loc->GetEditInkRanDry());
@@ -859,10 +950,6 @@ namespace SkyrimNetDiaries::BookEditor {
                 Notify(loc->GetEditNeedsSkyrimNet());
                 return;
             }
-            if (!WritingTools::HasQuill()) {
-                ShowNotice(loc->GetEditNeedsQuill());
-                return;
-            }
             g_blankOnOpen = book->GetFormID();
         }
 
@@ -879,7 +966,8 @@ namespace SkyrimNetDiaries::BookEditor {
 
         // The blank journal the player is reading becomes their next journal where it is, without
         // closing the book (the two share the model): the new volume, the blank used up, the book
-        // menu pointed at the journal, and a new entry.  UI thread.
+        // menu pointed at the journal, and the journal's pages.  Writing starts as in any journal
+        // (the edit or new-entry key).  UI thread.
         void ConvertBlankJournal() {
             auto* blank = RE::BookMenu::GetTargetForm();
             auto* player = RE::PlayerCharacter::GetSingleton();
@@ -895,9 +983,14 @@ namespace SkyrimNetDiaries::BookEditor {
             }
             player->RemoveItem(blank, 1, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
             SetBookMenuBook(journal);
+            if (const auto* vol = BookManager::GetSingleton()->GetBookForFormID(next); vol && BookMovie()) {
+                RE::GFxValue text;
+                const std::string forMenu = BookTextHook::ForBookMenu(vol->cachedBookText);
+                text.SetString(forMenu.c_str());
+                BookMovie()->Invoke("_root.BookMenu_mc.ReplaceBookText", nullptr, &text, 1);
+            }
             SKSE::log::info("[BookEditor] Blank journal 0x{:X} became journal 0x{:X} ({})", blank->GetFormID(), next, look);
             Notify(loc->GetEditStartedVolume());
-            StartNewEntry();
         }
 
         // While writing: a new, empty entry at the end of this (latest) volume, caret in it.
@@ -926,7 +1019,8 @@ namespace SkyrimNetDiaries::BookEditor {
             // tick, then six decimals), and an entry a hair before the start is in no volume.
             entry.entry_date = vol->startTime > 0.0 ? std::max(CurrentGameTimeSeconds(), vol->startTime + kInsideStart)
                                                     : CurrentGameTimeSeconds();
-            const std::string heading = EntryHeading(entry);
+            entry.bloodHeading = g_blood;
+            const std::string heading = HeadingFor(entry);
             RE::GFxValue arg;
             arg.SetString(heading.c_str());
             RE::GFxValue index;
@@ -951,8 +1045,34 @@ namespace SkyrimNetDiaries::BookEditor {
                 Notify(Localization::GetSingleton()->GetEditNotLatest());
                 return;
             }
+            BeginWriting(true);
+        }
+
+        // Writing starts (the edit key, the new-entry key): a quill, then ink or the blood prompt
+        // (SendDiaryContent), then edit mode, and a new entry if the new-entry key asked.
+        void BeginWriting(bool a_newEntry) {
+            g_newEntryAfterPrompt = a_newEntry;
             EnterEditMode();
-            if (g_active) AppendNewEntry();
+            // A journal with no entries has nowhere to type: writing in it is a new entry.
+            if (g_active && (a_newEntry || g_edit.empty())) AppendNewEntry();
+        }
+
+        // Write in blood / Put the quill down: the player has a quill but no ink.
+        class BloodCallback : public RE::IMessageBoxCallback {
+        public:
+            void Run(std::uint8_t a_button) override {
+                EndPrompt();
+                const bool newEntry = std::exchange(g_newEntryAfterPrompt, false);
+                if (a_button != 0) return;
+                g_bloodChosen = true;
+                BeginWriting(newEntry);
+            }
+        };
+
+        void ShowBloodPrompt() {
+            auto* loc = Localization::GetSingleton();
+            ShowPrompt(loc->GetEditBloodPrompt(), { &loc->GetEditBloodYes(), &loc->GetEditBloodNo() }, 1,
+                       new BloodCallback());
         }
 
         // ---- Menu and input ----
@@ -1036,15 +1156,15 @@ namespace SkyrimNetDiaries::BookEditor {
                 return;
             }
             if (scanCode == kBackspace) {
-                if (Inked()) Invoke("EditBackspace");
+                if (CanWrite()) Invoke("EditBackspace");
                 return;
             }
             if (scanCode == kDelete) {
-                if (Inked()) Invoke("EditDelete");
+                if (CanWrite()) Invoke("EditDelete");
                 return;
             }
             if (scanCode == kEnter) {
-                if (Inked()) Invoke("AppendEditChar", "\n");
+                if (CanWrite()) Invoke("AppendEditChar", "\n");
                 return;
             }
 
@@ -1063,7 +1183,7 @@ namespace SkyrimNetDiaries::BookEditor {
             char utf8[32] = {};
             if (WideCharToMultiByte(CP_UTF8, 0, typed.c_str(), static_cast<int>(typed.size()), utf8, sizeof(utf8) - 1,
                                     nullptr, nullptr) > 0 &&
-                Inked()) {
+                CanWrite()) {
                 Invoke("AppendEditChar", utf8);
             }
         }
@@ -1129,7 +1249,7 @@ namespace SkyrimNetDiaries::BookEditor {
                             if (ui && ui->IsMenuOpen(RE::BookMenu::MENU_NAME)) {
                                 button->SetUserEvent("");
                                 if (edit) {
-                                    SKSE::GetTaskInterface()->AddUITask([]() { EnterEditMode(); });
+                                    SKSE::GetTaskInterface()->AddUITask([]() { BeginWriting(false); });
                                 } else {
                                     SKSE::GetTaskInterface()->AddUITask([]() { StartNewEntry(); });
                                 }

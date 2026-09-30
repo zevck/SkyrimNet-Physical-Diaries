@@ -86,6 +86,15 @@ namespace SkyrimNetDiaries::WritingTools {
         return found;
     }
 
+    bool HasInk() {
+        auto* player = RE::PlayerCharacter::GetSingleton();
+        if (!player) return false;
+        for (int n = 1; n < kUses; ++n) {
+            if (Carries(player, g_partly[n])) return true;
+        }
+        return FullInkwell(player) != nullptr;
+    }
+
     Ink UseInk() {
         auto* player = RE::PlayerCharacter::GetSingleton();
         if (!player) return Ink::None;

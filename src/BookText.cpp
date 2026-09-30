@@ -18,6 +18,7 @@
  */
 
 #include "BookText.h"
+#include <charconv>
 #include "Config.h"
 #include "Localization.h"
 #include <cmath>
@@ -276,7 +277,10 @@ namespace SkyrimNetDiaries {
         }
 
         std::string SanitizeBookText(const DiaryEntry& entry) {
-            return EscapeMarkup(SanitizePlain(entry.content, !IsPlayerWritten(entry)));
+            std::string text = EscapeMarkup(SanitizePlain(MarkBlood(entry.content, entry.blood), !IsPlayerWritten(entry)));
+            ReplaceAll(text, kBloodOpen, std::format("<font color='{}'>", kBloodColor));
+            ReplaceAll(text, kBloodClose, "</font>");
+            return text;
         }
 
         struct GameDate {
@@ -323,7 +327,62 @@ namespace SkyrimNetDiaries {
     } // namespace
 
     std::string EditableEntryText(const DiaryEntry& entry) {
-        return SanitizePlain(entry.content, !IsPlayerWritten(entry));
+        return SanitizePlain(MarkBlood(entry.content, entry.blood), !IsPlayerWritten(entry));
+    }
+
+    std::string MarkBlood(const std::string& content, const std::string& ranges) {
+        if (ranges.empty()) return content;
+        std::string out;
+        out.reserve(content.size() + ranges.size());
+        std::size_t done = 0;
+        std::string_view rest = ranges;
+        while (!rest.empty()) {
+            const auto comma = rest.find(',');
+            const auto range = rest.substr(0, comma);
+            rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
+            const auto colon = range.find(':');
+            std::size_t start = 0, end = 0;
+            if (colon == std::string_view::npos ||
+                std::from_chars(range.data(), range.data() + colon, start).ec != std::errc{} ||
+                std::from_chars(range.data() + colon + 1, range.data() + range.size(), end).ec != std::errc{} ||
+                start < done || end <= start || end > content.size()) {
+                break;  // not ranges of this text: the rest stays plain
+            }
+            out.append(content, done, start - done);
+            out += kBloodOpen;
+            out.append(content, start, end - start);
+            out += kBloodClose;
+            done = end;
+        }
+        out.append(content, done);
+        return out;
+    }
+
+    std::pair<std::string, std::string> SplitBlood(std::string_view marked) {
+        std::string content;
+        std::string ranges;
+        content.reserve(marked.size());
+        std::size_t open = std::string::npos;
+        const auto close = [&]() {
+            if (open != std::string::npos && content.size() > open) {
+                ranges += std::format("{}{}:{}", ranges.empty() ? "" : ",", open, content.size());
+            }
+            open = std::string::npos;
+        };
+        for (std::size_t i = 0; i < marked.size();) {
+            if (marked.substr(i, kBloodOpen.size()) == kBloodOpen) {
+                close();
+                open = content.size();
+                i += kBloodOpen.size();
+            } else if (marked.substr(i, kBloodClose.size()) == kBloodClose) {
+                close();
+                i += kBloodClose.size();
+            } else {
+                content += marked[i++];
+            }
+        }
+        close();
+        return { std::move(content), std::move(ranges) };
     }
 
     std::string EntryDate(const DiaryEntry& entry) {
@@ -389,7 +448,9 @@ namespace SkyrimNetDiaries {
                 if (SkyrimNetDiaries::Config::GetSingleton()->GetShowDateHeaders()) {
                     // Reset font size explicitly (title page font might bleed through pagebreak)
                     bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontDate) + "'></font>";
-                    bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontDate) + "'>" + dateStr + "</font>";
+                    const std::string heading =
+                        entry.bloodHeading ? std::format("<font color='{}'>{}</font>", kBloodColor, dateStr) : dateStr;
+                    bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontDate) + "'>" + heading + "</font>";
                     bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'></font>\n\n";  // Reset to content font size
                 }
 

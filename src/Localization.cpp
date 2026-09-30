@@ -244,9 +244,12 @@ namespace SkyrimNetDiaries {
                 else if (key == "EditStartedVolume") editStartedVolume_ = text;
                 else if (key == "EditNoJournal") editNoJournal_ = text;
                 else if (key == "EditNeedsQuill") editNeedsQuill_ = text;
-                else if (key == "EditNeedsInk") editNeedsInk_ = text;
                 else if (key == "EditInkRanDry") editInkRanDry_ = text;
                 else if (key == "EditOk") editOk_ = text;
+                else if (key == "EditBloodPrompt") editBloodPrompt_ = text;
+                else if (key == "EditBloodYes") editBloodYes_ = text;
+                else if (key == "EditBloodNo") editBloodNo_ = text;
+                else if (key == "EditTooWeak") editTooWeak_ = text;
                 else if (key == "EditJournalNotCarried") editJournalNotCarried_ = text;
                 else if (key == "BlankJournalFailed") blankJournalFailed_ = text;
             } else if (currentSection == "months") {
@@ -386,9 +389,12 @@ namespace SkyrimNetDiaries {
         editStartedVolume_ = "You begin a new journal.";
         editNoJournal_ = "You have no journal. Read a blank journal to begin one.";
         editNeedsQuill_ = "To write in your journal you need a quill and an inkwell.";
-        editNeedsInk_ = "You have no ink. To write in your journal you need a quill and an inkwell.";
         editInkRanDry_ = "Your inkwell runs dry.";
         editOk_ = "OK";
+        editBloodPrompt_ = "You have no ink. Write in your own blood?";
+        editBloodYes_ = "Write in blood";
+        editBloodNo_ = "Put the quill down";
+        editTooWeak_ = "You're too weak to write in blood.";
         editJournalNotCarried_ = "Your journal isn't with you.";
         blankJournalFailed_ = "The journal couldn't be started. See SkyrimNetPhysicalDiaries.log.";
 

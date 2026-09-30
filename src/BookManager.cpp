@@ -272,7 +272,16 @@ namespace SkyrimNetDiaries {
                 }
             }
         }
-        return Database::GetVolumeEntries(actorFormId, bounds, ok, vol.kind);
+        auto entries = Database::GetVolumeEntries(actorFormId, bounds, ok, vol.kind);
+        if (vol.kind == VolumeKind::Written) {
+            auto* db = DiaryDB::GetSingleton();
+            for (auto& entry : entries) {
+                auto blood = db->GetBlood(entry.id, entry.content);
+                entry.blood = std::move(blood.ranges);
+                entry.bloodHeading = blood.heading;
+            }
+        }
+        return entries;
     }
 
     void BookManager::SetVolumeText(DiaryBookData& vol, const std::vector<DiaryEntry>& entries) {

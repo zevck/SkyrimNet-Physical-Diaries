@@ -18,7 +18,12 @@ class BookMenu extends MovieClip
    // Read as plain text by the plugins (SNPD's WritingMode.cpp; the SWF ships uncompressed):
    // this book.swf being installed turns player writing on.  Mod-neutral, since Physical
    // Letters ships the same SWF.  Bump when a call is added; a plugin needs at least its version.
-   static var WRITING_INTERFACE = "BOOKMENU_WRITING_INTERFACE=1";
+   static var WRITING_INTERFACE = "BOOKMENU_WRITING_INTERFACE=2";
+   // Text written in blood (2): dark red, marked in the plugin's text between these two
+   // private-use characters (see ParseBlood, MarkBlood).
+   static var BLOOD_COLOR = 0x2B0202;
+   static var BLOOD_OPEN = 0xE000;
+   static var BLOOD_CLOSE = 0xE001;
    static var PAGE_BREAK_TAG = "[pagebreak]";
    static var NOTE_WIDTH = 400;
    static var NOTE_X_OFFSET = 20;
@@ -52,6 +57,7 @@ class BookMenu extends MovieClip
    var bTextReceived;    // SetBookText has run (EditReady)
    var iDatesStart;      // the title page's date range in EditField (see EditSetDates)
    var iDatesLength;
+   var bBlood;           // this writing session is in blood: typed text is red (EditSetBlood)
 
    function BookMenu()
    {
@@ -109,6 +115,7 @@ class BookMenu extends MovieClip
    function EnterEditMode()
    {
       this.bEditMode = true;
+      this.bBlood = false;
       // The page being read (at the book's opening: page 0). A book's spread is in engine
       // slots 0-1 or 2-3 (see iEditShownFrom); editing starts on the same page and slots.
       var readPage = this.iLeftPageNumber;
@@ -251,16 +258,18 @@ class BookMenu extends MovieClip
       while(i < c.entries.length)
       {
          var parts = c.entries[i].split(String.fromCharCode(31));
-         var heading = BookMenu.FieldText(parts[0]);
-         var body = BookMenu.FieldText(parts[1] == undefined ? "" : parts[1]);
+         var parsedHeading = BookMenu.ParseBlood(BookMenu.FieldText(parts[0]));
+         var heading = parsedHeading.text;
+         var parsed = BookMenu.ParseBlood(BookMenu.FieldText(parts[1] == undefined ? "" : parts[1]));
+         var body = parsed.text;
          // An entry's page: a blank line, then the heading and a blank line (if headings are on).
          var locked = "\r\r";
          if(heading.length)
          {
-            styles.push({start:text.length + 2, end:text.length + 2 + heading.length, size:c.dateSize, align:"left"});
+            styles.push({start:text.length + 2, end:text.length + 2 + heading.length, size:c.dateSize, align:"left", blood:parsedHeading.ranges.length > 0});
             locked += heading + "\r\r";
          }
-         segs.push({locked:locked.length, body:body.length, editable:true});
+         segs.push({locked:locked.length, body:body.length, editable:true, blood:parsed.ranges});
          text += locked + body;
          i++;
       }
@@ -276,6 +285,10 @@ class BookMenu extends MovieClip
          var f = new TextFormat();
          f.size = styles[i].size;
          f.align = styles[i].align;
+         if(styles[i].blood)
+         {
+            f.color = BookMenu.BLOOD_COLOR;
+         }
          if(styles[i].end > styles[i].start)
          {
             this.EditField.setTextFormat(styles[i].start, styles[i].end, f);
@@ -339,6 +352,171 @@ class BookMenu extends MovieClip
          this.EditField.setTextFormat(found, found + 2, this.oBreakFmt);
          pos = found + 2;
       }
+      // Text written in blood stays red.
+      var blood = this.aSegs[k].blood;
+      if(blood != undefined && blood.length)
+      {
+         var red = new TextFormat();
+         red.color = BookMenu.BLOOD_COLOR;
+         var b = 0;
+         while(b < blood.length)
+         {
+            this.EditField.setTextFormat(start + blood[b].s, start + blood[b].e, red);
+            b++;
+         }
+      }
+   }
+
+   // ---- Blood ----
+
+   // From the plugin: this session writes in blood (the player chose it, having no ink).
+   function EditSetBlood(on)
+   {
+      this.bBlood = on == true;
+   }
+
+   // Ranges sorted, overlapping and touching ones joined, empty ones dropped.
+   static function MergeRanges(ranges)
+   {
+      ranges.sort(function(a, b)
+      {
+         return a.s - b.s;
+      });
+      var out = [];
+      var i = 0;
+      while(i < ranges.length)
+      {
+         var r = ranges[i];
+         if(r.e > r.s)
+         {
+            if(out.length && r.s <= out[out.length - 1].e)
+            {
+               out[out.length - 1].e = Math.max(out[out.length - 1].e, r.e);
+            }
+            else
+            {
+               out.push({s:r.s, e:r.e});
+            }
+         }
+         i++;
+      }
+      return out;
+   }
+
+   // A body from the plugin: its text without the blood markers, and the red ranges.
+   static function ParseBlood(str)
+   {
+      var text = "";
+      var ranges = [];
+      var open = -1;
+      var i = 0;
+      while(i < str.length)
+      {
+         var c = str.charCodeAt(i);
+         if(c == BookMenu.BLOOD_OPEN)
+         {
+            open = text.length;
+         }
+         else if(c == BookMenu.BLOOD_CLOSE)
+         {
+            if(open >= 0)
+            {
+               ranges.push({s:open, e:text.length});
+            }
+            open = -1;
+         }
+         else
+         {
+            text += str.charAt(i);
+         }
+         i++;
+      }
+      if(open >= 0)
+      {
+         ranges.push({s:open, e:text.length});
+      }
+      return {text:text, ranges:BookMenu.MergeRanges(ranges)};
+   }
+
+   // A body for the plugin: the text with the blood markers around each red range.
+   static function MarkBlood(text, ranges)
+   {
+      if(ranges == undefined)
+      {
+         return text;
+      }
+      var i = ranges.length - 1;
+      while(i >= 0)
+      {
+         var r = ranges[i];
+         text = text.substring(0, r.s) + String.fromCharCode(BookMenu.BLOOD_OPEN) + text.substring(r.s, r.e)
+            + String.fromCharCode(BookMenu.BLOOD_CLOSE) + text.substring(r.e);
+         i--;
+      }
+      return text;
+   }
+
+   // n characters typed at p in body k: the ranges after them move; typed in blood they're red,
+   // typed in ink inside a red range they split it.
+   function BloodInsert(k, p, n)
+   {
+      var seg = this.aSegs[k];
+      var old = seg.blood == undefined ? [] : seg.blood;
+      var out = [];
+      var i = 0;
+      while(i < old.length)
+      {
+         var r = old[i];
+         if(r.e <= p)
+         {
+            out.push({s:r.s, e:r.e});
+         }
+         else if(r.s >= p)
+         {
+            out.push({s:r.s + n, e:r.e + n});
+         }
+         else
+         {
+            out.push({s:r.s, e:p});
+            out.push({s:p + n, e:r.e + n});
+         }
+         i++;
+      }
+      if(this.bBlood)
+      {
+         out.push({s:p, e:p + n});
+      }
+      seg.blood = BookMenu.MergeRanges(out);
+   }
+
+   // The character at p in body k deleted.
+   function BloodDelete(k, p)
+   {
+      var seg = this.aSegs[k];
+      if(seg.blood == undefined)
+      {
+         return undefined;
+      }
+      var out = [];
+      var i = 0;
+      while(i < seg.blood.length)
+      {
+         var r = seg.blood[i];
+         if(r.e <= p)
+         {
+            out.push({s:r.s, e:r.e});
+         }
+         else if(r.s > p)
+         {
+            out.push({s:r.s - 1, e:r.e - 1});
+         }
+         else
+         {
+            out.push({s:r.s, e:r.e - 1});
+         }
+         i++;
+      }
+      seg.blood = BookMenu.MergeRanges(out);
    }
 
    function SegStart(k)
@@ -428,7 +606,8 @@ class BookMenu extends MovieClip
          return -1;
       }
       var start = this.EditField.length;
-      var h = BookMenu.FieldText(heading);
+      var parsedHeading = BookMenu.ParseBlood(BookMenu.FieldText(heading));
+      var h = parsedHeading.text;
       var locked = "\r\r";
       if(h.length)
       {
@@ -450,9 +629,13 @@ class BookMenu extends MovieClip
          var f = new TextFormat();
          f.size = this.oEditContent.dateSize;
          f.align = "left";
+         if(parsedHeading.ranges.length)
+         {
+            f.color = BookMenu.BLOOD_COLOR;
+         }
          this.EditField.setTextFormat(start + 2, start + 2 + h.length, f);
       }
-      this.aSegs.push({locked:locked.length, body:0, editable:true});
+      this.aSegs.push({locked:locked.length, body:0, editable:true, blood:[]});
       this.EditSetCaret(this.EditField.length);
       this.EditLayout();
       var entries = 0;
@@ -612,6 +795,30 @@ class BookMenu extends MovieClip
       this.UpdatePages();
    }
 
+   // From the plugin, while reading (2): the open book is now another one (a blank journal became
+   // a journal). Its text, from the first page.
+   function ReplaceBookText(text)
+   {
+      if(this.bEditMode)
+      {
+         return undefined;
+      }
+      if(this.iPaginationIndex != -1)
+      {
+         clearInterval(this.iPaginationIndex);
+         this.iPaginationIndex = -1;
+      }
+      while(this.BookPages.length)
+      {
+         this.BookPages.pop().removeMovieClip();
+      }
+      this.PageInfoA = new Array();
+      this.SetBookText(text, this.bNote);
+      this.iLeftPageNumber = 0;
+      this.iPageSetIndex = 0;
+      this.UpdatePages();
+   }
+
    // Each body's text, in segment order, joined by \x1E (line breaks as \n). Blank page: one body.
    // Undefined once the editor is gone (PrepForClose): there is no text, not an empty one.
    function EditGetBodies()
@@ -626,7 +833,8 @@ class BookMenu extends MovieClip
       {
          if(this.aSegs[k].editable)
          {
-            out.push(this.EditField.text.substring(this.BodyStart(k), this.BodyEnd(k)).split("\r").join("\n"));
+            var body = this.EditField.text.substring(this.BodyStart(k), this.BodyEnd(k));
+            out.push(BookMenu.MarkBlood(body, this.aSegs[k].blood).split("\r").join("\n"));
          }
          k++;
       }
@@ -809,6 +1017,7 @@ class BookMenu extends MovieClip
       }
       this.EditField.replaceText(pos, pos, ch);
       this.EditField.setTextFormat(pos, pos + ch.length, this.EditField.getNewTextFormat());
+      this.BloodInsert(k, pos - this.BodyStart(k), ch.length);
       this.aSegs[k].body += ch.length;
       this.FormatBreaks(k);
       this.EditSetCaret(pos + ch.length);
@@ -827,6 +1036,7 @@ class BookMenu extends MovieClip
       if(k >= 0 && pos > this.BodyStart(k))
       {
          this.EditField.replaceText(pos - 1, pos, "");
+         this.BloodDelete(k, pos - 1 - this.BodyStart(k));
          this.aSegs[k].body -= 1;
          this.FormatBreaks(k);
          this.EditSetCaret(pos - 1);
@@ -845,6 +1055,7 @@ class BookMenu extends MovieClip
       if(k >= 0 && pos < this.BodyEnd(k))
       {
          this.EditField.replaceText(pos, pos + 1, "");
+         this.BloodDelete(k, pos - this.BodyStart(k));
          this.aSegs[k].body -= 1;
          this.FormatBreaks(k);
          this.EditSetCaret(pos);

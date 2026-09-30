@@ -42,6 +42,7 @@ namespace SkyrimNetDiaries {
     //   actor_templates — one row per actor UUID: journal template choice (its
     //                     last_known_game_time column is no longer used)
     //   stolen_volumes  — one row per stolen volume
+    //   blood           — one row per player entry with text written in blood
     // ---------------------------------------------------------------------------
 
     class DiaryDB {
@@ -114,6 +115,18 @@ namespace SkyrimNetDiaries {
 
         bool UpsertActorTemplate(const std::string& uuid,
                                  const std::string& templateName);
+
+        // ── Blood (the red ranges of the player's entries, BookText.h MarkBlood) ─
+
+        // Stores an entry's ranges for exactly this content, and whether it was begun in blood
+        // (its heading red); neither removes the row.
+        bool SetBlood(int entryId, const std::string& ranges, const std::string& content, bool heading);
+        bool DeleteBlood(int entryId);
+        struct Blood {
+            std::string ranges;  // "" unless stored for this content (else they'd colour the wrong words)
+            bool heading = false;
+        };
+        Blood GetBlood(int entryId, const std::string& content);
 
     private:
         DiaryDB() = default;

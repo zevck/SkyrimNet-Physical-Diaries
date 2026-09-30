@@ -90,9 +90,12 @@ namespace SkyrimNetDiaries {
         const std::string& GetEditStartedVolume() const { return editStartedVolume_; }
         const std::string& GetEditNoJournal() const { return editNoJournal_; }
         const std::string& GetEditNeedsQuill() const { return editNeedsQuill_; }
-        const std::string& GetEditNeedsInk() const { return editNeedsInk_; }
         const std::string& GetEditInkRanDry() const { return editInkRanDry_; }
         const std::string& GetEditOk() const { return editOk_; }
+        const std::string& GetEditBloodPrompt() const { return editBloodPrompt_; }
+        const std::string& GetEditBloodYes() const { return editBloodYes_; }
+        const std::string& GetEditBloodNo() const { return editBloodNo_; }
+        const std::string& GetEditTooWeak() const { return editTooWeak_; }
         const std::string& GetEditJournalNotCarried() const { return editJournalNotCarried_; }
         const std::string& GetBlankJournalFailed() const { return blankJournalFailed_; }
 
@@ -149,9 +152,12 @@ namespace SkyrimNetDiaries {
         std::string editStartedVolume_;
         std::string editNoJournal_;
         std::string editNeedsQuill_;
-        std::string editNeedsInk_;
         std::string editInkRanDry_;
         std::string editOk_;
+        std::string editBloodPrompt_;
+        std::string editBloodYes_;
+        std::string editBloodNo_;
+        std::string editTooWeak_;
         std::string editJournalNotCarried_;
         std::string blankJournalFailed_;
     };

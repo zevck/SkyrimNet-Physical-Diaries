@@ -36,6 +36,8 @@ Created in `EnsureSchema()`.
 
 **`stolen_volumes`**: `(actor_uuid, volume_number)` PK, `stolen_at` (game seconds).
 
+**`blood`**: `entry_id` (SkyrimNet's entry id, PK), `ranges` (the byte ranges of the entry's content written in blood, `"s:e,s:e"`), `content_hash` (FNV-1a 64 of the content they belong to; a mismatch drops the red from the text), `heading` (1: the entry was begun in blood, its heading is red; added to existing tables with `ALTER TABLE`). Only the player's journal entries have rows. See [EDITING.md](EDITING.md#writing-in-blood).
+
 Databases from before 2.0.0 also had a `persisted_in_save` column in `volumes` (it existed because DPF forms survived a reload without saving); the `kind` migration dropped it.
 
 ## Schema changes

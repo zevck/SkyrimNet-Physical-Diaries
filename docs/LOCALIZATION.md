@@ -39,7 +39,8 @@ The folder is located from **the DLL's own path** (`GetModuleHandleExA` on a fun
 | `[Messages] EditNeedsSkyrimNet`, `EditNeedsPause` | Notifications when writing can't start: SkyrimNet is older than public API v11, or the book menu doesn't pause the game ([EDITING.md](EDITING.md#opening)). Same fallback. | |
 | `[Messages] EditEmptiedHint` | Notification when a save keeps an emptied entry (removing one is tearing it out). Same fallback. | |
 | `[Messages] EditNotLatest`, `EditNoJournal`, `EditJournalNotCarried` | Notifications for the new-entry key: new entries go in the latest journal; during play, the player has no journal, or doesn't carry it ([EDITING.md](EDITING.md#new-entries)). Same fallback. | |
-| `[Messages] EditNeedsQuill`, `EditNeedsInk`, `EditInkRanDry`, `EditOk` | Quill and ink: the message boxes when writing can't start or has no ink (OK button), and the notice when an inkwell runs dry ([EDITING.md](EDITING.md#quill-and-ink)). Same fallback. | |
+| `[Messages] EditNeedsQuill`, `EditInkRanDry`, `EditOk` | Quill and ink: the message box when writing can't start (OK button), and the notice when an inkwell runs dry ([EDITING.md](EDITING.md#quill-and-ink)). Same fallback. | |
+| `[Messages] EditBloodPrompt`, `EditBloodYes`, `EditBloodNo`, `EditTooWeak` | No ink: the prompt to write in blood and its buttons, and the message box when the player is too weak ([EDITING.md](EDITING.md#writing-in-blood)). Same fallback. | |
 | `[Messages] EditStartedVolume`, `BlankJournalFailed` | A blank journal read from the inventory became the player's journal, or couldn't ([EDITING.md](EDITING.md#reading-a-blank-journal)). Same fallback. | |
 | `[Months]`, `[Days]` | Optional name overrides, keyed by the English name | |
 

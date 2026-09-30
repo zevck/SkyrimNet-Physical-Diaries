@@ -34,6 +34,9 @@ namespace SkyrimNetDiaries::WritingTools {
     // The player carries a quill.
     bool HasQuill();
 
+    // The player carries an inkwell with ink.
+    bool HasInk();
+
     enum class Ink { None, Used, RanDry };
 
     // Game thread: one use of ink from the player's emptiest inkwell, swapped at once for the

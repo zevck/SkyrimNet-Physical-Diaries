@@ -126,6 +126,12 @@ namespace SkyrimNetDiaries {
                 template_name             TEXT NOT NULL DEFAULT '',
                 last_known_game_time      REAL DEFAULT 0.0
             );
+            CREATE TABLE IF NOT EXISTS blood (
+                entry_id       INTEGER PRIMARY KEY,
+                ranges         TEXT NOT NULL,
+                content_hash   TEXT NOT NULL,
+                heading        INTEGER NOT NULL DEFAULT 0
+            );
             CREATE TABLE IF NOT EXISTS stolen_volumes (
                 actor_uuid     TEXT NOT NULL,
                 volume_number  INTEGER NOT NULL,
@@ -141,6 +147,7 @@ namespace SkyrimNetDiaries {
         sqlite3_exec(db_,
             "ALTER TABLE volumes ADD COLUMN actor_form_id INTEGER NOT NULL DEFAULT 0;",
             nullptr, nullptr, nullptr);
+        sqlite3_exec(db_, "ALTER TABLE blood ADD COLUMN heading INTEGER NOT NULL DEFAULT 0;", nullptr, nullptr, nullptr);
 
         // Migration (2026-09-29): `kind` joined the key, so the player's journals number their
         // volumes apart from their diary.  SQLite can't change a primary key: an older table
@@ -382,6 +389,44 @@ namespace SkyrimNetDiaries {
         if (!db_) return 0;
         Statement st(db_, "DELETE FROM stolen_volumes WHERE stolen_at > ?1;", "RemoveStolenVolumesAfter");
         return st.Bind(1, gameTime).Run() ? sqlite3_changes(db_) : 0;
+    }
+
+    namespace {
+        // FNV-1a 64: stable across builds, unlike std::hash.
+        std::string ContentHash(const std::string& content) {
+            std::uint64_t hash = 0xCBF29CE484222325ull;
+            for (const unsigned char c : content) {
+                hash ^= c;
+                hash *= 0x100000001B3ull;
+            }
+            return std::format("{:016x}", hash);
+        }
+    }
+
+    bool DiaryDB::SetBlood(int entryId, const std::string& ranges, const std::string& content, bool heading) {
+        if (!db_ || entryId == 0) return false;
+        if (ranges.empty() && !heading) return DeleteBlood(entryId);
+        Statement st(db_,
+            "INSERT INTO blood (entry_id, ranges, content_hash, heading) VALUES (?1,?2,?3,?4) "
+            "ON CONFLICT(entry_id) DO UPDATE SET ranges=excluded.ranges, content_hash=excluded.content_hash, "
+            "heading=excluded.heading;",
+            "SetBlood");
+        return st.Bind(1, entryId).Bind(2, ranges).Bind(3, ContentHash(content)).Bind(4, heading ? 1 : 0).Run();
+    }
+
+    bool DiaryDB::DeleteBlood(int entryId) {
+        if (!db_) return false;
+        Statement st(db_, "DELETE FROM blood WHERE entry_id=?1;", "DeleteBlood");
+        return st.Bind(1, entryId).Run();
+    }
+
+    DiaryDB::Blood DiaryDB::GetBlood(int entryId, const std::string& content) {
+        if (!db_ || entryId == 0) return {};
+        Statement st(db_, "SELECT ranges, content_hash, heading FROM blood WHERE entry_id=?1;", "GetBlood");
+        st.Bind(1, entryId);
+        if (!st.Next()) return {};
+        // The heading is the entry's, whatever its text; the ranges only fit the text they were for.
+        return { .ranges = st.Text(1) == ContentHash(content) ? st.Text(0) : std::string{}, .heading = st.Int(2) != 0 };
     }
 
     bool DiaryDB::UpsertActorTemplate(const std::string& uuid,

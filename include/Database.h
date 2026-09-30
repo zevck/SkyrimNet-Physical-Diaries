@@ -33,10 +33,15 @@ namespace SkyrimNetDiaries {
         double creation_time = 0.0;
         std::vector<std::string> tags;
         int localKey = 0;              // SNPD only: a new entry the book editor added (0 = from SkyrimNet)
+        std::string blood;             // SNPD only: the red ranges of a journal entry's content (BookText.h MarkBlood)
+        bool bloodHeading = false;     // SNPD only: begun in blood, so its heading is red too
     };
 
     // Tag SNPD adds to an entry the player edited in their diary: shown exactly as written.
     inline constexpr std::string_view kPlayerWrittenTag = "snpd_player_written";
+
+    // Tag SNPD adds to an entry with any text the player wrote in blood.
+    inline constexpr std::string_view kBloodTag = "snpd_written_in_blood";
 
     inline bool IsPlayerWritten(const DiaryEntry& entry) {
         return std::ranges::find(entry.tags, kPlayerWrittenTag) != entry.tags.end();
