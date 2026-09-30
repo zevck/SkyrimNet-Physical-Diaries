@@ -1,0 +1,19 @@
+FormKey: 000802:SkyrimNet Physical Diaries.esp
+EditorID: SkyrimNetDiaryTemplateN
+Name:
+  TargetLanguage: English
+  Value: Diary
+Model:
+  File: Clutter\Books\TG05JournalLowPoly01.nif
+  Data: 0x020000000000000000000000
+BookText:
+  TargetLanguage: English
+  Value: <font face='$HandwrittenFont'>This is a placeholder diary.</font>
+Teaches:
+  MutagenObjectType: BookTeachesNothing
+  RawContent: 0
+Weight: 0.5
+InventoryArt: 0B7E3B:Skyrim.esm
+Description:
+  TargetLanguage: English
+  Value: ''

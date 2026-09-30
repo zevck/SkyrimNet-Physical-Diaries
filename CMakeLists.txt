@@ -34,6 +34,7 @@ find_package(minhook CONFIG REQUIRED)
 set(sources
     src/main.cpp
     src/ActorLookup.cpp
+    src/BlankJournals.cpp
     src/BookCreation.cpp
     src/BookEditor.cpp
     src/BookManager.cpp

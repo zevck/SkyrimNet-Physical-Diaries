@@ -22,6 +22,9 @@ LETTERS_MOD_DESIGN.md
 *.dll
 Build_Config_Local.ps1
 *.pex
+# The plugin is built from spriggit/ (docs/PLUGIN.md); the Spriggit CLI downloads to external/
+/*.esp
+/external
 *.dll
 
 # Built SWFs (sources in swf/)

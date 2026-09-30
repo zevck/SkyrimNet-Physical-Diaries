@@ -59,6 +59,9 @@ namespace SkyrimNetDiaries {
         // Convenience: title + volume suffix combined
         std::string FormatBookName(const std::string& actorName, int volumeNumber, VolumeKind kind) const;
 
+        // The blank journal item's name ("Blank Journal")
+        const std::string& GetBlankJournalName() const { return blankJournalName_; }
+
         // Empty volume placeholder text
         const std::string& GetEmptyVolumeText() const { return emptyVolumeText_; }
 
@@ -119,6 +122,7 @@ namespace SkyrimNetDiaries {
         std::string dateLongFmt_;    // e.g. "{Day}, {d} {Month}, 4E {y}"
         std::string dateShortFmt_;   // e.g. "{d} {Month}, 4E {y}"
         std::string diaryTitleFmt_;  // e.g. "{Name}'s Diary"
+        std::string blankJournalName_;  // the blank journal item's name
         std::string journalTitleFmt_;  // e.g. "{Name}'s Journal": the player's written volumes
         std::string volumeSuffixFmt_; // e.g. ", v{n}"
         std::string emptyVolumeText_;

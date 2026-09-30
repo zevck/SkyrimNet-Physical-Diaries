@@ -17,6 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "BlankJournals.h"
 #include "BookCreation.h"
 #include "BookEditor.h"
 #include "BookManager.h"
@@ -136,6 +137,7 @@ namespace {
                 // The player's diary editor, only with SNPD's book.swf installed (docs/EDITING.md).
                 SkyrimNetDiaries::WritingMode::Detect();
                 if (SkyrimNetDiaries::WritingMode::IsOn()) SkyrimNetDiaries::BookEditor::Register();
+                SkyrimNetDiaries::BlankJournals::OnDataLoaded();
 
                 // Now that GMSTs are loaded, read localized month/day names
                 SkyrimNetDiaries::Localization::GetSingleton()->ReadGMSTs();

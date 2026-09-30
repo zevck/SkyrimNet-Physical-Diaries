@@ -27,6 +27,7 @@ The folder is located from **the DLL's own path** (`GetModuleHandleExA` on a fun
 | `[Format] DateLong` | Entry date headers | `{Day}` weekday, `{d}` day, `{Month}`, `{y}` year |
 | `[Format] DateShort` | Title-page date range | `{d}`, `{Month}`, `{y}` |
 | `[Format] DiaryTitle` | Book title | `{Name}` |
+| `[Format] BlankJournal` | The blank journal item's name (the ESP's is English; set at load) | |
 | `[Format] JournalTitle` | The player's journal's title (writing mode; must differ from `DiaryTitle`) | `{Name}` |
 | `[Format] VolumeSuffix` | Appended from volume 2 on (default `, v{n}`) | `{n}` number, `{cn}` Chinese numeral |
 | `[Format] EmptyVolumeText` | Page shown when all of a volume's entries were deleted (not in a journal, which is left blank) | |

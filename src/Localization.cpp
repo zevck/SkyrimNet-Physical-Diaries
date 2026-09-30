@@ -213,6 +213,7 @@ namespace SkyrimNetDiaries {
                 else if (key == "DateShort") dateShortFmt_ = value;
                 else if (key == "DiaryTitle") diaryTitleFmt_ = value;
                 else if (key == "JournalTitle") journalTitleFmt_ = value;
+                else if (key == "BlankJournal") blankJournalName_ = value;
                 else if (key == "VolumeSuffix") volumeSuffixFmt_ = value;
                 else if (key == "EmptyVolumeText") emptyVolumeText_ = value;
             } else if (currentSection == "messages") {
@@ -354,6 +355,7 @@ namespace SkyrimNetDiaries {
         dateShortFmt_ = "{d} {Month}, 4E {y}";
         diaryTitleFmt_ = "{Name}'s Diary";
         journalTitleFmt_ = "{Name}'s Journal";
+        blankJournalName_ = "Blank Journal";
         volumeSuffixFmt_ = ", v{n}";
         emptyVolumeText_ = "All entries from this time period have been removed.";
         templatesMissingText_ =

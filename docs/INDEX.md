@@ -25,6 +25,7 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 | Add a DB column or inspect a live database | [DATABASE.md](DATABASE.md) | |
 | Let another mod read diary text | [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md#inter-plugin-api-skse-messaging) | |
 | Reuse the runtime-form mechanism in another mod | [BOOK_FORMS.md](BOOK_FORMS.md#reuse-in-other-mods) | `include/DynamicForms.h` |
+| Add or change a record in the ESP | [PLUGIN.md](PLUGIN.md) | `spriggit/SkyrimNetPhysicalDiaries/` |
 | Pick up a known bug or cleanup task | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | |
 
 ## By System
@@ -46,6 +47,7 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 | [DATABASE.md](DATABASE.md) | DiaryDB schema and lifetime, adding columns, co-save records, Reset, inspecting a DB |
 | [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md) | INI keys, MCM pages, when text is rebuilt, adding a setting |
 | [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md) | Scripts, natives, the public theft API, the SKSE-message API, ModEvents |
+| [PLUGIN.md](PLUGIN.md) | The ESP: its Spriggit YAML source, records and FormIDs, building it, editing it in the CK or xEdit |
 
 ### Development
 | Document | Description |

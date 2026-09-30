@@ -44,6 +44,14 @@ A volume has a **kind** (`VolumeKind`: `DiaryBookData::kind`, DiaryDB `kind`), f
 - DiaryDBs from before 2026-09-29 are migrated once, every volume a diary ([DATABASE.md](DATABASE.md#schema-changes)). Entries already written through the editor then leave the diary; the first journal (volume 1 starts at time 0 and is open-ended) shows them all.
 - **A journal on SkyrimNet's Clear:** a trailing journal volume left empty is kept if it started before the loaded save (it was in the save, made empty or torn out) and re-rendered empty; only one that started after the save is retired, as a diary's would be (`ReconcileWithTimeline`).
 
+### Blank journals
+
+"Blank Journal" books in the ESP, one per journal look (`SNPD_BlankJournal1`–`3`, and `SNPD_BlankJournalN` for the Nightingales; [PLUGIN.md](PLUGIN.md#records)), 20 gold. `BlankJournals::OnDataLoaded` (at `kDataLoaded`):
+
+- **Writing on:** names them from the locale file (`[Format] BlankJournal`; the ESP's name is English), and adds `SNPD_LItemBlankJournal` (one of the three at random) to Skyrim.esm's `LItemMiscVendorMiscItems75` **in memory**: the general-goods list that already sells the Roll of Paper, rolled by 18 merchant chests (Belethor, the Riverwood Trader, Bits and Pieces, the Khajiit caravans, …) and by two loot containers (`Cupboard01`, `PersonalChestSmall`). No vanilla record is overridden, so no other mod's edit of that list can drop them, and no patch is needed. A chest restocks every 48 game hours, so an existing save's merchants carry them from their next restock.
+- **Crafting:** at a tanning rack, 1 Leather + 2 Roll of Paper, one recipe per look. A fourth, in the Nightingale look, unlocks once the player has taken the Nightingale Oath (TG08A "Trinity Restored" stage 57, or the quest done); merchants never sell it.
+- **Writing off:** the recipes lose their workbench (so they're hidden), and merchants never get the list.
+
 ---
 
 ## Opening
@@ -219,4 +227,4 @@ The editor gets the text the reading view shows, as plain text: `EditableEntryTe
 - **SE, VR and the Convenient Reading variant** are untested, including plain reading through SNPD's `book.swf` on VR. VR also needs a keyboard story.
 - **Cyrillic.** Reading needs Win-1251 because Scaleform's pagination mixes byte and character offsets; the editor gets UTF-8. Untested with Cyrillic text.
 - **Translations** of the fifteen `[Messages] Edit…` strings: only English has them; other languages show the English defaults. The MCM's Writing strings in the other eight languages still say "diary". The `JournalTitle` translations are first drafts.
-- **Blank journals, quill and ink** (planned): a journal will come from reading a blank journal item, and writing will need a quill and an inkwell. Until then the new-entry key makes journals.
+- **Reading a blank journal** (planned) will start the next journal, in its look, and replace the new-entry key's journal making; **writing will need a quill and an inkwell**. The items exist ([Blank journals](#blank-journals)); reading one does nothing yet.

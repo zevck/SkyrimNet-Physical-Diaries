@@ -7,7 +7,9 @@
 #      papyrus-lang "pyro: Compile Project" task uses. Pyro builds incrementally.
 #   3. Builds each swf\<name>\ (<name>.xml + scripts\) into Interface\<name>.swf with
 #      JPEXS ffdec-cli, when its sources changed (docs/DEVELOPMENT.md#swf).
-#   4. Deploys to $defaultOutputPath and every $additionalOutputPaths entry
+#   4. Builds "SkyrimNet Physical Diaries.esp" from its Spriggit source
+#      (spriggit\SkyrimNetPhysicalDiaries) when that changed. See docs/PLUGIN.md.
+#   5. Deploys to $defaultOutputPath and every $additionalOutputPaths entry
 #      (Build_Config_Local.ps1): one MO2 mod folder per test instance
 #      (MO2 = AE, Nolvus = SE, FUS = VR). meta.ini is never touched, so each
 #      instance keeps its own MO2 metadata.
@@ -16,6 +18,7 @@
 #   .\Build_Local.ps1 -noDeploy       # build (+ Pyro) only
 #   .\Build_Local.ps1 -skipScripts    # skip Pyro
 #   .\Build_Local.ps1 -skipSwf        # skip the SWF build
+#   .\Build_Local.ps1 -skipEsp        # skip the ESP build and deploy (e.g. while editing it in the CK)
 #   .\Build_Local.ps1 -fresh          # cmake --fresh reconfigure first
 #
 # Every terminal outcome prints a timestamped PASS/FAIL banner and writes the same
@@ -33,6 +36,7 @@ param(
     [switch]$noDeploy,
     [switch]$skipScripts,
     [switch]$skipSwf,
+    [switch]$skipEsp,
     [switch]$fresh
 )
 $ErrorActionPreference = "Stop"
@@ -40,7 +44,9 @@ Set-Location -LiteralPath $PSScriptRoot
 
 $target   = "SkyrimNetPhysicalDiaries"
 $builtDll = Join-Path $PSScriptRoot "build\$config\$target.dll"
-$espName  = "SkyrimNet Physical Diaries.esp"
+. (Join-Path $PSScriptRoot "utilities\Spriggit.ps1")
+$espName  = $PluginName
+$builtEsp = Join-Path $PSScriptRoot "build\esp\$espName"
 
 # Folders SNPD owns inside a deployed mod. Mirrored (/MIR), so a file removed from
 # the repo is removed from the deploy too - a stale .pex lingering in a mod folder
@@ -109,6 +115,7 @@ trap {
 #   $pyroPath              = optional; defaults to the VS Code papyrus-lang extension's pyro.exe
 #   $ffdecPath             = JPEXS ffdec-cli.exe (the SWF build)
 #   $swfVariant            = optional; deploy this SWF variant instead (e.g. "convenient-reading")
+#   $spriggitPath          = optional; a Spriggit.CLI.exe to use (default: external\, downloaded)
 #   $defaultThreads        = build parallelism
 $defaultOutputPath     = ""
 $additionalOutputPaths = @()
@@ -116,6 +123,7 @@ $ckPath                = ""
 $pyroPath              = ""
 $ffdecPath             = ""
 $swfVariant            = ""
+$spriggitPath          = ""
 $defaultThreads        = 16
 if (Test-Path .\Build_Config_Local.ps1) { . .\Build_Config_Local.ps1 }
 if ($env:SNPD_OUTPUT_PATH) { $defaultOutputPath = $env:SNPD_OUTPUT_PATH }
@@ -224,6 +232,25 @@ if (-not $skipSwf -and (Test-Path swf)) {
     }
 }
 
+# --- ESP (Spriggit) ----------------------------------------------------------------
+# The .esp is built from its text source when any source file is newer than it.
+if (-not $skipEsp -and (Test-Path -LiteralPath $PluginSourceDir)) {
+    $sourceNewest = Get-ChildItem -LiteralPath $PluginSourceDir -Recurse -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not (Test-Path -LiteralPath $builtEsp) -or (Get-Item -LiteralPath $builtEsp).LastWriteTime -lt $sourceNewest.LastWriteTime) {
+        try { $spriggitCli = Get-SpriggitCli $spriggitPath }
+        catch { Complete-Build -Status 'FAILURE' -Stage 'esp' -Message $_.Exception.Message }
+        Write-Host "Building $espName (Spriggit)..." -ForegroundColor Cyan
+        New-Item -ItemType Directory -Force -Path (Split-Path $builtEsp) | Out-Null
+        $log = & $spriggitCli convert-to-plugin -i $PluginSourceDir -o $builtEsp 2>&1
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $builtEsp)) {
+            $log | ForEach-Object { Write-Host "  $_" }
+            Complete-Build -Status 'FAILURE' -Stage 'esp' -Code $LASTEXITCODE -Message "Spriggit convert-to-plugin failed"
+        }
+        # Spriggit may keep the old timestamp on an unchanged file; the build is current now.
+        (Get-Item -LiteralPath $builtEsp).LastWriteTime = Get-Date
+    }
+}
+
 # --- Deploy ------------------------------------------------------------------
 function Deploy-To {
     param([string]$dest)
@@ -238,7 +265,17 @@ function Deploy-To {
     } catch {
         $dllLocked = $true
     }
-    try { Copy-Item -LiteralPath $espName -Destination (Join-Path $dest $espName) -Force } catch { $dllLocked = $true }
+    if (-not $skipEsp -and (Test-Path -LiteralPath $builtEsp)) {
+        # A deployed .esp newer than the build was edited there (CK, xEdit): overwriting it
+        # would lose the edits.  They go back into the source first (esp_to_spriggit.ps1).
+        $deployedEsp = Join-Path $dest $espName
+        if ((Test-Path -LiteralPath $deployedEsp) -and
+            (Get-Item -LiteralPath $deployedEsp).LastWriteTime -gt (Get-Item -LiteralPath $builtEsp).LastWriteTime) {
+            $script:deployFailed += "$dest ($espName was edited there; run utilities\esp_to_spriggit.ps1, or delete it to take the build's)"
+        } else {
+            try { Copy-Item -LiteralPath $builtEsp -Destination $deployedEsp -Force } catch { $dllLocked = $true }
+        }
+    }
     # The shipped SWFs, then the chosen variant's on top ($swfVariant).
     $swfSources = @("Interface")
     if ($swfVariant) { $swfSources += "build\variants\$swfVariant\Interface" }
