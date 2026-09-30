@@ -195,10 +195,8 @@ namespace SkyrimNetDiaries {
         // drop the volume's oldest ones.
         auto entries = GetDiaryEntries(formId, kFetchAllEntries, bounds.startTime, bounds.endTime, ok, kind);
 
-        // Exclude the previous volume's entries on a shared boundary date: exactly
-        // prevCountAtBoundary of them (entry_date <= startTime and creation_time <=
-        // prevLastCreationTime), in sorted order, so two identical entries are never
-        // both removed.
+        // Drop exactly prevCountAtBoundary of the previous volume's entries on the shared date, in sorted
+        // order, so two identical entries are never both removed.
         if (bounds.prevLastCreationTime > 0.0 && bounds.prevCountAtBoundary > 0) {
             int toRemove = bounds.prevCountAtBoundary;
             auto it = entries.begin();
@@ -212,9 +210,8 @@ namespace SkyrimNetDiaries {
             }
         }
 
-        // The mirror of the removal above: on the date the
-        // next volume starts, keep only the nextPrevCountAtBoundary entries it recorded
-        // as belonging here; the rest are the next volume's.
+        // The mirror: on the next volume's start date, keep only the nextPrevCountAtBoundary entries it
+        // recorded as belonging here.
         if (bounds.endTime > 0.0 && bounds.nextPrevCountAtBoundary > 0) {
             int keep = bounds.nextPrevCountAtBoundary;
             for (auto it = entries.begin(); it != entries.end();) {

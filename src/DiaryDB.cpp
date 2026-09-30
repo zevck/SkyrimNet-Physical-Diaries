@@ -21,6 +21,7 @@
 
 #include <sqlite3.h>
 #include <filesystem>
+#include <unordered_set>
 
 namespace SkyrimNetDiaries {
 
@@ -141,17 +142,14 @@ namespace SkyrimNetDiaries {
         )");
         if (!ok) return false;
 
-        // Migration: add actor_form_id to existing DBs.  SQLite returns an error if the
-        // column already exists — we ignore it.  (DBs from before 2.0.0 also have an
-        // unused persisted_in_save column.)
+        // Migration: add actor_form_id to existing DBs.  The "duplicate column" error on DBs that have it
+        // is ignored (docs/DATABASE.md#schema-changes).
         sqlite3_exec(db_,
             "ALTER TABLE volumes ADD COLUMN actor_form_id INTEGER NOT NULL DEFAULT 0;",
             nullptr, nullptr, nullptr);
-        sqlite3_exec(db_, "ALTER TABLE blood ADD COLUMN heading INTEGER NOT NULL DEFAULT 0;", nullptr, nullptr, nullptr);
 
-        // Migration (2026-09-29): `kind` joined the key, so the player's journals number their
-        // volumes apart from their diary.  SQLite can't change a primary key: an older table
-        // is rebuilt once, every row a generated volume (kind 0).
+        // Migration: `kind` joined the primary key, which SQLite can't change, so an older table is
+        // rebuilt once, every row kind 0 (docs/DATABASE.md#schema-changes).
         if (!HasColumn("volumes", "kind")) {
             // Older SNPD versions can't use the migrated DB: keep a copy to go back to.
             if (const char* file = sqlite3_db_filename(db_, "main"); file && *file) {
@@ -426,7 +424,17 @@ namespace SkyrimNetDiaries {
         st.Bind(1, entryId);
         if (!st.Next()) return {};
         // The heading is the entry's, whatever its text; the ranges only fit the text they were for.
-        return { .ranges = st.Text(1) == ContentHash(content) ? st.Text(0) : std::string{}, .heading = st.Int(2) != 0 };
+        const bool matches = st.Text(1) == ContentHash(content);
+        if (!matches && !st.Text(0).empty()) {
+            // Once per entry: edited outside SNPD, or SkyrimNet stored the text differently.
+            static std::unordered_set<int> logged;
+            if (logged.insert(entryId).second) {
+                SKSE::log::info("[DiaryDB] Entry {}: its text changed since it was written in blood ({} bytes, hash "
+                                "{} stored {}): shown in ink",
+                                entryId, content.size(), ContentHash(content), st.Text(1));
+            }
+        }
+        return { .ranges = matches ? st.Text(0) : std::string{}, .heading = st.Int(2) != 0 };
     }
 
     bool DiaryDB::UpsertActorTemplate(const std::string& uuid,

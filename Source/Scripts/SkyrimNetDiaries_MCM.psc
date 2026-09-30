@@ -1,12 +1,8 @@
-; =============================================================================
-; SkyrimNetDiaries_MCM  -  extends SKI_ConfigBase
-; =============================================================================
+; ======== SkyrimNetDiaries_MCM  -  extends SKI_ConfigBase ========
 
 Scriptname SkyrimNetDiaries_MCM extends SKI_ConfigBase
 
-; ============================================================================
-; Native functions (registered in PapyrusAPI.cpp on "SkyrimNetDiaries_MCM")
-; ============================================================================
+; ======== Native functions (registered in PapyrusAPI.cpp on "SkyrimNetDiaries_MCM") ========
 
 bool Function RegenerateTextsOnly() global native
 bool Function ResetAllDiaries() global native
@@ -35,9 +31,7 @@ int  Function GetNewEntryKey()                   global native
 string Function GetFontFace()                    global native
        Function SetFontFace(string value)        global native
 
-; ============================================================================
-; Option handles
-; ============================================================================
+; ======== Option handles ========
 int oidEntriesPerVolume  = -1
 int oidShowDateHeaders   = -1
 int oidPlayerDiaryBooks  = -1
@@ -64,9 +58,7 @@ int _fontContentOnOpen = 0
 int _fontSmallOnOpen   = 0
 string _fontFaceOnOpen = ""
 
-; ============================================================================
-; Lifecycle
-; ============================================================================
+; ======== Lifecycle ========
 
 event OnConfigInit()
     ModName = "SkyrimNet Physical Diaries"
@@ -128,9 +120,7 @@ function UpdateFontIndex()
     endwhile
 endfunction
 
-; ============================================================================
-; Page rendering
-; ============================================================================
+; ======== Page rendering ========
 
 event OnPageReset(string page)
     SetCursorFillMode(TOP_TO_BOTTOM)
@@ -190,9 +180,7 @@ function RenderMaintenancePage()
     oidDebugLog = AddToggleOption("$SNPD_DebugLogging", GetDebugLog())
 endfunction
 
-; ============================================================================
-; Option select (toggles, reset button)
-; ============================================================================
+; ======== Option select (toggles, reset button) ========
 
 event OnOptionSelect(int oid)
     if oid == oidShowDateHeaders
@@ -224,9 +212,7 @@ event OnOptionSelect(int oid)
     endif
 endevent
 
-; ============================================================================
-; Menu open (font selector dropdown)
-; ============================================================================
+; ======== Menu open (font selector dropdown) ========
 
 event OnOptionMenuOpen(int oid)
     ; Only one menu exists — always populate it
@@ -235,9 +221,7 @@ event OnOptionMenuOpen(int oid)
     SetMenuDialogDefaultIndex(0)
 endevent
 
-; ============================================================================
-; Menu accept (font selected from dropdown)
-; ============================================================================
+; ======== Menu accept (font selected from dropdown) ========
 
 event OnOptionMenuAccept(int oid, int idx)
     ; Accept any valid menu selection — only one menu exists on this page
@@ -248,9 +232,7 @@ event OnOptionMenuAccept(int oid, int idx)
     endif
 endevent
 
-; ============================================================================
-; Slider open
-; ============================================================================
+; ======== Slider open ========
 
 event OnOptionSliderOpen(int oid)
     if oid == oidEntriesPerVolume
@@ -281,9 +263,7 @@ event OnOptionSliderOpen(int oid)
     endif
 endevent
 
-; ============================================================================
-; Slider accept
-; ============================================================================
+; ======== Slider accept ========
 
 event OnOptionSliderAccept(int oid, float value)
     int intVal = value as int
@@ -305,9 +285,7 @@ event OnOptionSliderAccept(int oid, float value)
     endif
 endevent
 
-; ============================================================================
-; Key map (edit key)
-; ============================================================================
+; ======== Key map (edit key) ========
 
 event OnOptionKeyMapChange(int oid, int keyCode, string conflictControl, string conflictName)
     ; The key only acts while the player reads their own diary, where game controls
@@ -324,9 +302,7 @@ event OnOptionKeyMapChange(int oid, int keyCode, string conflictControl, string 
     endif
 endevent
 
-; ============================================================================
-; Highlight / tooltip
-; ============================================================================
+; ======== Highlight / tooltip ========
 
 event OnOptionHighlight(int oid)
     if oid == oidEntriesPerVolume
@@ -358,9 +334,7 @@ event OnOptionHighlight(int oid)
     endif
 endevent
 
-; ============================================================================
-; Default reset
-; ============================================================================
+; ======== Default reset ========
 
 event OnOptionDefault(int oid)
     if oid == oidEntriesPerVolume

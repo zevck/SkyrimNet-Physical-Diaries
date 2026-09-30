@@ -52,10 +52,8 @@ namespace SkyrimNetDiaries {
 
     bool ConfigureDiaryForm(RE::TESObjectBOOK* book, const RE::TESObjectBOOK* templateBook,
                             const std::string& name) {
-        // From the template: book type (must be a tome, 0x00; a note scroll, 0xFF,
-        // ignores [pagebreak]), the models, bounds, sounds, keywords and item card.
-        // A factory-made form starts with none of these: without the world model and
-        // bounds a dropped book has no 3D and vanishes.  Flags are not copied.
+        // From the template: type (a tome: a note scroll ignores [pagebreak]), models, bounds, sounds, keywords,
+        // item card, not flags.  A factory form has none: without model and bounds a dropped book vanishes.
         if (templateBook) {
             book->data.type = templateBook->data.type;
             book->inventoryModel = templateBook->inventoryModel;
@@ -105,9 +103,8 @@ namespace SkyrimNetDiaries {
             return type == RE::FormType::Book || type == RE::FormType::Container || type == RE::FormType::NPC;
         }
 
-        // Game thread: deletes a world copy of a retired book, or removes retired books
-        // from the reference's inventory.  noInit: an inventory never opened can't hold
-        // a runtime book, and initializing it would roll its leveled loot early.
+        // Game thread: deletes a retired book's world copy, or removes retired books from ref's inventory.
+        // noInit: a never-opened inventory can't hold one, and initializing it would roll leveled loot early.
         void RemoveRetiredBooksFrom(RE::TESObjectREFR* ref, SweepCount& count) {
             if (!ref || ref->IsDeleted()) return;
             const auto* base = ref->GetBaseObject();
@@ -225,9 +222,8 @@ namespace SkyrimNetDiaries {
         const std::string templateToUse = look.empty() ? SelectJournalTemplate(actorUuid, actorName, targetActorFormID)
                                                        : look;
 
-        // Look the template up by EditorID.  This works with powerofthree's Tweaks or
-        // Native EditorID Fix.  Don't scan books comparing GetFormEditorID(): that
-        // vfunc returns "" for books unless Native EditorID Fix is installed.
+        // LookupByEditorID works with po3's Tweaks or Native EditorID Fix; a GetFormEditorID() scan doesn't
+        // (it returns "" for books without Native EditorID Fix).  See docs/BOOK_FORMS.md#templates.
         auto* templateBook = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>(templateToUse);
         if (!templateBook) {
             SKSE::log::error("Template book not found with Editor ID: '{}'", templateToUse);

@@ -81,10 +81,8 @@ namespace SkyrimNetDiaries {
     }
 
     namespace {
-        // A 1.x diary: a Dynamic Persistent Forms clone of one of the templates (a plugin
-        // FormID, not 0xFF, and the template's model: its name can belong to another
-        // NPC, since DPF reused FormIDs).  While DPF stays installed it recreates these
-        // at every game start, from a cache file shared by all saves.
+        // A 1.x diary: a DPF clone of a template (plugin FormID, template's model; not its name, which DPF
+        // reuse can give another NPC).  DPF, while installed, recreates these every game start.
         bool IsDpfDiary(const RE::TESObjectBOOK* book) {
             if (!book || (book->GetFormID() >> 24) == 0xFF) return false;
             const char* model = book->GetModel();
@@ -97,9 +95,8 @@ namespace SkyrimNetDiaries {
             });
         }
 
-        // Karliah, Gallus and Mercer Frey (Skyrim.esm NPC_ records) get the Nightingale
-        // journal.  Matched by the actor's base form, never by name: names are
-        // localized, and SkyrimNet display names can differ from the engine's.
+        // Karliah, Gallus and Mercer Frey get the Nightingale journal.  Matched by base form, never by
+        // name: names are localized, and SkyrimNet display names can differ from the engine's.
         bool IsNightingale(RE::FormID actorFormId) {
             static constexpr RE::FormID kNightingaleNPCs[] = {
                 0x0001B07F,  // Karliah
@@ -256,6 +253,19 @@ namespace SkyrimNetDiaries {
 
     std::vector<DiaryEntry> BookManager::GetLiveEntries(const DiaryBookData& vol, RE::FormID actorFormId,
                                                         double endTime, bool* ok) {
+        if (vol.kind == VolumeKind::Written) {
+            // A journal holds the entries tagged for it, whatever their dates; untagged ones are
+            // journal 1's.
+            auto entries = Database::GetDiaryEntries(actorFormId, kFetchAllEntries, 0.0, 0.0, ok, vol.kind);
+            std::erase_if(entries, [&vol](const DiaryEntry& e) { return std::max(JournalOf(e), 1) != vol.volumeNumber; });
+            auto* db = DiaryDB::GetSingleton();
+            for (auto& entry : entries) {
+                auto blood = db->GetBlood(entry.id, entry.content);
+                entry.blood = std::move(blood.ranges);
+                entry.bloodHeading = blood.heading;
+            }
+            return entries;
+        }
         VolumeBounds bounds{
             .startTime = vol.volumeNumber == 1 ? 0.0 : vol.startTime,
             .endTime = endTime,
@@ -272,16 +282,7 @@ namespace SkyrimNetDiaries {
                 }
             }
         }
-        auto entries = Database::GetVolumeEntries(actorFormId, bounds, ok, vol.kind);
-        if (vol.kind == VolumeKind::Written) {
-            auto* db = DiaryDB::GetSingleton();
-            for (auto& entry : entries) {
-                auto blood = db->GetBlood(entry.id, entry.content);
-                entry.blood = std::move(blood.ranges);
-                entry.bloodHeading = blood.heading;
-            }
-        }
-        return entries;
+        return Database::GetVolumeEntries(actorFormId, bounds, ok, vol.kind);
     }
 
     void BookManager::SetVolumeText(DiaryBookData& vol, const std::vector<DiaryEntry>& entries) {
@@ -398,11 +399,8 @@ namespace SkyrimNetDiaries {
     std::vector<std::string> BookManager::LoadFromDB() {
         auto* db = DiaryDB::GetSingleton();
 
-        // Always clear in-memory state on each game load, regardless of whether the
-        // DB is open.  If we skip the clear when the DB is closed (e.g. save-folder
-        // detection failed on a previous load), stale books_ entries from the prior
-        // session survive and cause the catch-up scan to think every actor already
-        // has books — so nothing gets recreated after a reload-without-save.
+        // Clear on every load even if the DB is closed: stale books_ from the last session would make the
+        // catch-up scan think every actor has books, so nothing is recreated after a reload-without-save.
         books_.clear();
         ClearIndexes();
         unclaimed_.clear();
@@ -413,9 +411,8 @@ namespace SkyrimNetDiaries {
             return {};
         }
 
-        // This save's live books by volume, from its co-save records: the record, not
-        // the row, says which form is the volume in this save (DiaryDB is shared by
-        // every save of the character).  Retired books match no row.
+        // This save's live books by volume, from its co-save records: the record, not the row, says which
+        // form is the volume in this save (DiaryDB is shared by every save).  Retired books match no row.
         std::map<std::tuple<std::string, VolumeKind, int>, std::vector<DynamicForms::Record>> saved;
         for (auto& record : DynamicForms::Tracked()) {
             std::string uuid;
@@ -490,10 +487,36 @@ namespace SkyrimNetDiaries {
             books_[ChainKey(data.actorUuid, data.kind)].push_back(std::move(data));
         }
 
-        // Books with no volume in DiaryDB are not proof of a Reset (DiaryDB may be new,
-        // or from another branch of saves), so they are left where they are: unclaimed,
-        // and reused if their volume is created again.
-        for (const auto& [volume, records] : saved) {
+        // A book with no volume row is not proof of a Reset (DiaryDB may be new): it stays unclaimed, reused
+        // if its volume returns.  A journal's book is its volume again: all it is survives without DiaryDB.
+        for (auto& [volume, records] : saved) {
+            if (const auto& [uuid, kind, number] = volume; kind == VolumeKind::Written && !records.empty()) {
+                auto* book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(records.front().formId);
+                if (book && !GetBookForFormID(book->GetFormID())) {
+                    DynamicForms::Record record = std::move(records.front());
+                    records.erase(records.begin());
+                    std::string name = Database::GetActorName(uuid);
+                    if (name.empty()) {
+                        if (auto* player = RE::PlayerCharacter::GetSingleton()) name = player->GetName();
+                    }
+                    DiaryBookData data;
+                    data.actorUuid = uuid;
+                    data.actorName = name;
+                    data.actorFormId = 0x14;
+                    data.bookFormId = record.formId;
+                    data.startTime = data.endTime = 0.0;
+                    data.volumeNumber = number;
+                    data.kind = kind;
+                    data.journalTemplate = record.templateEditorId;
+                    record.displayName = localization->FormatBookName(name, number, kind);
+                    ConfigureDiaryForm(book, RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>(record.templateEditorId),
+                                       record.displayName);
+                    DynamicForms::Track(std::move(record));
+                    SKSE::log::info("[LoadFromDB] Journal {} (0x{:X}) has no row in DiaryDB — restored from the save",
+                                    number, data.bookFormId);
+                    RegisterBook(std::move(data));
+                }
+            }
             for (const auto& record : records) {
                 SKSE::log::info("[LoadFromDB] Book 0x{:X} ('{}') has no volume in DiaryDB — kept unclaimed",
                                 record.formId, record.key);
@@ -521,10 +544,8 @@ namespace SkyrimNetDiaries {
     std::vector<DiaryEntry> BookManager::GetShownEntries(DiaryBookData& vol, bool* ok) {
         if (ok) *ok = false;
 
-        // Resolve the actor's FormID once per session from the UUID.  The stored
-        // actorFormId is only a fallback, and only if SkyrimNet maps it back to this
-        // UUID: after a load-order change it can belong to someone else, whose entries
-        // the book would then show.
+        // Resolve the FormID from the UUID once per session.  The stored actorFormId is a fallback only if it
+        // maps back to this UUID: after a load-order change it can belong to someone else.
         if (vol.cachedActorFormId == 0) {
             RE::FormID live = Database::GetFormIDForUUID(vol.actorUuid);
             if (live == 0 && vol.actorFormId != 0 &&
@@ -535,10 +556,8 @@ namespace SkyrimNetDiaries {
         }
         if (vol.cachedActorFormId == 0) return {};
 
-        // For the active (latest) volume use 0.0 so entries written after the
-        // last update are visible even if UpdateDiaryForActorInternal hasn't run yet.
-        // For an earlier volume (a newer one of its kind exists), or a frozen player diary,
-        // vol.endTime is the upper cutoff.
+        // The latest volume has no end (0.0), so entries since the last update show before it runs.
+        // An earlier volume, or a frozen player diary, ends at vol.endTime.
         double queryEnd = 0.0;
         {
             auto* allVols = GetAllVolumesForActor(vol.actorUuid, vol.kind);
@@ -570,10 +589,8 @@ namespace SkyrimNetDiaries {
         }
         int liveCount = static_cast<int>(liveEntries.size());
 
-        // Nothing changed and the cached text is current: done.  Text from before
-        // font tags existed is re-rendered once.  Zero live entries is real (the query
-        // succeeded): a volume whose entries were all deleted gets the "all entries
-        // removed" page.
+        // Nothing changed and the cached text is current: done (pre-font-tag text re-renders once).  Zero live
+        // entries is real: a volume whose entries were all deleted gets the "all entries removed" page.
         bool textIsCurrentFormat = vol->cachedBookText.find("<font face='") != std::string::npos;
         if (liveCount == vol->lastKnownEntryCount && !vol->cachedBookText.empty() && textIsCurrentFormat) {
             return;
@@ -596,6 +613,7 @@ namespace SkyrimNetDiaries {
     }
 
     void BookManager::MoveEndTimeBack(DiaryBookData& vol, const std::vector<DiaryEntry>& liveEntries) {
+        if (vol.kind != VolumeKind::Generated) return;  // a journal's entries aren't bounded by time
         if (vol.endTime > 0.0 && !liveEntries.empty()) {
             double newEnd = liveEntries.back().entry_date;
             if (newEnd != vol.endTime) {

@@ -1,33 +1,8 @@
-# Local build + multi-instance deploy for SkyrimNet Physical Diaries.
-#
-# Modeled on SkyrimNet's Build_Local.ps1, tailored for this plugin:
-#   1. Builds ONLY the plugin target, incrementally. Never /t:Rebuild - that also
-#      rebuilds the vendored CommonLib project (hundreds of files, minutes).
-#   2. Compiles Papyrus with Pyro using skyrimse.ppj - the same project the VS Code
-#      papyrus-lang "pyro: Compile Project" task uses. Pyro builds incrementally.
-#   3. Builds each swf\<name>\ (<name>.xml + scripts\) into Interface\<name>.swf with
-#      JPEXS ffdec-cli, when its sources changed (docs/DEVELOPMENT.md#swf).
-#   4. Builds "SkyrimNet Physical Diaries.esp" from its Spriggit source
-#      (spriggit\SkyrimNetPhysicalDiaries) when that changed. See docs/PLUGIN.md.
-#   5. Deploys to $defaultOutputPath and every $additionalOutputPaths entry
-#      (Build_Config_Local.ps1): one MO2 mod folder per test instance
-#      (MO2 = AE, Nolvus = SE, FUS = VR). meta.ini is never touched, so each
-#      instance keeps its own MO2 metadata.
-#
-#   .\Build_Local.ps1                 # build + Pyro + deploy to all instances
-#   .\Build_Local.ps1 -noDeploy       # build (+ Pyro) only
-#   .\Build_Local.ps1 -skipScripts    # skip Pyro
-#   .\Build_Local.ps1 -skipSwf        # skip the SWF build
-#   .\Build_Local.ps1 -skipEsp        # skip the ESP build and deploy (e.g. while editing it in the CK)
-#   .\Build_Local.ps1 -fresh          # cmake --fresh reconfigure first
-#
-# Every terminal outcome prints a timestamped PASS/FAIL banner and writes the same
-# result to %TEMP%\snpd-build-result.json, so a tool watching the build can read the
-# outcome without scraping the console.
+# Incremental plugin build (never /t:Rebuild: it rebuilds all of CommonLib), Pyro, SWFs, ESP, deploy to every instance.
+# Switches and config: docs/DEVELOPMENT.md#build.  PASS/FAIL also goes to %TEMP%\snpd-build-result.json.
 
 #Requires -Version 7
-# (Pyro logs to stderr; Windows PowerShell 5.1 turns that into a terminating error
-# under $ErrorActionPreference = "Stop".)
+# (Pyro logs to stderr, which Windows PowerShell 5.1 turns into a terminating error under "Stop".)
 
 param(
     [string]$preset = "vs2022-windows",
@@ -48,9 +23,8 @@ $builtDll = Join-Path $PSScriptRoot "build\$config\$target.dll"
 $espName  = $PluginName
 $builtEsp = Join-Path $PSScriptRoot "build\esp\$espName"
 
-# Folders SNPD owns inside a deployed mod. Mirrored (/MIR), so a file removed from
-# the repo is removed from the deploy too - a stale .pex lingering in a mod folder
-# is exactly the kind of bug that goes unnoticed.
+# Folders SNPD owns inside a deployed mod.  Mirrored (/MIR), so a file removed from the repo leaves the deploy too
+# (a stale .pex lingering in a mod folder is the kind of bug that goes unnoticed).
 $mirroredFolders = @(
     "Scripts",
     "Source\Scripts",
@@ -108,15 +82,7 @@ trap {
 }
 
 # --- Configuration ------------------------------------------------------------
-# Machine-specific settings live in Build_Config_Local.ps1 (gitignored):
-#   $defaultOutputPath     = primary MO2 mod folder to deploy into
-#   $additionalOutputPaths = @(...) further MO2 mod folders (other instances)
-#   $ckPath                = Creation Kit install (Pyro's --game-path)
-#   $pyroPath              = optional; defaults to the VS Code papyrus-lang extension's pyro.exe
-#   $ffdecPath             = JPEXS ffdec-cli.exe (the SWF build)
-#   $swfVariant            = optional; deploy this SWF variant instead (e.g. "convenient-reading")
-#   $spriggitPath          = optional; a Spriggit.CLI.exe to use (default: external\, downloaded)
-#   $defaultThreads        = build parallelism
+# Machine-specific settings live in the gitignored Build_Config_Local.ps1 (docs/DEVELOPMENT.md#build).
 $defaultOutputPath     = ""
 $additionalOutputPaths = @()
 $ckPath                = ""
@@ -131,8 +97,7 @@ if ($env:SNPD_CK_PATH)     { $ckPath = $env:SNPD_CK_PATH }
 if (-not $threads)         { $threads = $defaultThreads }
 
 # --- Configure (only when needed) ---------------------------------------------
-# The VS generator's ZERO_CHECK reconfigures on its own when CMakeLists changes,
-# so an explicit configure is needed only for a first build or -fresh.
+# The VS generator's ZERO_CHECK reconfigures itself when CMakeLists changes; configure only on a first build or -fresh.
 if ($fresh -or -not (Test-Path "build\CMakeCache.txt")) {
     $cmakeArgs = @("--preset", $preset, "-Wno-dev")
     if ($fresh) { $cmakeArgs += "--fresh" }
@@ -182,13 +147,8 @@ if (-not $skipScripts) {
     if ($missing) { Complete-Build -Status 'FAILURE' -Stage 'scripts' -Message ("No .pex for: " + (($missing | ForEach-Object BaseName) -join ', ')) }
 }
 
-# --- SWF (JPEXS ffdec-cli) -------------------------------------------------------
-# swf\<name>\<name>[.<variant>].xml is a base movie (JPEXS XML; its scripts are
-# compiled bytecode) and swf\<name>\scripts\ holds our ActionScript source, which
-# replaces the matching classes in every base.  <name>.xml builds the shipped
-# Interface\<name>.swf; each variant (a patch for another UI mod, a FOMOD option)
-# builds build\variants\<variant>\Interface\<name>.swf.  Built only when the base or
-# a script is newer than the output.
+# --- SWF (JPEXS ffdec-cli): each base swf\<name>\<name>[.<variant>].xml plus our scripts\ -----------------------
+# Built only when the base or a script is newer than the output.  See docs/DEVELOPMENT.md#swf.
 if (-not $skipSwf -and (Test-Path swf)) {
     foreach ($dir in Get-ChildItem swf -Directory) {
         $scriptsNewest = Get-ChildItem (Join-Path $dir.FullName "scripts") -Recurse -File -ErrorAction SilentlyContinue |

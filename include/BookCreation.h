@@ -22,9 +22,8 @@
 #include "PCH.h"
 #include "Database.h"  // VolumeKind
 
-// Diary book forms: engine-persisted runtime books (DynamicForms), one per volume.
-// BookManager::CreateDiaryBook is also defined in BookCreation.cpp.  See
-// docs/BOOK_FORMS.md.
+// Diary book forms: engine-persisted runtime books (DynamicForms), one per volume.  BookManager::CreateDiaryBook
+// is also defined in BookCreation.cpp.  See docs/BOOK_FORMS.md.
 namespace SkyrimNetDiaries {
 
     // A volume's key in its co-save record: "<actor UUID>|v<volume number>" for a diary,
@@ -33,10 +32,8 @@ namespace SkyrimNetDiaries {
     // Splits a VolumeKey.  False if `key` isn't one.
     bool ParseVolumeKey(const std::string& key, std::string& actorUuid, VolumeKind& kind, int& volumeNumber);
 
-    // Gives a diary form SNPD's look: book type, models, bounds, sounds, keywords and
-    // item card from its template, weight, value, no flags, and its name.  Returns
-    // true if the name had to change.  The save keeps none of this, so it runs at
-    // creation and on every load.
+    // Gives a diary form SNPD's look (from its template), weight, value, no flags, and its name; true if the
+    // name changed.  The save keeps none of this, so it runs at creation and on every load.
     bool ConfigureDiaryForm(RE::TESObjectBOOK* book, const RE::TESObjectBOOK* templateBook,
                             const std::string& name);
 

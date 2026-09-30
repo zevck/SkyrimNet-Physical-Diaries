@@ -56,9 +56,8 @@ namespace SkyrimNetDiaries::PapyrusAPI {
         }
     }
 
-    // Legacy entry point, kept for older EventListener scripts.  Papyrus ints are
-    // signed, so FormIDs >= 0x80000000 (ESL and high load-order NPCs) arrive clamped
-    // to 0x7FFFFFFF from a string conversion; UpdateDiaryFromEvent avoids that.
+    // Legacy entry point for older EventListener scripts.  FormIDs >= 0x80000000 (ESL, high load order) arrive
+    // clamped to 0x7FFFFFFF from Papyrus' signed ints; UpdateDiaryFromEvent avoids that.
     void UpdateDiaryForActorWrapper(RE::StaticFunctionTag*, std::int32_t formId) {
         SKSE::log::debug("[PapyrusAPI] UpdateDiaryForActor called with FormID 0x{:X}", formId);
         UpdateDiaryForFormID(static_cast<RE::FormID>(formId));
@@ -95,9 +94,7 @@ namespace SkyrimNetDiaries::PapyrusAPI {
         }
     }
 
-    // -------------------------------------------------------------------------
     // MCM Debug log toggle
-    // -------------------------------------------------------------------------
 
     bool MCM_GetDebugLog(RE::StaticFunctionTag*) {
         return SkyrimNetDiaries::Config::GetSingleton()->GetDebugLog();
@@ -121,9 +118,7 @@ namespace SkyrimNetDiaries::PapyrusAPI {
         return affected >= 0;
     }
 
-    // -------------------------------------------------------------------------
     // MCM Config getter/setter natives
-    // -------------------------------------------------------------------------
 
     std::int32_t MCM_GetEntriesPerVolume(RE::StaticFunctionTag*) {
         return static_cast<std::int32_t>(SkyrimNetDiaries::Config::GetSingleton()->GetEntriesPerVolume());

@@ -29,10 +29,8 @@ namespace SkyrimNetDiaries::DiaryTheftHandler {
 
     namespace {
 
-        // Menu state for telling a willing handover from theft: a container opened
-        // while dialogue is open (and the console isn't) is the dialogue trade menu,
-        // e.g. a follower's inventory.  Only open/close is tracked, never the speaker
-        // (MenuTopicManager::speaker needs an id the VR Address Library lacks).
+        // A container opened during dialogue (console closed) is a willing trade.  Only open/close is tracked,
+        // never the speaker (MenuTopicManager::speaker has no VR Address Library id).  See docs/THEFT.md.
         bool g_dialogueIsOpen = false;
         bool g_consoleIsOpen = false;
 
@@ -42,9 +40,8 @@ namespace SkyrimNetDiaries::DiaryTheftHandler {
         bool g_legitimateTradeActive = false;
         std::mutex g_menuMutex;
 
-        // True if the player's copy of `book` carries ownership data, i.e. the engine
-        // flagged it as stolen (pickpocketed or taken).  An unflagged copy came from a
-        // trade, the console or similar.
+        // True if the player's copy of `book` has ownership data: the engine's stolen flag.  An unflagged copy
+        // came from a trade, the console or similar.
         bool PlayerCopyIsStolen(RE::PlayerCharacter* player, RE::TESBoundObject* book) {
             auto inv = player->GetInventory([book](RE::TESBoundObject& a_obj) { return &a_obj == book; });
             auto it = inv.find(book);
@@ -115,9 +112,8 @@ namespace SkyrimNetDiaries::DiaryTheftHandler {
                             actor->GetName(), actor->GetFormID(), bookName);
         }
 
-        // Watches diary volumes moving between the player and their owner.  A book is
-        // a diary only if BookManager tracks its base FormID; names are never used
-        // (they're localized, and same-named NPCs share them).
+        // Watches diary volumes moving between the player and their owner.  A book is a diary only if
+        // BookManager tracks its base FormID; never by name (localized, and shared by same-named NPCs).
         class ContainerChangeHandler : public RE::BSTEventSink<RE::TESContainerChangedEvent> {
         public:
             static ContainerChangeHandler* GetSingleton() {

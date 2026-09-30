@@ -1,10 +1,5 @@
-# Converts "SkyrimNet Physical Diaries.esp" back into its Spriggit source (spriggit\SkyrimNetPhysicalDiaries)
-# after it was edited in the Creation Kit or xEdit.  Commit the source, not the .esp.
-#
-#   .\utilities\esp_to_spriggit.ps1                     # the newest copy in the deploy folders
-#   .\utilities\esp_to_spriggit.ps1 -EspPath <file>     # a specific .esp
-#
-# See docs/PLUGIN.md.
+# Converts the ESP (newest copy in the deploy folders, or -EspPath <file>) back into its Spriggit source after a CK
+# or xEdit edit.  Commit the source, not the .esp.  See docs/PLUGIN.md.
 
 #Requires -Version 7
 

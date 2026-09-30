@@ -27,31 +27,15 @@ struct sqlite3;
 
 namespace SkyrimNetDiaries {
 
-    // ---------------------------------------------------------------------------
-    // DiaryDB — persistent SQLite store for diary volume metadata + rendered text.
-    //
-    // Replaces the SKSE co-save for BookManager data so all diary state survives
-    // save reverts (same character folder, independent of save file state).
-    //
-    // DB location:
-    //   <cwd>/Data/SKSE/Plugins/SkyrimNetPhysicalDiaries/<saveFolder>/diary.db
-    //
-    // Schema (three tables):
-    //   volumes         — one row per diary volume (metadata + rendered book_text),
-    //                     keyed by (actor_uuid, kind, volume_number)
-    //   actor_templates — one row per actor UUID: journal template choice (its
-    //                     last_known_game_time column is no longer used)
-    //   stolen_volumes  — one row per stolen volume
-    //   blood           — one row per player entry with text written in blood
-    // ---------------------------------------------------------------------------
+    // DiaryDB: per-character SQLite store for volume metadata and rendered text, keyed to the SkyrimNet
+    // save folder so it survives save reverts.  Location and schema: docs/DATABASE.md.
 
     class DiaryDB {
     public:
         static DiaryDB* GetSingleton();
 
-        // Open (or create) the DB for the given save folder.  Idempotent — a
-        // second call with the same folder is a no-op; a different folder closes
-        // the old connection first.  Returns false on failure.
+        // Open (or create) the DB for the save folder.  The same folder again is a no-op; a different
+        // folder closes the old connection first.
         bool Open(const std::string& saveFolder);
         void Close();
         bool IsOpen() const { return db_ != nullptr; }
@@ -75,9 +59,8 @@ namespace SkyrimNetDiaries {
             std::string  bookText;   // rendered font-tagged text ready for injection
         };
 
-        // Insert-or-replace a full volume row.  If bookText is empty the existing
-        // book_text column value is preserved (i.e. on a metadata-only upsert the
-        // rendered text is not wiped).
+        // Insert-or-replace a full volume row.  An empty bookText keeps the stored book_text
+        // (a metadata-only upsert doesn't wipe the render).
         bool UpsertVolume(const VolumeRow& row);
 
         // Update only the rendered text and entry count (called after formatting).

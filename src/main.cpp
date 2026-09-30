@@ -66,10 +66,8 @@ namespace {
     // still waiting from an earlier load gives up instead of running against the new one.
     std::atomic<std::uint32_t> g_loadGeneration{ 0 };
 
-    // Ends the current session before a load or a new game.  Nothing from it may
-    // leak into the next: the actor cache, and the previous save's DiaryDB (reopened by the post-load sync, or by
-    // SaveCallback if a save happens first).  A new game gets no kPreLoadGame, so
-    // without this it would keep writing into the previous character's DiaryDB.
+    // Ends the current session before a load or a new game so nothing leaks into the next (a new game gets no
+    // kPreLoadGame).  See docs/ARCHITECTURE.md#startup-and-load-sequence.
     void EndSession() {
         ++g_loadGeneration;
         SkyrimNetDiaries::TimelineGate::Reset();
@@ -103,11 +101,8 @@ namespace {
                     SkyrimNetDiaries::DiaryTheftHandler::RegisterStolenDecorator();
                 }
 
-                // Verify the diary template books resolve.  If they don't, every
-                // diary creation silently fails with "Template book not found" spam.
-                // Common causes: ESP not actually enabled, an EditorID-exposure
-                // plugin (e.g. po3_Tweaks / Native EditorID Fix) missing or the wrong
-                // runtime build, or a tool stripped the template records.
+                // Verify the template books resolve, or every creation fails: usually the ESP isn't enabled or
+                // powerofthree's Tweaks / Native EditorID Fix is missing (docs/BOOK_FORMS.md).
                 {
                     std::vector<const char*> templates(std::begin(SkyrimNetDiaries::kJournalTemplates),
                                                        std::end(SkyrimNetDiaries::kJournalTemplates));
@@ -177,13 +172,8 @@ namespace {
             }
             SKSE::log::info("✓ SkyrimNet API ready");
 
-            // The post-load setup waits for two things, polled every 100 ms:
-            //   1. SkyrimNet's database (IsMemorySystemReady), for up to a minute.
-            //   2. SkyrimNet's timeline decision (TimelineGate), with no limit while its
-            //      keep/clear prompt is on screen.  Syncing earlier builds books from
-            //      "future" entries that a Clear then deletes.
-            // Everything that reads SkyrimNet's data, including opening DiaryDB, runs
-            // only after both.
+            // Nothing reads SkyrimNet's data (DiaryDB included) until its memory system is ready and TimelineGate
+            // has settled: syncing earlier builds books from "future" entries that a Clear then deletes.
             const auto generation = g_loadGeneration.load();
             const auto start = std::chrono::steady_clock::now();
             auto runSetup = std::make_shared<std::function<void()>>();
@@ -216,9 +206,8 @@ namespace {
 
                 const auto waited = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
                 SKSE::log::info("kPostLoadGame: SkyrimNet ready, starting post-load sync (waited {:.1f}s)", waited);
-                // A failure before this save's volumes are loaded pauses diary books, as
-                // the other load failures do: with books_ incomplete, events would
-                // create duplicate volumes.
+                // A failure before this save's volumes are loaded pauses diary books: with books_ incomplete,
+                // events would create duplicate volumes.
                 bool volumesLoaded = false;
                 const auto pauseIfIncomplete = [&volumesLoaded]() {
                     if (!volumesLoaded) {
@@ -333,9 +322,7 @@ SKSE_PLUGIN_LOAD(const SKSE::LoadInterface* a_skse)
     // would replace it (and reopen the same file).
     SKSE::Init(a_skse, { .log = false });
 
-    // Load configuration, then immediately save it back so MO2 writes the file into
-    // the Overwrite folder.  This ensures user settings survive future mod updates
-    // that would otherwise replace the shipped INI inside the mod folder.
+    // Save the config straight back so MO2 writes it into Overwrite and user settings survive mod updates.
     auto configPath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "SkyrimNetPhysicalDiaries.ini";
     SkyrimNetDiaries::Config::GetSingleton()->Load(configPath);
     SkyrimNetDiaries::Config::GetSingleton()->Save();  // Persist to MO2 Overwrite on first run

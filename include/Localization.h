@@ -84,9 +84,9 @@ namespace SkyrimNetDiaries {
         const std::string& GetEditNeedsSkyrimNet() const { return editNeedsSkyrimNet_; }
         const std::string& GetEditNeedsPause() const { return editNeedsPause_; }
         const std::string& GetEditEmptiedHint() const { return editEmptiedHint_; }
-        // New entries: only in the latest volume; a full one starts the next volume.
-        const std::string& GetEditNotLatest() const { return editNotLatest_; }
-        // The new-entry key during play started a diary volume (none, or the latest isn't carried).
+        // A journal holds EntriesPerVolume entries: no new one in a full journal.
+        const std::string& GetEditJournalFull() const { return editJournalFull_; }
+        // A blank journal read from the inventory became one of the player's journals.
         const std::string& GetEditStartedVolume() const { return editStartedVolume_; }
         const std::string& GetEditNoJournal() const { return editNoJournal_; }
         const std::string& GetEditNeedsQuill() const { return editNeedsQuill_; }
@@ -148,7 +148,7 @@ namespace SkyrimNetDiaries {
         std::string editNeedsSkyrimNet_;
         std::string editNeedsPause_;
         std::string editEmptiedHint_;
-        std::string editNotLatest_;
+        std::string editJournalFull_;
         std::string editStartedVolume_;
         std::string editNoJournal_;
         std::string editNeedsQuill_;

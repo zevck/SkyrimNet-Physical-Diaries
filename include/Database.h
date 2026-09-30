@@ -20,6 +20,7 @@
 #pragma once
 
 #include "PCH.h"
+#include <charconv>
 #include <nlohmann/json.hpp>
 
 namespace SkyrimNetDiaries {
@@ -47,13 +48,34 @@ namespace SkyrimNetDiaries {
         return std::ranges::find(entry.tags, kPlayerWrittenTag) != entry.tags.end();
     }
 
+    // Tag naming the player's journal an entry is in, "snpd_journal_<volume number>", whatever its date
+    // (docs/EDITING.md#diaries-and-journals).
+    inline constexpr std::string_view kJournalTagPrefix = "snpd_journal_";
+
+    // The journal an entry's tag names, or 0 (none: written before journals had tags, and
+    // shown in journal 1).
+    inline int JournalOf(const DiaryEntry& entry) {
+        for (const auto& tag : entry.tags) {
+            if (!tag.starts_with(kJournalTagPrefix)) continue;
+            int number = 0;
+            const auto digits = std::string_view(tag).substr(kJournalTagPrefix.size());
+            if (std::from_chars(digits.data(), digits.data() + digits.size(), number).ec == std::errc{}) return number;
+        }
+        return 0;
+    }
+
+    // Puts the entry in journal `number` (replacing any other journal tag).
+    inline void SetJournal(DiaryEntry& entry, int number) {
+        std::erase_if(entry.tags, [](const std::string& tag) { return tag.starts_with(kJournalTagPrefix); });
+        entry.tags.push_back(std::format("{}{}", kJournalTagPrefix, number));
+    }
+
     // Generated: SkyrimNet's entries (a diary).  Written: the player's tagged entries (a journal).
     // docs/EDITING.md#diaries-and-journals
     enum class VolumeKind : int { Generated = 0, Written = 1 };
 
-    // Where a volume's entry range starts and ends (docs/VOLUMES_AND_SYNC.md#volume-boundaries).
-    // The prev* fields are the volume's own boundary data; the next* fields are the
-    // next volume's, when there is one.
+    // A volume's entry range (docs/VOLUMES_AND_SYNC.md#volume-boundaries).  prev*: the volume's own
+    // boundary data; next*: the next volume's, when there is one.
     struct VolumeBounds {
         double startTime = 0.0;
         double endTime = 0.0;                  // 0 = open-ended
@@ -100,32 +122,19 @@ namespace SkyrimNetDiaries {
         // Check if SkyrimNet memory system is ready
         static bool IsMemorySystemReady();
 
-        // Diary entries for a FormID (0 = every actor) within [startTime, endTime]
-        // (0 = unbounded), returned oldest first.
-        //
-        // `limit` is applied by SkyrimNet to the NEWEST entries, so a limited query
-        // returns the latest `limit` entries in the range, not the first.  Use
-        // GetVolumeEntries whenever "the first N entries" matters.
-        //
-        // An empty result can mean "no entries" or "the query failed"; pass `ok` to
-        // tell them apart (false: SkyrimNet unavailable, an exception, bad JSON).
-        //
-        // `kind`: the player's entries of that kind only (only the player has written
-        // entries, so for anyone else, and for every actor at once, it changes nothing).
+        // Entries for a FormID (0 = all) in [startTime, endTime], oldest first.  `limit` keeps the NEWEST (use
+        // GetVolumeEntries for "the first N"); `ok` tells empty from failed.  docs/VOLUMES_AND_SYNC.md
         static std::vector<DiaryEntry> GetDiaryEntries(uint32_t formId, int limit = kFetchAllEntries,
                                                         double startTime = 0.0, double endTime = 0.0,
                                                         bool* ok = nullptr, VolumeKind kind = VolumeKind::Generated);
 
-        // A volume's entries, oldest first: the whole [startTime, endTime] range minus
-        // the previous volume's boundary entries and, on a date shared with the next
-        // volume, the entries that volume owns.  Volume sizes come only from these
-        // stored boundaries, never from the current EntriesPerVolume setting.
+        // A volume's entries, oldest first, minus those its neighbours own on shared dates.  Sizes come
+        // only from the stored boundaries, never from the current EntriesPerVolume.
         static std::vector<DiaryEntry> GetVolumeEntries(uint32_t formId, const VolumeBounds& bounds,
                                                          bool* ok = nullptr, VolumeKind kind = VolumeKind::Generated);
 
-        // Game time of the player's most recent SkyrimNet event, in entry_date units
-        // (0 when there is none).  SkyrimNet asks its keep/clear question on load
-        // exactly when this is later than the current game time.
+        // The player's latest SkyrimNet event, in entry_date units (0: none).  SkyrimNet asks its keep/clear
+        // question on load exactly when this is later than the current game time.
         static double GetPlayerLastEventTime();
 
         // Registers a native prompt decorator (SkyrimNet public API v5+).  The callback
@@ -137,20 +146,17 @@ namespace SkyrimNetDiaries {
         // book editor needs all three before the player writes anything.
         static bool CanWriteDiaries();
 
-        // Any thread but the game thread (SkyrimNet embeds the entry's memory): add an entry
-        // for an actor, dated `entryDate` (entry_date units).  The new id, or 0 when SkyrimNet
-        // refuses (its keep/clear timeline check is pending) or the call failed.
+        // Not on the game thread (SkyrimNet embeds the memory).  The new id, or 0 when SkyrimNet refuses
+        // (keep/clear timeline check pending) or the call failed.
         static int AddDiaryEntry(uint32_t formId, const std::string& content, double entryDate,
                                  const std::string& tagsCSV);
 
-        // Any thread but the game thread (SkyrimNet re-embeds the entry's memory): replace an
-        // entry's text and tags.  False when SkyrimNet refuses (its keep/clear timeline check
-        // is pending), the entry is gone, the API is older than v11, or the call failed.
+        // Not on the game thread (SkyrimNet re-embeds the memory).  False when SkyrimNet refuses (keep/clear
+        // check pending), the entry is gone, the API is older than v11, or the call failed.
         static bool UpdateDiaryEntry(int entryId, const std::string& content, const std::string& tagsCSV);
 
-        // Any thread: delete an entry and its memory.  False when SkyrimNet refuses (its
-        // keep/clear timeline check is pending), the entry is gone, the API is older than v11,
-        // or the call failed.
+        // Any thread: delete an entry and its memory.  False when SkyrimNet refuses (keep/clear check
+        // pending), the entry is gone, the API is older than v11, or the call failed.
         static bool DeleteDiaryEntry(int entryId);
 
         // Get bio template name for an actor FormID

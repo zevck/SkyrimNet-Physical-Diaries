@@ -24,10 +24,8 @@
 
 namespace SkyrimNetDiaries {
 
-    // Installs a MinHook detour on `target`, storing the trampoline to the original in
-    // `*original`.  All SNPD engine hooks use this: MinHook relocates the prologue and
-    // copes with other plugins hooking the same function.  Logs the outcome ("Installed
-    // <what> hook (RELOCATION_ID <ids>)"; on failure, what stops working).
+    // MinHook detour on `target`, trampoline in `*original`: copes with other plugins hooking the same
+    // function.  Logs the outcome; `onFailure` says what stops working.
     inline bool InstallDetour(std::uintptr_t target, void* detour, void** original,
                               std::string_view what, std::string_view ids, std::string_view onFailure) {
         const auto init = MH_Initialize();

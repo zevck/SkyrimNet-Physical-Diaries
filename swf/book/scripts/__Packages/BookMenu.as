@@ -15,10 +15,9 @@ class BookMenu extends MovieClip
    var iPageSetIndex;
    var iPaginationIndex;
    static var BookMenuInstance;
-   // Read as plain text by the plugins (SNPD's WritingMode.cpp; the SWF ships uncompressed):
-   // this book.swf being installed turns player writing on.  Mod-neutral, since Physical
-   // Letters ships the same SWF.  Bump when a call is added; a plugin needs at least its version.
-   static var WRITING_INTERFACE = "BOOKMENU_WRITING_INTERFACE=2";
+   // Read as plain text by the plugins (WritingMode.cpp; the SWF ships uncompressed): installed, it turns writing on.
+   // Mod-neutral (Physical Letters ships it too).  Bump when a call is added; a plugin needs at least its version.
+   static var WRITING_INTERFACE = "BOOKMENU_WRITING_INTERFACE=3";
    // Text written in blood (2): dark red, marked in the plugin's text between these two
    // private-use characters (see ParseBlood, MarkBlood).
    static var BLOOD_COLOR = 0x2B0202;
@@ -107,10 +106,8 @@ class BookMenu extends MovieClip
       gfx.io.GameDelegate.addCallBack("PrepForClose",this,"PrepForClose");
    }
 
-   // ================================================================
-   // EDIT MODE (docs/EDITING.md). The plugin calls these through the movie; the book is open,
-   // so SetBookText has run and bNote is known.
-   // ================================================================
+   // ======== EDIT MODE (docs/EDITING.md) ========
+   // The plugin calls these through the movie; the book is open, so SetBookText has run and bNote is known.
 
    function EnterEditMode()
    {
@@ -209,9 +206,8 @@ class BookMenu extends MovieClip
 
    // ---- Content: locked text and editable bodies ----
 
-   // From the plugin, before EnterEditMode: a diary volume laid out as the book shows it. Title
-   // and dates go on the title page; entries is "heading\x1Fbody" per entry, joined by \x1E.
-   // Headings are locked; each body is editable (entry i of EditGetBodies).
+   // From the plugin, before EnterEditMode: title and dates go on the title page; entries is "heading\x1Fbody" per
+   // entry, joined by \x1E.  Headings are locked; each body is editable (entry i of EditGetBodies).
    function SetEditContent(font, titleSize, smallSize, dateSize, contentSize, title, dates, entries)
    {
       this.oEditContent = {font:font, titleSize:titleSize, smallSize:smallSize, dateSize:dateSize, contentSize:contentSize, title:title, dates:dates, entries:entries.length ? entries.split(String.fromCharCode(30)) : []};
@@ -222,11 +218,8 @@ class BookMenu extends MovieClip
       return str.split("\r\n").join("\r").split("\n").join("\r");
    }
 
-   // Fill EditField and aSegs with FormatDiaryEntries' layout as the book menu lays it out, so
-   // each page matches the reading view line for line. Every segment after the first starts
-   // with a locked "\r" and a new page, the "[pagebreak]" line's end. Line breaks are where
-   // reading differs from plain text: see FormatBreaks. Without content: one editable
-   // segment, the blank page.
+   // Fill EditField and aSegs with FormatDiaryEntries' layout so each page matches the reading view line for line.
+   // Each segment after the first starts with a locked "\r" and a new page; line breaks: see FormatBreaks.
    function EditBuildContent(baseFmt)
    {
       var c = this.oEditContent;
@@ -323,10 +316,8 @@ class BookMenu extends MovieClip
       }
    }
 
-   // Body k's formats as FormatDiaryEntries gives them: every paragraph (split on "\r\r") at the
-   // content size, and each "\r\r" between paragraphs outside the font tags, in the page's font
-   // and outer size, which sets a blank line's height. A single line break stays in its
-   // paragraph. Re-run after every edit to the body.
+   // Body k's formats as FormatDiaryEntries gives them: paragraphs at the content size, each "\r\r" between them in
+   // the page's outer size (outside the font tags; it sets a blank line's height).  Re-run after every body edit.
    function FormatBreaks(k)
    {
       if(this.oBreakFmt == undefined)
@@ -596,9 +587,8 @@ class BookMenu extends MovieClip
       return this.bTextReceived == true;
    }
 
-   // A new, empty entry at the end: a new page with its heading (locked) and an empty body,
-   // formatted as EditBuildContent does. The caret goes into it. Returns its index among the
-   // entries, or -1.
+   // A new, empty entry at the end: a new page with its locked heading and an empty body, the caret in it.
+   // Returns its index among the entries, or -1.
    function EditAppendEntry(heading)
    {
       if(this.aSegs == undefined || this.EditField == undefined || this.oBreakFmt == undefined)
@@ -770,9 +760,8 @@ class BookMenu extends MovieClip
       return true;
    }
 
-   // Leave edit mode and read again, on the spread being edited, with the book's text as
-   // it is now (the plugin renders it from the saved entries). Lays the text out as the
-   // engine's SetBookText does, keeping the engine's page slots where they are.
+   // Leave edit mode and read again on the spread being edited, with the text rendered from the saved entries.
+   // Lays it out as the engine's SetBookText does, keeping the engine's page slots where they are.
    function ReturnToReading(text)
    {
       var page = this.iEditPage;
@@ -1024,6 +1013,23 @@ class BookMenu extends MovieClip
       this.EditLayout();
    }
 
+   // Whether EditBackspace (forward false) or EditDelete (true) would remove a character: the
+   // plugin charges ink or blood only for a key that changes the text.
+   function EditCanErase(forward)
+   {
+      if(this.EditField == undefined)
+      {
+         return false;
+      }
+      var pos = this.EditCaret();
+      var k = this.EditableSegAt(pos);
+      if(k < 0)
+      {
+         return false;
+      }
+      return forward ? pos < this.BodyEnd(k) : pos > this.BodyStart(k);
+   }
+
    // Stops at the start of the body: headings and the title page can't be deleted.
    function EditBackspace()
    {
@@ -1189,9 +1195,8 @@ class BookMenu extends MovieClip
       return ok;
    }
 
-   // The plugin calls this on every key event while editing (press, held repeat, release): the
-   // page keys (arrows, A, D) type or move the caret, so a turn while keys are in use is theirs,
-   // not a click's.
+   // Called on every key event while editing (press, repeat, release): the page keys (arrows, A, D) type or move the
+   // caret, so a page turn while keys are in use is theirs, not a click's.
    function EditSuppressTurn()
    {
       this.iSuppressTurnUntil = getTimer() + BookMenu.EDIT_KEY_TURN_BLOCK_MS;
@@ -1324,9 +1329,7 @@ class BookMenu extends MovieClip
       this.iPageSetIndex = this.iLeftPageNumber;
    }
 
-   // ================================================================
-   // ORIGINAL METHODS (unchanged)
-   // ================================================================
+   // ======== ORIGINAL METHODS (unchanged) ========
 
    static function trim(str)
    {

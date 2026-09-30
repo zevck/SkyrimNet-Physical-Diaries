@@ -36,7 +36,7 @@ Created in `EnsureSchema()`.
 
 **`stolen_volumes`**: `(actor_uuid, volume_number)` PK, `stolen_at` (game seconds).
 
-**`blood`**: `entry_id` (SkyrimNet's entry id, PK), `ranges` (the byte ranges of the entry's content written in blood, `"s:e,s:e"`), `content_hash` (FNV-1a 64 of the content they belong to; a mismatch drops the red from the text), `heading` (1: the entry was begun in blood, its heading is red; added to existing tables with `ALTER TABLE`). Only the player's journal entries have rows. See [EDITING.md](EDITING.md#writing-in-blood).
+**`blood`**: `entry_id` (SkyrimNet's entry id, PK), `ranges` (the byte ranges of the entry's content written in blood, `"s:e,s:e"`), `content_hash` (FNV-1a 64 of the content they belong to; a mismatch drops the red from the text), `heading` (1: the entry was begun in blood, its heading is red). Only the player's journal entries have rows. See [EDITING.md](EDITING.md#writing-in-blood).
 
 Databases from before 2.0.0 also had a `persisted_in_save` column in `volumes` (it existed because DPF forms survived a reload without saving); the `kind` migration dropped it.
 
@@ -65,7 +65,7 @@ A save made with 2.0.0 can't go back to an older SNPD: its books are `0xFF` form
 
 ## MCM Reset (`ResetAllDiariesInternal`)
 
-Deletes every tracked actor from DiaryDB (`DeleteActor` + `ClearAllStolenVolumes`), clears memory, **retires** every book form, then on the game thread removes their copies from the loaded cells, their owner NPCs and merchant chests (`SweepRetiredBooks`); copies elsewhere are removed as their cells load. The forms themselves are never removed from the save (see [BOOK_FORMS.md](BOOK_FORMS.md#retirement)). The catch-up scan rebuilds the diaries on the next load (the player's only with `[Diary] PlayerDiaryBooks` on). The player's journals are retired too and not rebuilt: the next new-entry key starts Journal 1, which starts at time 0 and is open-ended, so it shows every entry they wrote. SkyrimNet's entries are never touched.
+Deletes every tracked actor from DiaryDB (`DeleteActor`: their `volumes` and `actor_templates` rows; `ClearAllStolenVolumes`) before it clears memory (the other way round, the next load reads the rows back, the catch-up scan sees books, and Reset seems to stop working after one run), **retires** every diary's book form, then on the game thread removes their copies from the loaded cells, their owner NPCs and merchant chests (`SweepRetiredBooks`); copies elsewhere are removed as their cells load. The forms themselves are never removed from the save (see [BOOK_FORMS.md](BOOK_FORMS.md#retirement)). The catch-up scan rebuilds the diaries on the next load (the player's only with `[Diary] PlayerDiaryBooks` on). The player's journals are **kept** as they were: their books aren't retired, and their rows go back into DiaryDB after the wipe (`RegisterBook`), so the same books keep their looks and entries wherever they are. SkyrimNet's entries are never touched.
 
 ## Inspecting a live database
 

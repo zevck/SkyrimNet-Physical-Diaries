@@ -21,9 +21,8 @@
 
 #include "PCH.h"
 
-// Blank journals: the ESP's "Blank Journal" books (one per journal look), sold by general-goods
-// merchants and crafted at a tanning rack; the Nightingale look only crafted, by a Nightingale.  See docs/PLUGIN.md and
-// docs/EDITING.md#blank-journals.
+// Blank journals: the ESP's "Blank Journal" books (one per look), sold by general-goods merchants and crafted at a
+// tanning rack; the Nightingale look only crafted, by a Nightingale.  See docs/EDITING.md#blank-journals.
 namespace SkyrimNetDiaries::BlankJournals {
 
     // kDataLoaded, after WritingMode::Detect.  Writing on: names the books in the game's

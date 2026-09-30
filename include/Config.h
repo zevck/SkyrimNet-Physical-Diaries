@@ -109,25 +109,22 @@ namespace SkyrimNetDiaries {
             }
         }
 
-        // Every integer setting: INI section and key, default, and the range the value
-        // is clamped to.  Clamping happens on read, so a hand-edited INI can't feed
-        // EntriesPerVolume = 0 (an endless chunking loop) or negative sizes to the code.
+        // Every integer setting: section, key, default and clamp range.  Clamped on read, so a hand-edited
+        // INI can't feed EntriesPerVolume = 0 (an endless chunking loop) or negative sizes to the code.
         struct IntSetting { const char* section; const char* key; int defaultValue; int min; int max; };
         static constexpr IntSetting kDebugLog         { "General", "DebugLog",         0,  0, 1  };
         static constexpr IntSetting kShowDateHeaders  { "Diary",   "ShowDateHeaders",  1,  0, 1  };
         static constexpr IntSetting kEntriesPerVolume { "Diary",   "EntriesPerVolume", 10, 1, 50 };
         // -1 (default): off with writing installed, on without; 0/1 forced.  docs/CONFIG_AND_MCM.md
         static constexpr IntSetting kPlayerDiaryBooks { "Diary",   "PlayerDiaryBooks", -1, -1, 1 };
-        // DirectX scan code of the key that starts writing while the player reads their
-        // journal, and saves and goes back to reading while they write (61 = F3).  Not a key that
-        // types: while writing it can't also type.
+        // Scan code that starts writing in the player's journal, and saves and goes back to reading
+        // (61 = F3).  Not a key that types: while writing it can't also type.
         static constexpr IntSetting kEditKey          { "Diary",   "EditKey",          61, 1, 255 };
         // DirectX scan code of the key that tears out the entry under the caret while the
         // player writes (68 = F10).  Not a key that types.
         static constexpr IntSetting kDeleteKey        { "Diary",   "DeleteKey",        68, 1, 255 };
-        // DirectX scan code of the key that starts a new entry in the player's latest journal
-        // volume, with the book open or during play.  0 = unbound (the default: during play it
-        // would clash with some other mod's key whatever we picked).  Not a key that types.
+        // Scan code that starts a new journal entry, book open or during play.  Unbound by default: during
+        // play any key would clash with some other mod's.  Not a key that types.
         static constexpr IntSetting kNewEntryKey      { "Diary",   "NewEntryKey",      0,  0, 255 };
         static constexpr IntSetting kFontSizeTitle    { "Fonts",   "TitleSize",        18, 8, 24 };
         static constexpr IntSetting kFontSizeDate     { "Fonts",   "DateSize",         16, 8, 24 };

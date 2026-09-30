@@ -168,9 +168,8 @@ namespace SkyrimNetDiaries::TimelineGate {
         if (!g_checked) {
             g_checked = true;
             g_waitStart = now;
-            // SkyrimNet's own test: it asks keep/clear exactly when the player's latest
-            // event is later than the loaded save's game time.  Future diary entries
-            // alone don't make it ask.
+            // SkyrimNet's own test: it asks keep/clear exactly when the player's latest event is later than the
+            // loaded save's game time (future diary entries alone don't make it ask).
             const double gameNow = SkyrimNetDiaries::CurrentGameTimeSeconds();
             const double lastEvent = Database::GetPlayerLastEventTime();
             g_promptExpected = lastEvent > gameNow;

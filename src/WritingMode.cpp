@@ -26,11 +26,10 @@ namespace SkyrimNetDiaries::WritingMode {
 
     namespace {
 
-        // BookMenu.as WRITING_INTERFACE: "BOOKMENU_WRITING_INTERFACE=<n>".  Mod-neutral: the
-        // Physical Letters mod ships the same book.swf.  A SWF only adds calls, so any version
-        // from kMinInterface up will do; raise kMinInterface when the plugin needs a newer call.
+        // BookMenu.as WRITING_INTERFACE (mod-neutral: Physical Letters ships the same book.swf).  A SWF only adds
+        // calls, so any version from kMinInterface up will do; raise it when the plugin needs a newer call.
         constexpr std::string_view kMarker = "BOOKMENU_WRITING_INTERFACE=";
-        constexpr int kMinInterface = 2;  // 2: blood (EditSetBlood, marked bodies)
+        constexpr int kMinInterface = 3;  // 2: blood (EditSetBlood, marked bodies); 3: EditCanErase
 
         bool g_on = false;
 

@@ -59,14 +59,8 @@ namespace SkyrimNetDiaries {
             return known;
         }
 
-        // =============================================================================
-        // Create all diary volumes for an actor from a flat list of entries.
-        // Entries are sorted oldest-first and chunked into EntriesPerVolume batches.
-        // startingVolumeNumber is 1 for a fresh actor, or latestVolume+1 for additions.
-        // firstPrevLastCreationTime / firstPrevCountAtBoundary are the boundary data
-        // between the existing volume startingVolumeNumber-1 and the first new one
-        // (0 when there is no shared entry_date to tie-break).
-        // =============================================================================
+        // Sorts the entries and creates volumes of EntriesPerVolume from startingVolumeNumber.  firstPrev* are the
+        // boundary data with the existing previous volume (see docs/VOLUMES_AND_SYNC.md#volume-boundaries).
 
         void CreateAllVolumesForActor(
             const std::string& uuid,
@@ -96,11 +90,8 @@ namespace SkyrimNetDiaries {
                 double prevChunkLastCreationTime = (offset == 0) ? firstPrevLastCreationTime
                                                                  : allEntries[offset - 1].creation_time;
 
-                // Count how many entries in the previous chunk share the boundary date with this chunk's
-                // first entry.  Those entries would be returned by the API query for this volume (because
-                // their entry_date >= this volume's startTime) but must be excluded.  Storing the exact
-                // count prevents over-removal when two entries are truly identical (same entry_date AND
-                // creation_time), which is the root cause of the "entry #10 missing" bug.
+                // How many previous-chunk entries share this chunk's first date: an exact count, so identical
+                // entries aren't over-removed (see docs/VOLUMES_AND_SYNC.md#volume-boundaries).
                 int prevChunkCountAtBoundary = (offset == 0) ? firstPrevCountAtBoundary : 0;
                 if (offset > 0) {
                     double boundaryDate = chunk.front().entry_date;
@@ -124,9 +115,7 @@ namespace SkyrimNetDiaries {
 
     } // namespace
 
-    // =============================================================================
     // ModEvent-triggered diary update for single actor
-    // =============================================================================
 
     void SetPostLoadSyncReady(bool ready) {
         if (!ready) {
@@ -207,10 +196,7 @@ namespace SkyrimNetDiaries {
             auto latestVolume = bookManager->GetBookForActor(uuid);
 
             if (!latestVolume) {
-                // ----------------------------------------------------------------
-                // No volumes at all — fetch every entry ever written and build all
-                // volumes from the beginning in chronological order.
-                // ----------------------------------------------------------------
+                // No volumes at all: build every volume from all entries ever written.
                 auto allEntries = SkyrimNetDiaries::Database::GetDiaryEntries(formId, kFetchAllEntries, 0.0, 0.0);
 
                 if (allEntries.empty()) {
@@ -226,9 +212,8 @@ namespace SkyrimNetDiaries {
                 return;
             }
 
-            // Volumes exist — only care about entries strictly newer than the latest volume's end.
-            // Backfill bioTemplateName for saves loaded from an older co-save that didn't store it.
-            // GetBookForActor returns a raw pointer into the stored vector — safe to mutate on the game thread.
+            // Backfill bioTemplateName for older co-saves that didn't store it.  GetBookForActor returns a raw
+            // pointer into the stored vector: safe to mutate on the game thread.
             if (latestVolume->bioTemplateName.empty()) {
                 latestVolume->bioTemplateName = SkyrimNetDiaries::Database::GetTemplateNameByUUID(uuid);
                 if (!latestVolume->bioTemplateName.empty()) {
@@ -245,10 +230,8 @@ namespace SkyrimNetDiaries {
                     [&](const SkyrimNetDiaries::DiaryEntry& e) { return e.entry_date <= latestVolume->endTime; }),
                 newEntries.end());
 
-            // A new entry can be dated at or before the latest volume's end: written at
-            // the same game moment as its last entry, or after a Keep revert (history
-            // newer than the loaded save stays in SkyrimNet).  The date test above misses
-            // those, so count the entries from the volume's start instead.
+            // A new entry can be dated at or before the volume's end (same game moment, or a Keep revert), which the
+            // date test misses: count the entries from the volume's start instead.
             bool datedInsideVolume = false;
             if (newEntries.empty()) {
                 const auto sinceStart = SkyrimNetDiaries::Database::GetVolumeEntries(formId, {
@@ -291,9 +274,8 @@ namespace SkyrimNetDiaries {
                 return;
             }
 
-            // NPC has the book: every entry from the volume's start, oldest first.  The
-            // whole range is needed, not maxEntries + 1: SkyrimNet's limit keeps the
-            // newest entries, which would drop this volume's oldest ones.
+            // NPC has the book: fetch the whole range, not maxEntries + 1, since SkyrimNet's limit keeps the
+            // newest entries and would drop this volume's oldest ones.
             const int maxEntries = SkyrimNetDiaries::Config::GetSingleton()->GetEntriesPerVolume();
             auto currentVolumeEntries = SkyrimNetDiaries::Database::GetVolumeEntries(formId, {
                 .startTime = latestVolume->startTime,
@@ -367,9 +349,27 @@ namespace SkyrimNetDiaries {
         std::vector<Removal> removals;
         int reRendered = 0;
 
-        // Each actor's diary, and the player's journal, on its own.
+        // Each actor's diary, and the player's journals, on its own.
         for (auto& [chain, volumes] : bookManager->GetAllBooksRef()) {
-            if (volumes.empty() || !DatedAfter(volumes.back().endTime, now)) continue;
+            if (volumes.empty()) continue;
+            if (volumes.front().kind == VolumeKind::Written) {
+                // Journals hold their tagged entries whatever their dates, and a journal made
+                // after the save has no book in it (LoadFromDB dropped it): only re-render.
+                const RE::FormID formId = Database::GetFormIDForUUID(volumes.front().actorUuid);
+                if (formId == 0) continue;
+                for (auto& vol : volumes) {
+                    bool ok = false;
+                    const auto live = bookManager->GetLiveEntries(vol, formId, 0.0, &ok);
+                    if (!ok) break;
+                    if (static_cast<int>(live.size()) == vol.lastKnownEntryCount) continue;
+                    SKSE::log::info("[Timeline] {} journal {}: {} → {} entries", vol.actorName, vol.volumeNumber,
+                                    vol.lastKnownEntryCount, live.size());
+                    bookManager->SetVolumeText(vol, live);
+                    ++reRendered;
+                }
+                continue;
+            }
+            if (!DatedAfter(volumes.back().endTime, now)) continue;
             const std::string uuid = volumes.front().actorUuid;
             const RE::FormID formId = Database::GetFormIDForUUID(uuid);
             if (formId == 0) continue;
@@ -388,18 +388,6 @@ namespace SkyrimNetDiaries {
                                     vol.actorName, vol.volumeNumber);
                     queryFailed = true;
                     break;
-                }
-                if (live.empty() && vol.kind == VolumeKind::Written && !DatedAfter(vol.startTime, now)) {
-                    // A journal can be empty and still be in the save (made empty, or its
-                    // entries torn out): only the entries after the save are gone.
-                    tail.fromVolume = 0;
-                    tail.books.clear();
-                    SKSE::log::info("[Timeline] {} journal vol {}: its entries after the save are gone — kept, empty",
-                                    vol.actorName, vol.volumeNumber);
-                    bookManager->UpdateBookEndTime(vol, vol.startTime);
-                    bookManager->SetVolumeText(vol, live);
-                    ++reRendered;
-                    continue;
                 }
                 if (live.empty()) {
                     if (tail.fromVolume == 0) tail.fromVolume = vol.volumeNumber;
@@ -439,11 +427,8 @@ namespace SkyrimNetDiaries {
         }
     }
 
-    // =============================================================================
-    // QueueNewEntryRecovery: at load, finds actors whose latest volume is missing
-    // entries SkyrimNet has (written while SNPD wasn't listening: KEEP on a revert,
-    // dashboard edits) and queues an update for them.
-    // =============================================================================
+    // At load, queues an update for actors whose latest volume misses entries SkyrimNet has (written while SNPD
+    // wasn't listening: KEEP on a revert, dashboard edits).
     void QueueNewEntryRecovery(std::unordered_set<std::string>& skipUuids) {
         const auto& allBooks = SkyrimNetDiaries::BookManager::GetSingleton()->GetAllBooks();
         int recoveryCount = 0;
@@ -462,9 +447,7 @@ namespace SkyrimNetDiaries {
 
             bool needsUpdate = false;
             if (latest->endTime > 0.0) {
-                // Probe for any entry strictly after the latest volume's end: entries
-                // SkyrimNet has that SNPD never saw (the KEEP choice on a revert, or
-                // dashboard entries while the game was paused).
+                // Probe for any entry strictly after the latest volume's end: entries SNPD never saw.
                 const auto checkEntries = SkyrimNetDiaries::Database::GetDiaryEntries(
                     actorFormId, 1, latest->endTime + 0.001, 0.0);
                 if (!checkEntries.empty()) {
@@ -473,9 +456,8 @@ namespace SkyrimNetDiaries {
                     needsUpdate = true;
                 }
             } else {
-                // endTime is set on every volume SNPD creates today; only rows from
-                // early versions lack one.  Compare the entry count from the volume's
-                // start with the count it was last rendered with.
+                // Only rows from early versions lack an endTime: compare the entry count from the volume's start
+                // with the count it was last rendered with.
                 const int liveCount = static_cast<int>(SkyrimNetDiaries::Database::GetDiaryEntries(
                     actorFormId, kFetchAllEntries, latest->startTime, 0.0).size());
                 if (liveCount > latest->lastKnownEntryCount) {
@@ -500,22 +482,8 @@ namespace SkyrimNetDiaries {
 
     namespace {
 
-        // =============================================================================
-        // Queued batch catch-up scan used on save load.
-        //
-        // Pass 1 (discovery): Calls PublicGetDiaryEntries(formId=0) in pages of
-        //   kDiscoveryPageSize entries to cheaply discover which actor UUIDs have any
-        //   diary content, without loading every entry into memory at once.  Each page
-        //   is one game-thread task, chained until a short page comes back.
-        //
-        // Pass 2 (per-actor fetch): Once discovery finishes, one task per actor does a
-        //   full GetDiaryEntries call for just that FormID, creates all its volumes,
-        //   then frees the memory.  Tasks run on successive game-thread ticks so the
-        //   load is spread out.
-        //
-        // Actors that already have volumes are skipped, as are those the recovery pass
-        // already queued.
-        // =============================================================================
+        // Load-time catch-up scan: paged discovery of actors with entries, then one task per actor without volumes
+        // (see docs/VOLUMES_AND_SYNC.md#on-load-recovery-and-catch-up).
 
         // Shared state carried across discovery batch tasks via shared_ptr.
         struct DiscoveryState {
@@ -544,9 +512,7 @@ namespace SkyrimNetDiaries {
             // A load (or new game) since the scan started: books_ belongs to that session now.
             if (state->generation != g_syncGeneration.load()) return;
             try {
-                // Fetch the next page of entries across all actors.
-                // endTime=0.0 on the first call means no upper bound.
-                // On subsequent calls we pass the oldest timestamp seen so far to page backward.
+                // Next page across all actors, paging backward from the oldest timestamp seen (0.0: no upper bound).
                 double endTime = state->oldestTimestampSeen;
                 auto rawEntries = SkyrimNetDiaries::Database::GetDiaryEntries(0, kDiscoveryPageSize, 0.0, endTime);
                 bool morePages = (static_cast<int>(rawEntries.size()) >= kDiscoveryPageSize);
@@ -654,32 +620,30 @@ namespace SkyrimNetDiaries {
 
     } // namespace
 
-    // =============================================================================
-    // MCM Reset: retires every diary book (removed from the loaded cells; copies
-    // elsewhere show the "all entries removed" page) and clears BookManager and DiaryDB
-    // tracking.  SkyrimNet diary ENTRIES are NOT touched - books are recreated by the
-    // next diary event or load (catch-up).
-    // Returns the number of actors cleared (negative on exception).
-    // =============================================================================
+    // MCM Reset (docs/DATABASE.md#mcm-reset-resetalldiariesinternal): retires every diary book, keeps the journals,
+    // never touches SkyrimNet's entries.  Returns the number of actors cleared (negative on exception).
     int ResetAllDiariesInternal() {
         SKSE::log::info("ResetAllDiariesInternal: starting");
 
         auto bookManager   = SkyrimNetDiaries::BookManager::GetSingleton();
 
         try {
-            // A diary and a journal can share an actor.
+            // The player's journals are kept as they are (docs/DATABASE.md#mcm-reset): they hold
+            // what the player wrote, and a copy of their DiaryDB rows goes back after the wipe.
             std::unordered_set<std::string> actors;
+            std::vector<DiaryBookData> journals;
             for (const auto& [chain, volumes] : bookManager->GetAllBooks()) {
-                if (!volumes.empty()) actors.insert(volumes.front().actorUuid);
+                if (volumes.empty()) continue;
+                if (volumes.front().kind == VolumeKind::Written) {
+                    journals.insert(journals.end(), volumes.begin(), volumes.end());
+                } else {
+                    actors.insert(volumes.front().actorUuid);
+                }
             }
             const int actorsAffected = static_cast<int>(actors.size());
 
-            // Wipe DiaryDB rows BEFORE clearing in-memory state.  Without this,
-            // LoadFromDB() on the next save reload reads the persisted rows back,
-            // the catch-up scan sees actors already have books, and skips
-            // regeneration — making Reset appear to "stop working" after one cycle.
-            // DeleteActor removes from both `volumes` and `actor_templates` tables.
-            // Also clear stolen-volume tracking so theft state doesn't linger.
+            // Wipe DiaryDB rows (and theft tracking) first: otherwise LoadFromDB reads them back on the next load
+            // and the catch-up scan skips regeneration, so Reset seems to stop working after one cycle.
             auto* diaryDb = SkyrimNetDiaries::DiaryDB::GetSingleton();
             if (diaryDb->IsOpen()) {
                 int dbRowsCleared = 0;
@@ -694,23 +658,26 @@ namespace SkyrimNetDiaries {
                                 "(the next load recreates the diaries)");
             }
 
-            // Clear all in-memory tracking, then retire every book of ours (including any
-            // this session couldn't match to a volume): they stay in the save and show
-            // the "all entries removed" page.
+            // Retire every book of ours, including any this session couldn't match to a volume: they stay in the
+            // save and show the "all entries removed" page.
             bookManager->Revert();
             SaveFolder::Clear();
-            const auto records = DynamicForms::Tracked();
-            for (const auto& record : records) {
+            int retired = 0;
+            for (const auto& record : DynamicForms::Tracked()) {
                 std::string uuid;
                 VolumeKind kind{};
                 int volume = 0;
                 ParseVolumeKey(record.key, uuid, kind, volume);
+                if (kind == VolumeKind::Written) continue;
                 bookManager->RetireBook(record.formId, uuid, kind);
+                ++retired;
             }
+            for (auto& journal : journals) bookManager->RegisterBook(std::move(journal));
 
             SKSE::GetTaskInterface()->AddTask([]() { SweepRetiredBooks(); });
 
-            SKSE::log::info("ResetAllDiariesInternal: retired {} book(s) for {} actor(s)", records.size(), actorsAffected);
+            SKSE::log::info("ResetAllDiariesInternal: retired {} book(s) for {} actor(s), kept {} journal(s)", retired,
+                            actorsAffected, journals.size());
             return actorsAffected;
 
         } catch (const std::exception& e) {

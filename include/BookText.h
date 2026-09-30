@@ -30,17 +30,13 @@ namespace SkyrimNetDiaries {
     // every later page one entry; the inter-plugin API splits on this.
     inline constexpr std::string_view kPageBreak = "[pagebreak]\n\n";
 
-    // One volume: blank page, title page with date range, then one page per entry.
-    // Renders exactly the entries given (the caller picks the volume's entries), titled by
-    // kind ("Diary" or "Journal").  An empty list renders the "all entries removed" page,
-    // marked with kEmptySentinel; a journal's is blank, still marked.
+    // One volume of exactly the entries given, titled by kind.  An empty list renders the "all entries
+    // removed" page, marked with kEmptySentinel (a journal's is blank, still marked).
     std::string FormatDiaryEntries(const std::vector<DiaryEntry>& entries,
                                    const std::string& actorName, VolumeKind kind = VolumeKind::Generated);
 
-    // Text written in blood.  Kept apart from the entry's content (DiaryDB, never SkyrimNet): as
-    // [start, end) byte ranges of the content, "s:e,s:e".  In the editor's text, and while an entry
-    // renders, it is marked inline instead, between kBloodOpen and kBloodClose (private-use
-    // characters no text uses); rendered, it is dark red.  docs/EDITING.md#writing-in-blood
+    // Blood text: stored as byte ranges in DiaryDB, marked inline with these private-use characters
+    // while editing and rendering.  See docs/EDITING.md#writing-in-blood.
     inline constexpr std::string_view kBloodOpen = "\xEE\x80\x80";   // U+E000
     inline constexpr std::string_view kBloodClose = "\xEE\x80\x81";  // U+E001
     // Dried blood on the lit book page (vanilla ink is black); BookMenu.as BLOOD_COLOR too.

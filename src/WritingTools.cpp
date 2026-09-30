@@ -28,6 +28,8 @@ namespace SkyrimNetDiaries::WritingTools {
         // Writing sessions a full inkwell lasts.
         constexpr int kUses = 10;
 
+        constexpr RE::FormID kVanillaInkwell = 0x04C3C6;  // Skyrim.esm Inkwell01
+
         RE::BGSListForm* g_quills = nullptr;    // SNPD_Quills
         RE::BGSListForm* g_inkwells = nullptr;  // SNPD_Inkwells: full ones
         // g_partly[n]: the inkwell with n uses left (SNPD_Inkwell<n>), 1 to kUses - 1.
@@ -58,7 +60,7 @@ namespace SkyrimNetDiaries::WritingTools {
         g_quills = RE::TESForm::LookupByEditorID<RE::BGSListForm>("SNPD_Quills");
         g_inkwells = RE::TESForm::LookupByEditorID<RE::BGSListForm>("SNPD_Inkwells");
         // The clones' name is the ESP's English one: use the game's, in the game's language.
-        const auto* vanilla = RE::TESForm::LookupByID<RE::TESObjectMISC>(0x04C3C6);  // Inkwell01
+        const auto* vanilla = RE::TESForm::LookupByID<RE::TESObjectMISC>(kVanillaInkwell);
         const char* name = vanilla ? vanilla->GetName() : nullptr;
         int found = 0;
         for (int uses = 1; uses < kUses; ++uses) {

@@ -39,15 +39,13 @@ namespace SkyrimNetDiaries {
         std::string bioTemplateName;   // Actor-specific subfolder key (e.g. "lydia_3a2") — unique per NPC
         int lastKnownEntryCount = 0;   // Track expected entry count for deletion detection
 
-        // The creation_time of the last entry in the previous volume.  Used by
-        // GetVolumeEntries to exclude boundary entries that share an entry_date with
-        // this volume's first entry but logically belong to the previous volume.
+        // creation_time of the previous volume's last entry: excludes entries that share this volume's first
+        // entry_date but belong to the previous volume.
         double prevVolumeLastCreationTime = 0.0;
         int prevVolumeCountAtBoundary = 0;   // how many prev-vol entries share the boundary date/CT
 
-        // Actor FormID stored at creation time.  Only a hint: a load-order change can
-        // make it point at someone else, so it is used only after SkyrimNet maps it
-        // back to actorUuid.
+        // Actor FormID at creation time.  Only a hint (a load-order change can make it someone else): used
+        // only after SkyrimNet maps it back to actorUuid.
         RE::FormID actorFormId = 0;
 
         // Runtime-only: the actor's FormID resolved from actorUuid this session (0 =
@@ -67,18 +65,15 @@ namespace SkyrimNetDiaries {
     public:
         static BookManager* GetSingleton();
 
-        // Creates one volume's book, registers the volume and gives the book to the
-        // NPC.  `entries` are the volume's entries, oldest first.  Game thread.
-        // Defined in BookCreation.cpp.
+        // Creates one volume's book, registers it and gives it to the NPC.  `entries` oldest first.
+        // Game thread.  Defined in BookCreation.cpp.
         void CreateDiaryBook(const std::string& actorUuid, const std::string& actorName,
                              double startTime, int volumeNumber, RE::FormID targetActorFormID,
                              const std::vector<DiaryEntry>& entries, const std::string& bioTemplateName,
                              double prevVolumeLastCreationTime, int prevVolumeCountAtBoundary);
 
-        // A journal volume with no entries yet (endTime = startTime), given to the actor like any
-        // other: the player's journal volume 1 or next volume, made by the book editor.  `look`:
-        // the template book's EditorID ("" = the actor's usual one).  Its book's FormID, or 0 if
-        // it couldn't be made.  Game thread.  Defined in BookCreation.cpp.
+        // An empty journal volume (endTime = startTime) for the book editor; `look` = template EditorID ("" =
+        // usual).  Returns its book's FormID or 0.  Game thread.  Defined in BookCreation.cpp.
         RE::FormID CreateEmptyVolume(const std::string& actorUuid, const std::string& actorName,
                                      double startTime, int volumeNumber, RE::FormID targetActorFormID,
                                      const std::string& bioTemplateName, double prevVolumeLastCreationTime,
@@ -94,9 +89,8 @@ namespace SkyrimNetDiaries {
         // Get book data by FormID (searches all actors)
         DiaryBookData* GetBookForFormID(RE::FormID formId);
 
-        // Any thread (never touch books_ off the game thread): the book that owns this
-        // description component (0 if not ours), and a copy of a book's rendered text
-        // ("" if not ours).  Books with no volume have the "all entries removed" page.
+        // Any thread (they don't touch books_): the book owning this description (0 if not ours), and a copy
+        // of a book's rendered text ("" if not ours; a book with no volume: "all entries removed").
         RE::FormID FindBookByDescription(const RE::TESDescription* description) const;
         std::string GetBookTextSnapshot(RE::FormID bookFormId) const;
         std::string GetBookTextSnapshot(const RE::TESDescription* description) const;
@@ -119,9 +113,8 @@ namespace SkyrimNetDiaries {
         // renders).  `ok` false: SkyrimNet couldn't be read or the actor isn't resolved.
         std::vector<DiaryEntry> GetShownEntries(DiaryBookData& vol, bool* ok);
 
-        // SkyrimNet's entries for `vol`, oldest first, up to `endTime` (0 = open-ended).
-        // The next volume's boundary data decides who owns entries on a date both share.
-        // `ok` is false when the query failed (as opposed to returning no entries).
+        // SkyrimNet's entries for `vol`, oldest first, up to `endTime` (0 = open-ended); boundary data decides
+        // a date two volumes share.  `ok` is false when the query failed (not when it found none).
         std::vector<DiaryEntry> GetLiveEntries(const DiaryBookData& vol, RE::FormID actorFormId,
                                                double endTime, bool* ok);
 
@@ -144,21 +137,16 @@ namespace SkyrimNetDiaries {
         // kNewGame).
         static void ClearActorCache();
 
-        // Write every in-memory book and actor template to DiaryDB.
-        // Safe to call when DB is not open (no-op in that case).
-        // Used at save time to flush books created before the DB was opened
-        // (e.g. first session on a brand-new save).
+        // Writes every in-memory book and actor template to DiaryDB (no-op if closed).  At save time, for
+        // books made before the DB opened (a brand-new save's first session).
         void FlushToDB();
 
-        // Called by BookTextHook immediately before a diary volume's text is injected
-        // into the book UI.  Queries live entry count, reformats if it changed, and
-        // moves the volume's endTime back if entries were deleted.
+        // BookTextHook, just before a volume's text goes into the book UI: re-renders if the live entry count
+        // changed, and moves endTime back if entries were deleted.
         void RefreshVolumeOnOpen(DiaryBookData* vol);
 
-        // Game thread, when SkyrimNet has finished the book editor's writes to the volume:
-        // re-render from SkyrimNet and move endTime back if entries were deleted, whatever the
-        // last render's count (the editor re-renders at once, so RefreshVolumeOnOpen's count
-        // check would miss a deletion).
+        // Game thread, after the book editor's writes land: re-render and move endTime back on deletions,
+        // whatever the count (the editor re-renders at once, so RefreshVolumeOnOpen would miss a deletion).
         void ReconcileAfterWrite(DiaryBookData& vol);
 
         // New game or load: clears the in-memory volumes (DiaryDB stays).

@@ -45,9 +45,8 @@ namespace SkyrimNetDiaries {
             }
         }
 
-        // LLM text goes into Scaleform's book HTML.  A "<" would start a tag and swallow
-        // text ("<sigh>", "<3"), so escape the three markup characters.  The
-        // inter-plugin API turns them back before handing text to other mods.
+        // A "<" in Scaleform's book HTML would start a tag and swallow text ("<sigh>", "<3").
+        // The inter-plugin API turns the escapes back before handing text to other mods.
         std::string EscapeMarkup(std::string text) {
             std::string out;
             out.reserve(text.size());
@@ -78,13 +77,8 @@ namespace SkyrimNetDiaries {
         std::string SanitizePlain(const std::string& text, bool stripDates) {
             std::string result = text;
 
-                // Strip leading date headers/prefixes that LLM sometimes includes.
-                // e.g. "# Sundas, 17th Last Seed - Late Morning"   (whole-line header, any language)
-                //      "Sundas, 17th of Last Seed, 4E 201"         (whole-line English Tamrielic)
-                //      "Sundas, 17th Last Seed. Today I saw..."    (inline date prefix in prose)
-                // Only strip when ShowDateHeaders is enabled: we're supplying our own formatted headers
-                // so LLM-generated ones would duplicate. When ShowDateHeaders is disabled the user
-                // wants the LLM's dates to show through — don't strip them.
+                // Strip the LLM's leading date only when we add our own date headers (it would duplicate).
+                // Rules: see docs/BOOK_TEXT.md#cleaning-llm-output-sanitizebooktext.
                 if (stripDates && SkyrimNetDiaries::Config::GetSingleton()->GetShowDateHeaders())
                 {
                     // Step 1: Strip any leading markdown heading line unconditionally.
@@ -104,10 +98,8 @@ namespace SkyrimNetDiaries {
                         }
                     }
 
-                    // Step 2: Strip plain-text date headers/prefixes the LLM sometimes writes.
-                    // Covers Tamrielic day/month names in all 9 supported languages, era markers,
-                    // and real-world time patterns. CJK day names (single kanji/short) are skipped
-                    // to avoid false positives — those are caught by markdown stripping in steps 1/1.5.
+                    // Step 2: plain-text dates.  CJK day names (single kanji) are skipped to avoid false
+                    // positives; those are caught by the markdown stripping in steps 1/1.5.
 
                     // Pattern: first line is a short time string ("9:28 AM" or "9:28 AM, ...").
                     // Language-independent — digits and AM/PM are ASCII in all locales.
@@ -203,9 +195,8 @@ namespace SkyrimNetDiaries {
                             // The whole first line is a date header.
                             DropFirstLine(result);
                         } else {
-                            // The date is a prefix embedded in prose ("Sundas, 17th Last Seed. Today...").
-                            // Strip up to and including the first sentence-ending punctuation followed
-                            // by whitespace so the prose content is preserved.
+                            // A date prefix in prose ("Sundas, 17th Last Seed. Today..."): strip up to
+                            // the first sentence end so the prose is kept.
                             size_t searchFrom = matchedWord->size();
                             size_t breakPos = std::string::npos;
                             for (size_t i = searchFrom; i + 1 < result.size(); ++i) {
@@ -243,10 +234,8 @@ namespace SkyrimNetDiaries {
                 ReplaceAll(result, from, to);
             }
 
-            // Strip Markdown formatting characters that pass through raw as asterisks/underscores.
-            // **bold** and *italic* → just the inner text (Skyrim book HTML uses <b>/<i> if needed,
-            // but the handwriting font rarely has bold/italic variants so stripping is cleanest).
-            // Process ** before * to avoid partially matching bold markers as italic.
+            // Strip Markdown bold/italic markers: the handwriting fonts have no bold or italic variants.
+            // ** is handled before * so bold markers aren't half-matched as italic.
             {
                 std::string out;
                 out.reserve(result.size());
@@ -290,9 +279,8 @@ namespace SkyrimNetDiaries {
             int dayOfWeek;  // 0 = Sundas
         };
 
-        // Game seconds (entry_date units) → calendar date.  The game starts on Sundas,
-        // 17 Last Seed 4E 201, and Skyrim's months have the Gregorian lengths with no
-        // leap years.
+        // Game seconds (entry_date units) → calendar date.  The game starts Sundas, 17 Last Seed 4E 201;
+        // months have the Gregorian lengths, no leap years.
         GameDate ToGameDate(double gameTime) {
             static constexpr int kMonthDays[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
             const int totalDays = static_cast<int>(std::floor(gameTime / kSecondsPerGameDay));
@@ -330,7 +318,12 @@ namespace SkyrimNetDiaries {
         return SanitizePlain(MarkBlood(entry.content, entry.blood), !IsPlayerWritten(entry));
     }
 
-    std::string MarkBlood(const std::string& content, const std::string& ranges) {
+    std::string MarkBlood(const std::string& text, const std::string& ranges) {
+        // Markers come only from the ranges: any already in the text (an NPC's entry is LLM output)
+        // would become markup.
+        std::string content = text;
+        ReplaceAll(content, kBloodOpen, "");
+        ReplaceAll(content, kBloodClose, "");
         if (ranges.empty()) return content;
         std::string out;
         out.reserve(content.size() + ranges.size());

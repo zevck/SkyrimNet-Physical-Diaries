@@ -28,10 +28,8 @@
 namespace SkyrimNetDiaries::Serialization {
 
     namespace {
-        // The co-save holds one record: what each diary book form in the save is
-        // (DynamicForms).  DiaryDB holds everything else, and the save folder is
-        // detected from SkyrimNet.log.  Saves from before 2.0.0 hold 'SNDB', 'SNDF'
-        // and 'SNDC' records instead, which are skipped.
+        // One record: what each book form in the save is (DynamicForms).  Older saves' records are skipped
+        // (docs/DATABASE.md#co-save-records).
         constexpr std::uint32_t kSerializationId = 'SNDB';
         constexpr std::uint32_t kBookFormsRecord = 'SNBF';
 
@@ -41,10 +39,8 @@ namespace SkyrimNetDiaries::Serialization {
                 // book in the save loads as an empty shell.
                 DynamicForms::Save(a_intfc, kBookFormsRecord);
 
-                // A new game never gets a post-load sync, so its first save opens
-                // DiaryDB here and flushes the volumes created so far.  Not during a
-                // load's post-load wait: SkyrimNet.log may still name the previous
-                // save's folder then, and the sync opens the right DB itself.
+                // A new game's first save opens DiaryDB here (no post-load sync).  Not during a load's post-load wait:
+                // SkyrimNet.log may still name the previous save's folder then.
                 auto* db = DiaryDB::GetSingleton();
                 if (!db->IsOpen() && IsPostLoadSyncReady()) {
                     if (SaveFolder::Get().empty()) {
@@ -72,9 +68,8 @@ namespace SkyrimNetDiaries::Serialization {
             SKSE::log::info("Reverted all diary data and caches");
         }
 
-        // Runs inside the load, after the engine has recreated this save's book forms
-        // and resolved inventories.  Fills the books in so they look right at once;
-        // the post-load sync matches them against DiaryDB later.
+        // Runs inside the load, after the engine has recreated this save's book forms and resolved inventories:
+        // fills the books in at once; the post-load sync matches them against DiaryDB later.
         void LoadCallback(SKSE::SerializationInterface* a_intfc) {
             try {
                 std::uint32_t type = 0, version = 0, length = 0;

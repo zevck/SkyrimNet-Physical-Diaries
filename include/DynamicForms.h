@@ -21,21 +21,8 @@
 
 #include "PCH.h"
 
-// Runtime forms the engine saves by itself, with no plugin file.  A form made by
-// its type's factory gets an 0xFF FormID from the engine; a change record puts it
-// in the save, and on load the engine recreates it before inventories resolve.
-// The save keeps only the form's flags, so the owner re-applies everything else
-// each session, from the Record this module writes to the co-save per form.
-//
-// A form is never removed from the save once created.  Freed 0xFF FormIDs are
-// reused at once (by leveled NPC bases, among others), and a world copy of the form
-// in any cell, loaded or not, keeps its base's raw FormID: if the form were
-// dropped, that copy would come back with an unrelated base and crash the game.
-// A form the owner no longer needs is retired instead: kept, and flagged.
-//
-// Knows nothing about SkyrimNet Physical Diaries, so it can move into other mods.
-// Physical Letters has a copy: keep the two in step (docs/BOOK_FORMS.md, "Reuse in
-// other mods").  Thread-safe.  See docs/BOOK_FORMS.md.
+// Engine-saved runtime forms with a co-save Record each; never removed once made (retired instead).  Thread-safe,
+// SNPD-agnostic; Physical Letters has a copy to keep in step.  See docs/BOOK_FORMS.md.
 namespace DynamicForms {
 
     // What a form is, in its owner's terms.
@@ -79,10 +66,8 @@ namespace DynamicForms {
 
     // Co-save: one record of type a_type holding every tracked form.
     void Save(SKSE::SerializationInterface* a_intfc, std::uint32_t a_type);
-    // Reads a record written by Save and tracks the forms that still exist with
-    // their saved type (the engine renumbers ours if the save gave the ID to
-    // another form).  Call from the load callback; the forms are empty shells
-    // until the owner fills them in.
+    // Load callback: tracks the saved forms that still exist with their saved type (else the engine renumbered
+    // ours).  The forms are empty shells until the owner fills them in.
     void Load(SKSE::SerializationInterface* a_intfc, std::uint32_t a_version);
     // A new game or a load: forgets the tracked forms.
     void Revert();

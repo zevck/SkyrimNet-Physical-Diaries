@@ -45,6 +45,22 @@ For other SKSE plugins, such as TTS or reading mods, that want a diary's text. *
 | `'SNPE'` `SNPD_QUERY_ENTRY` | `SNPDEntryQuery` | One entry by index (−1 = last) |
 | `'SNPA'` `SNPD_QUERY_ALL_ENTRIES` | `SNPDAllEntriesQuery` | Every entry, packed as null-separated strings, plus a count of any that did not fit |
 
+Detecting and reading one of SNPD's books: send the query for any book (it's an in-memory lookup; don't filter by title, titles are localized), then check `isDiaryBook`:
+
+```cpp
+using namespace SkyrimNetPhysicalDiaries_API;
+
+SNPDBookQuery query{};
+query.apiVersion = SNPD_API_VERSION;
+query.bookFormId = book->GetFormID();
+SKSE::GetMessagingInterface()->Dispatch(SNPD_QUERY_BOOK, &query, sizeof(query), "SkyrimNetPhysicalDiaries");
+
+if (query.isDiaryBook) {
+    // query.text: the whole rendered volume (font-tagged); entryCount, volumeNumber, totalVolumes.
+    // query.resultCode: Success, or NoEntries (every entry removed).
+}
+```
+
 Result codes: `Success`, `NoEntries` (the volume has no entries: the "all entries removed" page, or a journal's blank one, detected by `<!-- SNPD_EMPTY -->`), `NotADiary`, `IndexOutOfRange`. Buffers are fixed-size arrays in the structs; text is cut off to fit.
 
 Implementation notes:

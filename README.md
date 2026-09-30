@@ -21,7 +21,7 @@ Stealing an NPC's diary has consequences. The NPC will be aware their diary is m
 When an NPC writes a new entry, their physical diary updates to include it. If they fill the current volume, a new one is created automatically. This happens in the background without any player action needed.
 
 ### Writing in Your Own Journal
-With writing installed, what you write goes in your journal ("{Name}'s Journal"), next to the diary SkyrimNet writes for you, which stays read-only (it stops growing once writing is installed; turn **Your Diary Books** on in the MCM to keep it going). Writing needs a quill and an inkwell (each writing session uses a little ink; with Description Framework installed, an inkwell's description shows how full it is). While reading your journal, press **F3** (configurable in the MCM) to write in it, right on the page. Press it again to save and go back to reading. Only the entries' text can be changed; the dates stay. Closing the book while writing asks whether to save your changes. To tear out an entry, put the cursor in it and press **F10** (configurable); you're asked first, and it can't be undone. To start a journal, read a Blank Journal (sold by general-goods merchants, or made at a tanning rack from 1 Leather and 2 Rolls of Paper); it becomes your next journal, in that book's look, with no limit on entries. To write a new entry, bind the **New Entry Key** in the MCM (it's unbound by default) and press it, with your latest journal open or during play. Your changes go back into SkyrimNet, so the diary entry and the memory made from it both change. NPCs' diaries can only be read: their entries are their memories.
+With writing installed, what you write goes in your journal ("{Name}'s Journal"), next to the diary SkyrimNet writes for you, which stays read-only (it stops growing once writing is installed; turn **Your Diary Books** on in the MCM to keep it going). Writing needs a quill and an inkwell (each writing session uses a little ink; with Description Framework installed, an inkwell's description shows how full it is). While reading your journal, press **F3** (configurable in the MCM) to write in it, right on the page. Press it again to save and go back to reading. Only the entries' text can be changed; the dates stay. Closing the book while writing asks whether to save your changes. To tear out an entry, put the cursor in it and press **F10** (configurable); you're asked first, and it can't be undone. With a quill but no ink you can write in your own blood: each entry you write in costs a tenth of your health, and the words stay dark red. To start a journal, read a Blank Journal (sold by general-goods merchants, or made at a tanning rack from 1 Leather and 2 Rolls of Paper); it becomes a journal in that book's look. A journal holds as many entries as a diary volume (**Entries Per Volume**); you can keep several and write in whichever you open. To write a new entry, bind the **New Entry Key** in the MCM (it's unbound by default) and press it, with a journal open or during play (it opens the journal you last wrote in). Your changes go back into SkyrimNet, so the diary entry and the memory made from it both change. NPCs' diaries can only be read: their entries are their memories.
 
 ## 📝 MCM Settings
 
@@ -29,15 +29,15 @@ Found under **SkyrimNet Physical Diaries** in the Mod Configuration Menu.
 
  **Settings**
 - **Your Diary Books** - Makes books of the diary SkyrimNet writes for you, as for NPCs (default: off with writing installed, on without). Off, your diary stops at its last entry; your journal isn't affected.
-- **Entries Per Volume** - How many diary entries fit in one book before a new volume begins (default: 10, range: 1–50). Your own journals have no limit.
+- **Entries Per Volume** - How many entries fit in one book: a diary starts a new volume, and a full journal of yours takes no new entry (default: 10, range: 1–50).
 - **Font Sizes** - Separate sliders for title, date, body text, and small text in the diary books
 - **Book Font** - Switch font faces for readability
 - **Edit Your Journal Key** - Starts writing while you read your journal, and saves when pressed again (default: F3). Pick a key that doesn't type a character.
 - **Tear Out Entry Key** - While writing, tears out the entry the cursor is in, after asking (default: F10).
-- **New Entry Key** - Starts a new entry in your latest journal, with it open or during play (unbound by default). A new journal begins when you read a Blank Journal.
+- **New Entry Key** - Starts a new entry in the open journal, or during play in the journal you last wrote in (unbound by default). A new journal begins when you read a Blank Journal.
 
 **Maintenance**
-- **Reset All Diaries** - Removes all physical diary books from NPCs and clears all tracking. Your SkyrimNet diary entries are untouched; diaries regenerate automatically on next load. Your journals are removed too: your next new entry starts a new journal holding everything you wrote.
+- **Reset All Diaries** - Removes all physical diary books from NPCs and clears all tracking. Your SkyrimNet diary entries are untouched; diaries regenerate automatically on next load. Your journals are kept as they are.
 - **Debug Logging** - Toggle verbose logging for troubleshooting.
 
 ## 📋 Requirements

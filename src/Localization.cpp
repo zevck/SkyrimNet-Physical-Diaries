@@ -146,9 +146,8 @@ namespace SkyrimNetDiaries {
 
     // ── Locale file loading ────────────────────────────────────────────
     bool Localization::LoadLocaleFile(const std::string& language) {
-        // Build path relative to our DLL: same folder as SkyrimNetPhysicalDiaries.dll
-        // DLL is at .../SKSE/Plugins/SkyrimNetPhysicalDiaries.dll
-        // Locales at .../SKSE/Plugins/SkyrimNetPhysicalDiaries/Locales/
+        // Relative to our DLL (.../SKSE/Plugins/SkyrimNetPhysicalDiaries.dll):
+        // .../SKSE/Plugins/SkyrimNetPhysicalDiaries/Locales/
         std::filesystem::path localeDir;
 
         HMODULE hModule = nullptr;
@@ -240,7 +239,7 @@ namespace SkyrimNetDiaries {
                 else if (key == "EditNeedsSkyrimNet") editNeedsSkyrimNet_ = text;
                 else if (key == "EditNeedsPause") editNeedsPause_ = text;
                 else if (key == "EditEmptiedHint") editEmptiedHint_ = text;
-                else if (key == "EditNotLatest") editNotLatest_ = text;
+                else if (key == "EditJournalFull") editJournalFull_ = text;
                 else if (key == "EditStartedVolume") editStartedVolume_ = text;
                 else if (key == "EditNoJournal") editNoJournal_ = text;
                 else if (key == "EditNeedsQuill") editNeedsQuill_ = text;
@@ -385,7 +384,7 @@ namespace SkyrimNetDiaries {
         editNeedsSkyrimNet_ = "Writing in your journal needs a newer SkyrimNet.";
         editNeedsPause_ = "Writing in your journal needs the book menu to pause the game.";
         editEmptiedHint_ = "An emptied entry is kept. To remove an entry, tear it out.";
-        editNotLatest_ = "New entries go in your latest journal.";
+        editJournalFull_ = "Your journal is full. Read a blank journal to begin another.";
         editStartedVolume_ = "You begin a new journal.";
         editNoJournal_ = "You have no journal. Read a blank journal to begin one.";
         editNeedsQuill_ = "To write in your journal you need a quill and an inkwell.";

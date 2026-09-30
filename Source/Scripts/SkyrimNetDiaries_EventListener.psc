@@ -9,9 +9,7 @@ Event OnInit()
 EndEvent
 
 Event OnDiaryCreated(string eventName, string strArg, float numArg, Form sender)
-    ; strArg is JSON: {"actorFormId": ..., "actorName": "...", "content": "...", ...}
-    ; Parsed in C++: actorFormId can exceed Papyrus's signed int range (ESL and high
-    ; load-order NPCs), which "as int" would clamp to 0x7FFFFFFF.
+    ; strArg is JSON, parsed in C++: "as int" would clamp an ESL or high load-order actorFormId to 0x7FFFFFFF.
     ; The native also clears theft tracking for the actor.
     SkyrimNetDiaries_Native.UpdateDiaryFromEvent(strArg)
 EndEvent

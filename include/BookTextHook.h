@@ -19,9 +19,8 @@
 
 #pragma once
 
-// Hooks TESDescription::GetDescription to give our diary books their text: the
-// book menu and every other reader ask for it there.  RELOCATION_ID(14399, 14552)
-// is (SE, AE); VR reuses the SE id via the VR Address Library.
+// Hooks TESDescription::GetDescription, where the book menu and every other reader ask for a
+// book's text.  See docs/BOOK_TEXT.md#delivery-the-getdescription-hook.
 namespace SkyrimNetDiaries::BookTextHook
 {
     void Install();

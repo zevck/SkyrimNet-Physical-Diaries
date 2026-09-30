@@ -1,6 +1,5 @@
-# Spriggit: the ESP's source is text in spriggit\SkyrimNetPhysicalDiaries (Spriggit YAML), never the
-# .esp itself.  Dot-sourced by Build_Local.ps1 and utilities\esp_to_spriggit.ps1.
-# See docs/PLUGIN.md.
+# Spriggit: the ESP's source is the Spriggit YAML in spriggit\SkyrimNetPhysicalDiaries, never the .esp itself.
+# Dot-sourced by Build_Local.ps1 and utilities\esp_to_spriggit.ps1.  See docs/PLUGIN.md.
 
 # Pinned like SkyrimNet's external_versions.json.
 $SpriggitVersion = "0.41.0"

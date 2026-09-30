@@ -25,35 +25,14 @@
 namespace SkyrimNetDiaries {
 
     namespace {
-        // Actor lookup cache - persists for entire game session.
-        // Keyed by SkyrimNet UUID only: a UUID is unique and stable, so within a
-        // session (the cache is wiped on each load) it maps to exactly one actor.
-        // FormIDs are deliberately NOT used as a cache key — they are volatile and
-        // reused across sessions, so a FormID key could cross-bind two actors that
-        // happened to share a stored FormID snapshot.  Cleared each load via
-        // ClearActorCache().
-        // Stores FormIDs, not Actor pointers: a non-persistent actor can be deleted
-        // mid-session (cell reset), and a cached pointer would then dangle.
+        // Session cache keyed by UUID only (a FormID key could cross-bind actors); cleared each load.  Holds
+        // FormIDs, not Actor pointers: a non-persistent actor can be deleted mid-session (cell reset).
         static std::mutex g_actorCacheMutex;
         static std::unordered_map<std::string, RE::FormID> g_actorCacheByUuid;
     }
 
-    // ---------------------------------------------------------------------------
-    // FindActorForBook: resolve the owning NPC for a diary volume.
-    //
-    // SkyrimNet's UUID is the only stable, unique identity for an actor; FormIDs
-    // are volatile (reused across sessions for non-persistent refs, shifted by
-    // ESL load-order changes).  Resolution therefore trusts the UUID and never
-    // trusts a bare FormID:
-    //   1. UUID → live FormID via SkyrimNet API (authoritative).
-    //   2. Stored targetFormID, accepted ONLY if SkyrimNet confirms that FormID
-    //      still maps back to our UUID (reverse-lookup back-check).  A reused or
-    //      stale FormID fails the check and is rejected rather than resolving to
-    //      the wrong actor.
-    // A row with no UUID cannot be verified, so it is rejected outright.  The
-    // cache is keyed by UUID only and never stores negative results (a transient
-    // miss must retry on the next access, not stick for the whole session).
-    // ---------------------------------------------------------------------------
+    // FindActorForBook: trusts the UUID, never a bare FormID; no UUID = rejected; misses aren't cached.
+    // See docs/BOOK_FORMS.md#finding-the-npc-findactorforbook.
     RE::Actor* FindActorForBook(RE::FormID targetFormID,
                                 const std::string& actorName,
                                 const std::string& bioTemplate,
@@ -93,10 +72,8 @@ namespace SkyrimNetDiaries {
             }
         }
 
-        // Tier 2: stored FormID, accepted only if SkyrimNet still maps it back to
-        // our UUID.  This is what makes a reused/stale FormID safe — if the slot
-        // now belongs to a different actor (or nobody), the back-check fails and
-        // we reject rather than hand back the wrong diary owner.
+        // Tier 2: stored FormID, accepted only if SkyrimNet still maps it back to our UUID, so a reused or
+        // stale FormID is rejected rather than handing back the wrong owner.
         if (!result && targetFormID != 0) {
             RE::Actor* candidate = RE::TESForm::LookupByID<RE::Actor>(targetFormID);
             if (candidate) {

@@ -28,9 +28,8 @@ namespace SkyrimNetDiaries::SaveFolder {
     const std::string& Get();
     void Clear();
 
-    // Parses SkyrimNet.log for the last "Using save ID: " line, checks that the
-    // matching SkyrimNet .db exists, and stores the result for Get().  Returns ""
-    // (and clears the stored folder) on failure.
+    // Stores the folder from the last "Using save ID: " line of SkyrimNet.log if its SkyrimNet .db exists.
+    // Returns "" (and clears the stored folder) on failure.
     std::string DetectFromLog();
 
 } // namespace SkyrimNetDiaries::SaveFolder

@@ -24,36 +24,16 @@
 #include "Detour.h"
 #include <thread>
 
-// ---------------------------------------------------------------------------
-// TESDescription::GetDescription hook
-//
-// Everything that shows a book's text asks the form for its DESC field, so one
-// hook covers every reader of our volumes:
-//
-//  - The book menu.  All three engine callers of BookMenu::OpenBookMenu build the
-//    text with GetDescription(book's description component, out, parent = nullptr,
-//    'DESC'), and on SE, AE and VR they are the only callers that pass a book's
-//    component with no parent.  So our book's component with no parent means the
-//    book is opening: refresh from SkyrimNet, then the styled text (Win-1251 for
-//    Cyrillic).  The component is matched by identity (BookManager's index).
-//  - Everything else (SkyrimNet's book-read event, Immersive Reading on VR) passes
-//    the book as the parent: the cached text, UTF-8, font tags stripped.
-//
-// The item card asks for CNAM, not DESC, and is left alone.  RELOCATION_ID(14399,
-// 14552) is (SE id, AE id); VR reuses the SE id through the VR Address Library.
-// See docs/BOOK_TEXT.md.
-// ---------------------------------------------------------------------------
+// TESDescription::GetDescription hook: no parent means the book menu is opening (styled, refreshed);
+// with the book as parent, the cached UTF-8 text.  See docs/BOOK_TEXT.md#delivery-the-getdescription-hook.
 
 namespace
 {
     // ── UTF-8 → Windows-1251 for Cyrillic ────────────────────────────
-    // Scaleform's book pagination mixes byte and character offsets, so 2-byte
-    // UTF-8 Cyrillic overlaps progressively; Win-1251 is one byte per character.
-    // See docs/BOOK_TEXT.md.
+    // Scaleform's book pagination mixes byte and character offsets.  See docs/BOOK_TEXT.md#utf-8--windows-1251.
 
-    // True if the text contains Cyrillic letters (U+0400–U+04FF: UTF-8 lead bytes
-    // 0xD0–0xD3).  Only such text is converted to Win-1251; converting other text
-    // turned French guillemets into bytes that aren't valid UTF-8.
+    // Cyrillic lead bytes 0xD0–0xD3.  Only such text is converted: converting other text
+    // turned French guillemets into invalid UTF-8.
     static bool HasCyrillic(const std::string& text) {
         for (std::size_t i = 0; i + 1 < text.size(); ++i) {
             const auto b = static_cast<unsigned char>(text[i]);
@@ -131,9 +111,8 @@ namespace
                     out += static_cast<char>(*(p-1));
                 }
             } else if ((*p & 0xF0) == 0xE0 && p + 2 < end) {
-                // 3-byte UTF-8: the Win-1251 punctuation SanitizeBookText doesn't
-                // replace, else pass through unchanged (multi-byte text desyncs
-                // pagination, so map what Win-1251 has).
+                // 3-byte UTF-8: map the Win-1251 punctuation SanitizeBookText leaves (multi-byte text
+                // desyncs pagination), else pass through.
                 const uint32_t cp = (static_cast<uint32_t>(*p & 0x0F) << 12)
                                   | (static_cast<uint32_t>(*(p+1) & 0x3F) << 6)
                                   | static_cast<uint32_t>(*(p+2) & 0x3F);
@@ -170,9 +149,8 @@ namespace
         return out;
     }
 
-    // The rendered text without its <font> tags.  Other readers (SkyrimNet's prompt,
-    // Immersive Reading) get markup close to a vanilla book's; the book menu still
-    // gets the styled text.
+    // For readers other than the book menu (SkyrimNet's prompt, Immersive Reading): markup close
+    // to a vanilla book's.
     std::string StripFontTags(const std::string& text) {
         std::string out;
         out.reserve(text.size());
@@ -191,10 +169,8 @@ namespace
     // The thread that loaded the plugin: the main thread.
     std::thread::id g_mainThread;
 
-    // Picks up entries added or deleted since the last render.  books_ may only be
-    // touched where SKSE runs our tasks: inline on the main thread while the game is
-    // paused (menus), otherwise (a book read from the world, in the "Poll controls"
-    // job) queued, so it shows on the next open.  See docs/ARCHITECTURE.md#threading.
+    // books_ is touched only where SKSE runs our tasks: inline on the main thread while paused (menus),
+    // else queued (shows on the next open).  See docs/ARCHITECTURE.md#threading.
     void RefreshBeforeOpen(RE::FormID bookId)
     {
         const auto refresh = [bookId]() {

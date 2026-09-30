@@ -37,6 +37,8 @@ set(sources
     src/BlankJournals.cpp
     src/BookCreation.cpp
     src/BookEditor.cpp
+    src/EditorJournals.cpp
+    src/EditorWrites.cpp
     src/BookManager.cpp
     src/BookText.cpp
     src/BookTextHook.cpp

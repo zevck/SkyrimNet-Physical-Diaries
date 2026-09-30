@@ -21,15 +21,8 @@
 
 #include "PCH.h"
 
-// Holds the post-load sync back until SkyrimNet has settled its timeline.
-//
-// Loading a save older than SkyrimNet's history makes SkyrimNet ask the player to
-// keep or clear the "future" history, and on Clear it deletes those diary entries.
-// SkyrimNet's public API has no way to ask whether that decision is still pending,
-// so SNPD watches for the prompt itself: a MinHook detour on
-// MessageBoxData::QueueMessage recognises SkyrimNet's skynet_DeleteHistoryMessage
-// and wraps its callback to see which button was pressed.
-// See docs/VOLUMES_AND_SYNC.md.
+// Holds the post-load sync back until SkyrimNet's keep/clear decision is made, watching its prompt through a
+// QueueMessage hook.  See docs/VOLUMES_AND_SYNC.md#waiting-for-the-decision-timelinegate.
 namespace SkyrimNetDiaries::TimelineGate {
 
     // SKSEPlugin_Load: install the QueueMessage hook.
@@ -41,9 +34,8 @@ namespace SkyrimNetDiaries::TimelineGate {
     // kPreLoadGame: forget the previous load's prompt and wait state.
     void Reset();
 
-    // Polled on the game thread once SkyrimNet's database is ready.  True once the
-    // timeline is settled: nothing from the future, the player chose Keep, or the
-    // player chose Clear and SkyrimNet has finished deleting.
+    // Polled on the game thread once SkyrimNet's database is ready.  True once there is nothing from the future,
+    // the player chose Keep, or the player chose Clear and SkyrimNet has finished deleting.
     bool IsSettled();
 
     // What happened to SkyrimNet's history on this load, for logging:

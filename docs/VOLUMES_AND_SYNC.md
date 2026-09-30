@@ -42,7 +42,7 @@ The same data bounds the earlier volume from above: `GetVolumeEntries` keeps, on
 
 `CreateAllVolumesForActor(uuid, name, formId, bioTemplate, entries, startingVolume)` sorts the entries, cuts them into chunks of `EntriesPerVolume` (default 10), computes the boundary fields per chunk, and calls `CreateDiaryBook` for each.
 
-**Empty volumes** (`BookManager::CreateEmptyVolume`, `endTime = startTime`) are only the player's journals, made when the player reads a blank journal: volume 1 (start 0), or the next volume (start on the next whole game second after the previous one's last entry, which is first made its `endTime`; entries in it are dated at least half a game second after the start, because SkyrimNet truncates stored dates; see [EDITING.md](EDITING.md#no-entry-limit)). Journals have no entry limit and grow only in the book editor; nothing on this page seals, extends or creates them.
+**Empty volumes** (`BookManager::CreateEmptyVolume`) are only the player's journals, made when the player reads a blank journal. Journals aren't split by time: each holds the entries tagged for it (`snpd_journal_<n>`), side by side, so their start and end times mean nothing, and they grow only in the book editor ([EDITING.md](EDITING.md#diaries-and-journals)). Nothing on this page seals, extends or creates them; `ReconcileWithTimeline` only re-renders a journal whose entry count changed.
 
 ---
 

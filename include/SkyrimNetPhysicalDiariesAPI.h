@@ -21,50 +21,8 @@
 #include <cstdint>
 #include <cstring>
 
-// =============================================================================
-// SkyrimNet Physical Diaries - Inter-Plugin API
-// =============================================================================
-//
-// Allows other SKSE plugins to query diary book content and metadata.
-//
-// Three query types are available:
-//   SNPD_QUERY_BOOK        — full rendered volume text + metadata
-//   SNPD_QUERY_ENTRY       — single entry by index (font-tagged)
-//   SNPD_QUERY_ALL_ENTRIES — all entries for a volume in one call (font-tagged)
-//
-// All queries are synchronous — the response is filled before Dispatch returns.
-// Dispatch from the game thread: the handler reads SNPD's in-memory state
-// without locking.
-//
-// Text is SNPD's rendered copy of the diary (refreshed whenever the book is
-// opened), not a live SkyrimNet query.  Entry text is the diary prose wrapped in
-// <font> tags; "&", "<" and ">" inside the prose are returned as plain characters.
-//
-// USAGE — detecting and reading one of our diary books:
-//
-//   Send the query for any book: it is an in-memory lookup.  Don't pre-filter
-//   by name, since book titles are localized.  isDiaryBook / resultCode say
-//   whether the FormID is one of our diary volumes.
-//
-//   Example:
-//
-//     using namespace SkyrimNetPhysicalDiaries_API;
-//
-//     SNPDBookQuery query{};
-//     query.apiVersion = SNPD_API_VERSION;
-//     query.bookFormId = book->GetFormID();
-//
-//     SKSE::GetMessagingInterface()->Dispatch(
-//         SNPD_QUERY_BOOK, &query, sizeof(query), PluginName);
-//
-//     if (query.isDiaryBook) {
-//         // query.text holds the full rendered volume text (font-tagged)
-//         // query.entryCount, volumeNumber, totalVolumes hold metadata
-//         // query.resultCode == SNPDResultCode::Success
-//         //                  or SNPDResultCode::NoEntries (entries removed)
-//     }
-//
-// =============================================================================
+// SNPD inter-plugin API: Dispatch a query struct to PluginName from the game thread (state is read without a lock).
+// Filled in before Dispatch returns.  Send it for any book; never filter by (localized) title.  See docs/PAPYRUS_AND_API.md.
 
 namespace SkyrimNetPhysicalDiaries_API
 {
@@ -88,13 +46,8 @@ namespace SkyrimNetPhysicalDiaries_API
         NoEntries       = 3, // Volume is registered but has no readable entries
     };
 
-    // ── SNPD_QUERY_BOOK ───────────────────────────────────────────────────────
-    //
-    // Allocate SNPDBookQuery on the stack, fill bookFormId, Dispatch to us.
-    // Dispatch is synchronous — response is filled before it returns.
-    //
-    // API v2: filePath[512] replaced by text[65536] (rendered diary text).
-    // API v3: added entryCount, volumeNumber, totalVolumes metadata fields.
+    // ── SNPD_QUERY_BOOK: fill bookFormId and Dispatch; isDiaryBook / resultCode say whether it is one of ours.
+    // API v2 replaced filePath[512] with text; v3 added entryCount, volumeNumber and totalVolumes.
     struct SNPDBookQuery
     {
         // ── Request (caller fills in) ──────────────────────────────────────
@@ -116,18 +69,13 @@ namespace SkyrimNetPhysicalDiaries_API
         // Total number of volumes this actor has written.
         std::int32_t totalVolumes = 0;
 
-        // Null-terminated rendered diary text (font-tagged, ready for display).
-        // Empty (text[0]=='\0') when the volume has no readable entries.
-        // Only valid when isDiaryBook == true.
-        // Max length: SNPD_MAX_BOOK_TEXT - 1 characters + null terminator.
+        // SNPD's rendered copy (refreshed when the book opens; font-tagged, &<> plain), null-terminated, at most
+        // SNPD_MAX_BOOK_TEXT - 1 chars.  Empty when the volume has no readable entries; valid only if isDiaryBook.
         char text[SNPD_MAX_BOOK_TEXT] = {};
     };
 
-    // ── SNPD_QUERY_ENTRY ──────────────────────────────────────────────────────
-    //
-    // Fetch one diary entry by index from a known volume.
-    // Use SNPD_QUERY_BOOK first to learn entryCount, then request individual
-    // entries by 0-based index, without processing an entire volume.
+    // ── SNPD_QUERY_ENTRY: one entry of a volume by 0-based index, without processing the whole volume.
+    // SNPD_QUERY_BOOK gives entryCount.
     struct SNPDEntryQuery
     {
         // ── Request (caller fills in) ──────────────────────────────────────
@@ -149,25 +97,8 @@ namespace SkyrimNetPhysicalDiaries_API
         char content[SNPD_MAX_ENTRY_TEXT]  = {};
     };
 
-    // ── SNPD_QUERY_ALL_ENTRIES ───────────────────────────────────────────────
-    //
-    // Fetch all diary entries for a volume in one call.
-    // Content strings are packed null-terminated, back-to-back, in
-    // chronological order. Iterate with:
-    //
-    //   const char* p = query.content;
-    //   for (int i = 0; i < query.entryCount; i++) {
-    //       // use p as a C-string
-    //       p += strlen(p) + 1;
-    //   }
-    //
-    // If the total content exceeds the buffer, an entry that doesn't fit is
-    // skipped (a later, shorter one may still be packed) and truncatedCount holds
-    // how many were skipped.  A volume whose entries were all removed returns
-    // resultCode Success, isValid true and entryCount 0.
-    //
-    // NOTE: sizeof(SNPDAllEntriesQuery) ~= 256 KB. Always heap-allocate:
-    //   auto query = std::make_unique<SNPDAllEntriesQuery>();
+    // ── SNPD_QUERY_ALL_ENTRIES: every entry, null-terminated back to back, oldest first (next: p += strlen(p) + 1).
+    // Entries that don't fit are skipped, counted in truncatedCount.  ~256 KB: heap-allocate (std::make_unique).
     struct SNPDAllEntriesQuery
     {
         // ── Request (caller fills in) ──────────────────────────────────────
@@ -180,9 +111,8 @@ namespace SkyrimNetPhysicalDiaries_API
         std::int32_t  entryCount     = 0;     // number of strings packed in content[]
         std::int32_t  truncatedCount = 0;     // entries that didn't fit (0 = complete)
 
-        // Entry text (font-tagged, as in SNPD_QUERY_ENTRY), packed null-terminated strings.
-        // Sized for worst case: 50 entries × ~4 KB average = ~200 KB, plus headroom.
-        // Total capacity: SNPD_MAX_ALL_ENTRIES - 1 bytes of text + final '\0' guard.
+        // Entry text (font-tagged, as in SNPD_QUERY_ENTRY), packed; sized for ~50 entries of ~4 KB plus headroom.
+        // Capacity: SNPD_MAX_ALL_ENTRIES - 1 bytes of text + a final '\0' guard.
         char content[SNPD_MAX_ALL_ENTRIES] = {};
     };
 

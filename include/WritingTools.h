@@ -21,10 +21,8 @@
 
 #include "PCH.h"
 
-// Quill and ink: writing needs a quill, and each writing session uses one dip of ink.  A
-// partly used inkwell is its own item, one per uses left (the ESP's SNPD_Inkwell1-9, clones of
-// the vanilla inkwell), swapped for the next one down at each use; Description Framework, if
-// installed, shows which it is.  See docs/EDITING.md#quill-and-ink.
+// Quill and ink: writing needs a quill, and each session uses one dip of ink.  A partly used inkwell is its own item
+// per uses left (SNPD_Inkwell1-9), swapped for the next one down at each use.  See docs/EDITING.md#quill-and-ink.
 namespace SkyrimNetDiaries::WritingTools {
 
     // kDataLoaded, writing on: finds the ESP's quills, inkwells and partly used inkwells, and
