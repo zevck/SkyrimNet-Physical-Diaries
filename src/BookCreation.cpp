@@ -195,7 +195,23 @@ namespace SkyrimNetDiaries {
                                       const std::vector<DiaryEntry>& entries, const std::string& bioTemplateName,
                                       double prevVolumeLastCreationTime, int prevVolumeCountAtBoundary) {
         if (entries.empty()) return;
+        CreateVolumeBook(actorUuid, actorName, startTime, entries.back().entry_date, volumeNumber, targetActorFormID,
+                         entries, bioTemplateName, prevVolumeLastCreationTime, prevVolumeCountAtBoundary);
+    }
 
+    RE::FormID BookManager::CreateEmptyVolume(const std::string& actorUuid, const std::string& actorName,
+                                              double startTime, int volumeNumber, RE::FormID targetActorFormID,
+                                              const std::string& bioTemplateName, double prevVolumeLastCreationTime,
+                                              int prevVolumeCountAtBoundary) {
+        return CreateVolumeBook(actorUuid, actorName, startTime, startTime, volumeNumber, targetActorFormID, {},
+                                bioTemplateName, prevVolumeLastCreationTime, prevVolumeCountAtBoundary);
+    }
+
+    RE::FormID BookManager::CreateVolumeBook(const std::string& actorUuid, const std::string& actorName,
+                                             double startTime, double endTime, int volumeNumber,
+                                             RE::FormID targetActorFormID, const std::vector<DiaryEntry>& entries,
+                                             const std::string& bioTemplateName, double prevVolumeLastCreationTime,
+                                             int prevVolumeCountAtBoundary) {
         const std::string templateToUse = SelectJournalTemplate(actorUuid, actorName, targetActorFormID);
 
         // Look the template up by EditorID.  This works with powerofthree's Tweaks or
@@ -204,7 +220,7 @@ namespace SkyrimNetDiaries {
         auto* templateBook = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>(templateToUse);
         if (!templateBook) {
             SKSE::log::error("Template book not found with Editor ID: '{}'", templateToUse);
-            return;
+            return 0;
         }
 
         // This save may already have a book for this volume that nothing claims (see
@@ -219,7 +235,7 @@ namespace SkyrimNetDiaries {
         if (!book) {
             SKSE::log::error("Couldn't create a book form for {} vol {}: it is created the next time it is needed",
                              actorName, volumeNumber);
-            return;
+            return 0;
         }
         const RE::FormID bookId = book->GetFormID();
         const std::string bookName = Localization::GetSingleton()->FormatBookName(actorName, volumeNumber);
@@ -235,7 +251,7 @@ namespace SkyrimNetDiaries {
         data.actorName = actorName;
         data.bookFormId = bookId;
         data.startTime = startTime;
-        data.endTime = entries.back().entry_date;
+        data.endTime = endTime;
         data.volumeNumber = volumeNumber;
         data.journalTemplate = templateToUse;
         data.bioTemplateName = bioTemplateName;
@@ -250,16 +266,17 @@ namespace SkyrimNetDiaries {
         if (reused) {
             // Not given again: the NPC still has it, or it was taken (a theft stands).
             SKSE::log::info("✓ Reused this save's book 0x{:X} for '{}'", bookId, bookName);
-            return;
+            return bookId;
         }
         RE::Actor* targetActor = FindActorForBook(targetActorFormID, actorName, bioTemplateName, actorUuid);
         if (!targetActor) {
             SKSE::log::error("Failed to find target actor 0x{:X} ({}) for '{}' - book created but not added to inventory",
                              targetActorFormID, actorName, bookName);
-            return;
+            return bookId;
         }
         targetActor->AddObjectToContainer(book, nullptr, 1, nullptr);
         SKSE::log::info("✓ Added '{}' (0x{:X}) to {}'s inventory", bookName, bookId, actorName);
+        return bookId;
     }
 
 } // namespace SkyrimNetDiaries

@@ -45,6 +45,9 @@ class BookMenu extends MovieClip
    var oEditContent;     // what the plugin sent (SetEditContent) for the next edit mode, or undefined: blank page
    var oContentFmt;      // entry text's format (config font, content size)
    var oBreakFmt;        // blank lines' format, as reading has them (see EditBuildContent)
+   var bTextReceived;    // SetBookText has run (EditReady)
+   var iDatesStart;      // the title page's date range in EditField (see EditSetDates)
+   var iDatesLength;
 
    function BookMenu()
    {
@@ -176,14 +179,21 @@ class BookMenu extends MovieClip
       this.iShowCalls = 0;
       this.sTurnLog = "";
       this.EditBuildContent(fmt);
-      Selection.setFocus(this.EditField);
       var start = this.EditSnap(0, 1);
-      Selection.setSelection(start, start);
+      this.EditSetCaretOrNone(start);
       this.EditLayout();
-      // Show the page being read; on a page with nowhere to type (the title spread) the view
-      // stays there and the caret waits on the first entry.
+      // Start on the page being read. If it has nowhere to type (the title spread), turn to
+      // the first entry's page, where the caret is; with no entry at all, stay.
       this.iEditShownFrom = readShownFrom;
       this.EditGoToPage(readPage);
+      if(start >= 0)
+      {
+         var caretPage = this.PageOfPos(this.EditCaret());
+         if(caretPage != this.iEditPage && (this.bNote || caretPage != this.iEditPage + 1))
+         {
+            this.EditLayout();
+         }
+      }
    }
 
    // ---- Content: locked text and editable bodies ----
@@ -228,6 +238,8 @@ class BookMenu extends MovieClip
       title += "\r\r\r";
       var dStart = title.length;
       title += BookMenu.FieldText(c.dates);
+      this.iDatesStart = dStart;   // the title page comes first, so this is also the field offset
+      this.iDatesLength = title.length - dStart;
       styles.push({start:dStart, end:title.length, size:c.smallSize, align:"center"});
       segs.push({locked:title.length, body:0, editable:false});
       text += title;
@@ -395,6 +407,81 @@ class BookMenu extends MovieClip
       return after >= 0 ? after : before;
    }
 
+   // The book's text has arrived (SetBookText, which comes after the menu opens): edit mode
+   // can start.
+   function EditReady()
+   {
+      return this.bTextReceived == true;
+   }
+
+   // A new, empty entry at the end: a new page with its heading (locked) and an empty body,
+   // formatted as EditBuildContent does. The caret goes into it. Returns its index among the
+   // entries, or -1.
+   function EditAppendEntry(heading)
+   {
+      if(this.aSegs == undefined || this.EditField == undefined || this.oBreakFmt == undefined)
+      {
+         return -1;
+      }
+      var start = this.EditField.length;
+      var h = BookMenu.FieldText(heading);
+      var locked = "\r\r";
+      if(h.length)
+      {
+         locked += h + "\r\r";
+      }
+      this.EditField.replaceText(start, start, locked);
+      this.EditField.setTextFormat(start, start + locked.length, this.oContentFmt);
+      var j = start;
+      while(j < start + locked.length)
+      {
+         if(this.EditField.text.charAt(j) == "\r")
+         {
+            this.EditField.setTextFormat(j, j + 1, this.oBreakFmt);
+         }
+         j++;
+      }
+      if(h.length)
+      {
+         var f = new TextFormat();
+         f.size = this.oEditContent.dateSize;
+         f.align = "left";
+         this.EditField.setTextFormat(start + 2, start + 2 + h.length, f);
+      }
+      this.aSegs.push({locked:locked.length, body:0, editable:true});
+      this.EditSetCaret(this.EditField.length);
+      this.EditLayout();
+      var entries = 0;
+      var k = 0;
+      while(k < this.aSegs.length)
+      {
+         if(this.aSegs[k].editable)
+         {
+            entries++;
+         }
+         k++;
+      }
+      return entries - 1;
+   }
+
+   // Put the caret at the end of entry i's text and show it.
+   function EditFocusEntry(i)
+   {
+      var entry = -1;
+      var k = 0;
+      while(k < this.aSegs.length)
+      {
+         if(this.aSegs[k].editable && ++entry == i)
+         {
+            this.EditSetCaret(this.BodyEnd(k));
+            this.EditLayout();
+            return true;
+         }
+         k++;
+      }
+      return false;
+   }
+
    // The entry the caret is in (its index among the entries, as EditGetBodies orders them),
    // or -1.
    function EditCurrentEntry()
@@ -443,7 +530,55 @@ class BookMenu extends MovieClip
       this.EditField.replaceText(start, start + this.aSegs[k].locked + this.aSegs[k].body, "");
       this.aSegs.splice(k, 1);
       var pos = this.EditSnap(start, -1);
-      this.EditSetCaret(pos < 0 ? 0 : pos);
+      this.EditSetCaretOrNone(pos);
+      this.EditLayout();
+      return true;
+   }
+
+   // The caret at pos, or none at all when there is no entry to type in (pos -1): a caret on
+   // the blank or title page would look editable.
+   function EditSetCaretOrNone(pos)
+   {
+      if(pos < 0)
+      {
+         // Unfocusing alone still draws the caret: a field that can't be typed in draws none.
+         Selection.setFocus(null);
+         this.EditField.type = "dynamic";
+         this.EditField.selectable = false;
+      }
+      else
+      {
+         this.EditSetCaret(pos);
+      }
+   }
+
+   // The title page's date range, after entries were added or torn out (FormatDiaryEntries'
+   // TitlePageDates, from the plugin).
+   function EditSetDates(dates)
+   {
+      if(this.aSegs == undefined || this.aSegs.length < 2 || this.iDatesStart == undefined)
+      {
+         return false;
+      }
+      var text = BookMenu.FieldText(dates);
+      var delta = text.length - this.iDatesLength;
+      var hadFocus = Selection.getFocus() != null;
+      var caret = this.EditCaret();
+      this.EditField.replaceText(this.iDatesStart, this.iDatesStart + this.iDatesLength, text);
+      if(text.length)
+      {
+         this.EditField.setTextFormat(this.iDatesStart, this.iDatesStart + text.length, this.oContentFmt);
+         var f = new TextFormat();
+         f.size = this.oEditContent.smallSize;
+         f.align = "center";
+         this.EditField.setTextFormat(this.iDatesStart, this.iDatesStart + text.length, f);
+      }
+      this.iDatesLength = text.length;
+      this.aSegs[1].locked += delta;
+      if(hadFocus && caret > this.iDatesStart)
+      {
+         this.EditSetCaret(caret + delta);
+      }
       this.EditLayout();
       return true;
    }
@@ -645,6 +780,8 @@ class BookMenu extends MovieClip
 
    function EditSetCaret(pos)
    {
+      this.EditField.type = "input";
+      this.EditField.selectable = true;
       Selection.setFocus(this.EditField);
       Selection.setSelection(pos, pos);
    }
@@ -1025,6 +1162,7 @@ class BookMenu extends MovieClip
    function SetBookText(astrText, abNote)
    {
       this.bNote = abNote;
+      this.bTextReceived = true;
       // Don't overwrite text while in edit mode
       if(this.bEditMode)
       {

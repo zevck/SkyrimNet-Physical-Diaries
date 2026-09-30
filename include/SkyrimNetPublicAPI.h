@@ -77,6 +77,12 @@ std::string (*PublicGetDiaryEntries)(uint32_t formId, int maxCount, double start
  *  SkyrimNet's keep/clear timeline check is pending), the entry is gone, or it failed. */
 bool (*PublicUpdateDiaryEntry)(int entryId, const char* content, const char* tagsCSV) = nullptr;
 
+/** Add a diary entry for an actor (fires SkyrimNet_DiaryCreated, gets a memory: blocks for the
+ *  embedding).  entryDate in entry_date units (0 = now); tags stored as given; emotion and
+ *  location may be null; importance < 0 = default.  Returns the new id, 0 on failure or refusal. */
+int (*PublicAddDiaryEntry)(uint32_t formId, const char* content, double entryDate, const char* tagsCSV,
+                           const char* emotion, float importance, const char* location) = nullptr;
+
 /** Delete a diary entry and its memory.  False when refused (while SkyrimNet's keep/clear
  *  timeline check is pending), the entry is gone, or it failed. */
 bool (*PublicDeleteDiaryEntry)(int entryId) = nullptr;
@@ -176,6 +182,8 @@ inline bool FindFunctions() {
                     GetProcAddress(hDLL, "PublicUpdateDiaryEntry"));
                 PublicDeleteDiaryEntry = reinterpret_cast<bool(*)(int)>(
                     GetProcAddress(hDLL, "PublicDeleteDiaryEntry"));
+                PublicAddDiaryEntry = reinterpret_cast<int(*)(uint32_t, const char*, double, const char*,
+                    const char*, float, const char*)>(GetProcAddress(hDLL, "PublicAddDiaryEntry"));
             }
         }
         return true;

@@ -21,6 +21,7 @@
 
 #include "BookManager.h"
 #include "BookText.h"
+#include "ActorLookup.h"
 #include "BookTextHook.h"
 #include "Config.h"
 #include "Database.h"
@@ -73,15 +74,29 @@ namespace SkyrimNetDiaries::BookEditor {
             DiaryEntry entry;
             std::string savedBody;
             bool unsaved = false;
+
+            // Added in the editor and not in SkyrimNet yet (no id): entry.localKey names it.
+            bool IsNew() const { return entry.id == 0 && entry.localKey != 0; }
         };
         std::vector<EditedEntry> g_edit;  // page order, as the SWF's EditGetBodies
         std::string g_actorName;
         RE::FormID g_bookFormId = 0;      // the diary volume being edited
 
+        // New entries: each gets a local key until SkyrimNet gives it an id (game thread).
+        int g_nextLocalKey = 1;
+        std::unordered_set<int> g_addQueued;  // local keys whose add is in the write queue
+
+        // An entry's key in the pending-write bookkeeping: its id, or its local key (negated).
+        int EntryKey(const DiaryEntry& entry) { return entry.id != 0 ? entry.id : -entry.localKey; }
+
+        // The entries as the book shows them: a new entry that was never given text isn't one.
         std::vector<DiaryEntry> EditedEntries() {
             std::vector<DiaryEntry> entries;
             entries.reserve(g_edit.size());
-            for (const auto& e : g_edit) entries.push_back(e.entry);
+            for (const auto& e : g_edit) {
+                if (e.IsNew() && e.entry.content.empty()) continue;
+                entries.push_back(e.entry);
+            }
             return entries;
         }
 
@@ -102,36 +117,54 @@ namespace SkyrimNetDiaries::BookEditor {
         std::uint32_t g_generation = 0;  // bumped when a session ends (Reset)
 
         struct WriteJob {
+            enum class Kind { Update, Delete, Add };
+            Kind kind = Kind::Update;
             std::uint32_t generation = 0;
             RE::FormID bookFormId = 0;
-            int entryId = 0;
-            bool isDelete = false;
+            int entryId = 0;   // 0: a new entry, found by localKey once its add has run
+            int localKey = 0;
+            double entryDate = 0.0;  // Add only
             std::string text;
             std::string tagsCSV;
         };
 
-        // Called on the game thread when a job is done.
+        // Called on the game thread when a job is done.  An add's job carries its new id.
         void CompleteWrite(const WriteJob& job, bool ok) {
             if (job.generation != g_generation) {
                 SKSE::log::info("[BookEditor] Write for entry {} finished after a load: ignored", job.entryId);
                 return;
             }
+            const bool isDelete = job.kind == WriteJob::Kind::Delete;
+            const int key = job.entryId != 0 ? job.entryId : -job.localKey;
             auto* loc = Localization::GetSingleton();
             auto it = g_pending.find(job.bookFormId);
+            if (job.kind == WriteJob::Kind::Add && ok) {
+                // The new entry has its id now: later edits and deletes use it.
+                const auto setId = [&job](DiaryEntry& entry) {
+                    if (entry.localKey == job.localKey && entry.id == 0) entry.id = job.entryId;
+                };
+                for (auto& e : g_edit) setId(e.entry);
+                if (it != g_pending.end()) {
+                    for (auto& entry : it->second.entries) setId(entry);
+                    it->second.unsaved.erase(-job.localKey);
+                }
+            } else if (job.kind == WriteJob::Kind::Add) {
+                g_addQueued.erase(job.localKey);  // not in SkyrimNet: the next save adds it again
+            }
             if (it != g_pending.end()) {
                 auto& pending = it->second;
                 --pending.count;
-                if (job.isDelete) {
+                if (isDelete) {
                     if (!ok) pending.stale = true;
                 } else if (ok) {
-                    pending.unsaved.erase(job.entryId);
+                    pending.unsaved.erase(key);
                 } else {
-                    pending.unsaved.insert(job.entryId);
+                    pending.unsaved.insert(key);
                 }
             }
             if (!ok) {
                 RE::SendHUDMessage::ShowHUDMessage(
-                    (job.isDelete ? loc->GetEditDeleteFailed() : loc->GetEditSaveFailed()).c_str());
+                    (isDelete ? loc->GetEditDeleteFailed() : loc->GetEditSaveFailed()).c_str());
             }
             if (it == g_pending.end() || it->second.count > 0) return;  // the last write reconciles
 
@@ -143,7 +176,8 @@ namespace SkyrimNetDiaries::BookEditor {
 
         // One worker, so SkyrimNet gets the editor's writes in the order they were made (an
         // update blocks while SkyrimNet re-embeds the entry's memory).  It lives for the
-        // process; each job's completion runs as a game-thread task.
+        // process; each job's completion runs as a game-thread task.  A new entry's later
+        // jobs name it by local key: its add ran first, and ids_ has the id it got.
         class WriteQueue {
         public:
             void Push(WriteJob job) {
@@ -170,16 +204,35 @@ namespace SkyrimNetDiaries::BookEditor {
                     }
                     bool ok = false;
                     try {
-                        ok = job.isDelete ? Database::DeleteDiaryEntry(job.entryId)
-                                          : Database::UpdateDiaryEntry(job.entryId, job.text, job.tagsCSV);
+                        if (job.entryId == 0 && job.localKey != 0) {
+                            if (const auto id = ids_.find(job.localKey); id != ids_.end()) job.entryId = id->second;
+                        }
+                        switch (job.kind) {
+                        case WriteJob::Kind::Add:
+                            job.entryId = Database::AddDiaryEntry(0x14, job.text, job.entryDate, job.tagsCSV);
+                            ok = job.entryId != 0;
+                            if (ok) ids_[job.localKey] = job.entryId;
+                            break;
+                        case WriteJob::Kind::Update:
+                            // No id: the entry's add failed, so there's nothing to update.
+                            ok = job.entryId != 0 && Database::UpdateDiaryEntry(job.entryId, job.text, job.tagsCSV);
+                            break;
+                        case WriteJob::Kind::Delete:
+                            // No id: the entry's add failed, so there's nothing to delete.
+                            ok = job.entryId == 0 || Database::DeleteDiaryEntry(job.entryId);
+                            break;
+                        }
                     } catch (...) {
                         ok = false;
                     }
+                    static constexpr const char* kDone[] = { "Saved", "Tore out", "Added" };
+                    static constexpr const char* kVerb[] = { "save", "delete", "add" };
+                    const auto kind = static_cast<std::size_t>(job.kind);
                     if (ok) {
-                        SKSE::log::info("[BookEditor] {} entry {}", job.isDelete ? "Tore out" : "Saved", job.entryId);
+                        SKSE::log::info("[BookEditor] {} entry {}", kDone[kind], job.entryId);
                     } else {
-                        SKSE::log::error("[BookEditor] SkyrimNet didn't {} entry {}",
-                                         job.isDelete ? "delete" : "save", job.entryId);
+                        SKSE::log::error("[BookEditor] SkyrimNet didn't {} entry {} (local {})", kVerb[kind],
+                                         job.entryId, job.localKey);
                     }
                     SKSE::GetTaskInterface()->AddTask([job = std::move(job), ok]() { CompleteWrite(job, ok); });
                 }
@@ -189,6 +242,7 @@ namespace SkyrimNetDiaries::BookEditor {
             std::condition_variable ready_;
             std::deque<WriteJob> jobs_;
             bool started_ = false;
+            std::unordered_map<int, int> ids_;  // worker only: local key → SkyrimNet id
         };
         WriteQueue g_writes;
 
@@ -199,7 +253,7 @@ namespace SkyrimNetDiaries::BookEditor {
             pending.entries = EditedEntries();
             pending.count += static_cast<int>(jobs.size());
             for (const auto& e : g_edit) {
-                if (!e.unsaved) pending.unsaved.erase(e.entry.id);
+                if (!e.unsaved) pending.unsaved.erase(EntryKey(e.entry));
             }
             auto* manager = BookManager::GetSingleton();
             if (auto* vol = manager->GetBookForFormID(g_bookFormId)) manager->SetVolumeText(*vol, pending.entries);
@@ -282,8 +336,7 @@ namespace SkyrimNetDiaries::BookEditor {
             if (!vol) return false;
 
             // Another actor's diary is never editable: its entries are that actor's memories.
-            const std::string playerUuid = Database::GetUUIDFromFormID(0x14);
-            if (playerUuid.empty() || vol->actorUuid != playerUuid) {
+            if (!BookManager::IsPlayerDiary(*vol)) {
                 SKSE::log::info("[BookEditor] {} vol {} isn't the player's diary: not editable", vol->actorName,
                                 vol->volumeNumber);
                 return false;
@@ -323,7 +376,7 @@ namespace SkyrimNetDiaries::BookEditor {
             std::string ids;
             for (const auto& entry : entries) {
                 EditedEntry edited{ entry, NormalizeLineBreaks(EditableEntryText(entry)),
-                                    pending && pending->unsaved.contains(entry.id) };
+                                    pending && pending->unsaved.contains(EntryKey(entry)) };
                 if (!packed.empty()) packed += '\x1E';
                 packed += EntryHeading(entry) + '\x1F' + edited.savedBody;
                 ids += std::format("{}{}", ids.empty() ? "" : ",", entry.id);
@@ -451,10 +504,11 @@ namespace SkyrimNetDiaries::BookEditor {
                 const auto& body = (*bodies)[i];
                 if (!NeedsWrite(e, body)) continue;
                 if (body.empty()) {
-                    emptied = true;
+                    // A new entry left empty is simply not written; an existing one is kept.
+                    if (!e.IsNew() || g_addQueued.contains(e.entry.localKey)) emptied = true;
                     continue;
                 }
-                if (e.entry.id == 0) {
+                if (e.entry.id == 0 && e.entry.localKey == 0) {
                     SKSE::log::warn("[BookEditor] Entry {} has no SkyrimNet id: can't save it", i);
                     continue;
                 }
@@ -466,7 +520,15 @@ namespace SkyrimNetDiaries::BookEditor {
                 e.entry.content = body;
                 e.savedBody = body;
                 e.unsaved = false;
-                jobs.push_back({ .entryId = e.entry.id, .text = body, .tagsCSV = std::move(tags) });
+                // A new entry's first save adds it; later ones update it (by local key until
+                // the add's id is back).
+                const bool add = e.IsNew() && g_addQueued.insert(e.entry.localKey).second;
+                jobs.push_back({ .kind = add ? WriteJob::Kind::Add : WriteJob::Kind::Update,
+                                 .entryId = e.entry.id,
+                                 .localKey = e.entry.localKey,
+                                 .entryDate = e.entry.entry_date,
+                                 .text = body,
+                                 .tagsCSV = std::move(tags) });
             }
             if (emptied) Notify(Localization::GetSingleton()->GetEditEmptiedHint());
             if (jobs.empty()) return SaveResult::Nothing;
@@ -527,7 +589,8 @@ namespace SkyrimNetDiaries::BookEditor {
         void SaveAndRead() {
             if (!SavedOrStay()) return;
             auto* movie = BookMovie();
-            const std::string text = BookTextHook::ForBookMenu(FormatDiaryEntries(EditedEntries(), g_actorName));
+            const std::string text =
+                BookTextHook::ForBookMenu(FormatDiaryEntries(EditedEntries(), g_actorName, /*playerDiary=*/true));
             LeaveEditMode();
             RE::GFxValue arg;
             arg.SetString(text.c_str());
@@ -584,8 +647,10 @@ namespace SkyrimNetDiaries::BookEditor {
         // Delete entry i (page order) now: from the editor, the book and SkyrimNet (the entry
         // and its memory).  Other entries' unsaved changes stay in the editor.
         void TearOut(std::size_t i) {
-            if (i >= g_edit.size() || g_edit[i].entry.id == 0) return;
+            if (i >= g_edit.size()) return;
             const int id = g_edit[i].entry.id;
+            const int localKey = g_edit[i].entry.localKey;
+            if (id == 0 && localKey == 0) return;
             RE::GFxValue arg;
             arg.SetNumber(static_cast<double>(i));
             auto* movie = BookMovie();
@@ -596,8 +661,17 @@ namespace SkyrimNetDiaries::BookEditor {
                 return;
             }
             g_edit.erase(g_edit.begin() + static_cast<std::ptrdiff_t>(i));
-            SKSE::log::info("[BookEditor] Tearing out entry {}", id);
-            QueueWrites({ WriteJob{ .entryId = id, .isDelete = true } });
+            // The title page's date range follows the entries left.
+            const std::string dates = TitlePageDates(EditedEntries());
+            RE::GFxValue datesArg;
+            datesArg.SetString(dates.c_str());
+            movie->Invoke("_root.BookMenu_mc.EditSetDates", nullptr, &datesArg, 1);
+            if (id == 0 && !g_addQueued.contains(localKey)) {
+                SKSE::log::info("[BookEditor] Discarded a new entry that was never saved");
+                return;  // never reached SkyrimNet
+            }
+            SKSE::log::info("[BookEditor] Tearing out entry {} (local {})", id, localKey);
+            QueueWrites({ WriteJob{ .kind = WriteJob::Kind::Delete, .entryId = id, .localKey = localKey } });
         }
 
         class TearOutCallback : public RE::IMessageBoxCallback {
@@ -630,6 +704,175 @@ namespace SkyrimNetDiaries::BookEditor {
             ShowPrompt(body, { &loc->GetEditDelete(), &loc->GetEditKeep() }, 1, new TearOutCallback(entry));
         }
 
+        // ---- New entries (docs/EDITING.md#new-entries) ----
+
+        // How far after a volume's start its first new entry is dated, in game seconds.
+        constexpr double kInsideStart = 0.5;
+
+        RE::FormID g_openNext = 0;        // a new volume to open once this book has closed
+        RE::FormID g_newEntryOnOpen = 0;  // start a new entry once this book is open with its text
+
+        bool IsLatestVolume(const DiaryBookData& vol) {
+            const auto* latest = BookManager::GetSingleton()->GetBookForActor(vol.actorUuid);
+            return latest && latest->bookFormId == vol.bookFormId;
+        }
+
+        // The volume after `vol` (full, or not held), empty, in the player's inventory.  Its
+        // book's FormID, or 0.  `entries`: vol's, saved.
+        RE::FormID CreateNextVolume(const DiaryBookData& vol, const std::vector<DiaryEntry>& entries) {
+            auto* manager = BookManager::GetSingleton();
+            // The menu pauses game time, so entries just written here are dated now.  They stay
+            // in this volume: its endTime covers them (a newer volume bounds it by endTime), and
+            // the next volume starts on the next whole game second, clear of them.
+            double end = vol.endTime;
+            for (const auto& e : entries) end = std::max(end, e.entry_date);
+            if (end != vol.endTime) manager->UpdateBookEndTime(vol.actorUuid, vol.volumeNumber, end);
+            const double start = std::floor(std::max(CurrentGameTimeSeconds(), end)) + 1.0;
+            const double lastCreation = entries.empty() ? 0.0 : entries.back().creation_time;
+            // Copies: creating a volume adds to the list `vol` lives in.
+            const std::string uuid = vol.actorUuid, name = vol.actorName, bio = vol.bioTemplateName;
+            const int number = vol.volumeNumber + 1;
+            const RE::FormID next = manager->CreateEmptyVolume(uuid, name, start, number, 0x14, bio, lastCreation, 0);
+            if (next == 0) {
+                SKSE::log::error("[BookEditor] Couldn't make volume {} of {}", number, name);
+            } else {
+                SKSE::log::info("[BookEditor] Made volume {} (0x{:X})", number, next);
+            }
+            return next;
+        }
+
+        // The volume is full: make the next one, close this book and open that one with a new
+        // entry.  `entries`: this volume's, saved.
+        void StartNextVolume(const DiaryBookData& vol, const std::vector<DiaryEntry>& entries) {
+            const RE::FormID next = CreateNextVolume(vol, entries);
+            if (next == 0) return;
+            Notify(Localization::GetSingleton()->GetEditNewVolume());
+            g_openNext = next;
+            CloseBook();
+        }
+
+        // Open a book and start a new entry in it once its text is in (BookMenuAdvanceMovie).
+        // Game thread, no book menu open.
+        void OpenForNewEntry(RE::FormID bookFormId) {
+            auto* book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(bookFormId);
+            if (!book) return;
+            g_newEntryOnOpen = bookFormId;
+            RE::BookMenu::OpenMenuFromBaseForm(book);
+        }
+
+        // The new-entry key during play (docs/EDITING.md#outside-the-book): open the player's
+        // latest volume with a new entry, or start the next volume if it's full or the player
+        // doesn't carry it (as when an NPC's diary is taken), or volume 1 if there's none.
+        void NewEntryFromPlay() {
+            auto* loc = Localization::GetSingleton();
+            if (!Database::CanWriteDiaries()) {
+                Notify(loc->GetEditNeedsSkyrimNet());
+                return;
+            }
+            const std::string uuid = Database::GetUUIDFromFormID(0x14);
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (uuid.empty() || !player) return;
+            auto* manager = BookManager::GetSingleton();
+            auto* latest = manager->GetBookForActor(uuid);
+            RE::FormID target = 0;
+            if (!latest) {
+                std::string name = Database::GetActorName(uuid);
+                if (name.empty()) name = player->GetName();
+                target = manager->CreateEmptyVolume(uuid, name, 0.0, 1, 0x14, Database::GetTemplateNameByUUID(uuid),
+                                                    0.0, 0);
+                if (target) Notify(loc->GetEditStartedVolume());
+            } else {
+                bool ok = false;
+                const auto entries = manager->GetShownEntries(*latest, &ok);
+                if (!ok) return;
+                const auto* book = RE::TESForm::LookupByID<RE::TESBoundObject>(latest->bookFormId);
+                if (CountInInventory(player, book) <= 0) {
+                    SKSE::log::info("[BookEditor] The player doesn't carry volume {}: starting the next",
+                                    latest->volumeNumber);
+                    target = CreateNextVolume(*latest, entries);
+                    if (target) Notify(loc->GetEditStartedVolume());
+                } else if (static_cast<int>(entries.size()) >= Config::GetSingleton()->GetEntriesPerVolume()) {
+                    target = CreateNextVolume(*latest, entries);
+                    if (target) Notify(loc->GetEditNewVolume());
+                } else {
+                    target = latest->bookFormId;
+                }
+            }
+            if (target) OpenForNewEntry(target);
+        }
+
+        // While writing: a new, empty entry at the end of this (latest) volume, caret in it.
+        void AppendNewEntry() {
+            auto* manager = BookManager::GetSingleton();
+            auto* vol = manager->GetBookForFormID(g_bookFormId);
+            auto* movie = BookMovie();
+            if (!vol || !movie) return;
+            if (!IsLatestVolume(*vol)) {
+                Notify(Localization::GetSingleton()->GetEditNotLatest());
+                return;
+            }
+            // One new entry at a time: another press goes back to the one not saved yet.
+            for (std::size_t i = g_edit.size(); i-- > 0;) {
+                if (g_edit[i].IsNew() && !g_addQueued.contains(g_edit[i].entry.localKey)) {
+                    RE::GFxValue arg;
+                    arg.SetNumber(static_cast<double>(i));
+                    movie->Invoke("_root.BookMenu_mc.EditFocusEntry", nullptr, &arg, 1);
+                    return;
+                }
+            }
+            if (static_cast<int>(g_edit.size()) >= Config::GetSingleton()->GetEntriesPerVolume()) {
+                if (!SavedOrStay()) return;
+                StartNextVolume(*vol, EditedEntries());
+                return;
+            }
+            DiaryEntry entry;
+            entry.localKey = g_nextLocalKey++;
+            entry.actor_uuid = vol->actorUuid;
+            // Never on the volume's start: SkyrimNet truncates the date it stores (to its clock's
+            // tick, then six decimals), and an entry a hair before the start is in no volume.
+            entry.entry_date = vol->startTime > 0.0 ? std::max(CurrentGameTimeSeconds(), vol->startTime + kInsideStart)
+                                                    : CurrentGameTimeSeconds();
+            const std::string heading = EntryHeading(entry);
+            RE::GFxValue arg;
+            arg.SetString(heading.c_str());
+            RE::GFxValue index;
+            if (!movie->Invoke("_root.BookMenu_mc.EditAppendEntry", &index, &arg, 1) || !index.IsNumber() ||
+                static_cast<std::size_t>(index.GetNumber()) != g_edit.size()) {
+                SKSE::log::warn("[BookEditor] The SWF couldn't add a new entry");
+                return;
+            }
+            g_edit.push_back({ entry, std::string(), false });
+            SKSE::log::info("[BookEditor] New entry (local {}) in {} vol {}", entry.localKey, vol->actorName,
+                            vol->volumeNumber);
+        }
+
+        // The new-entry key while reading (or a new volume just opened): write a new entry in the
+        // player's latest volume, or start the next volume if it's full.
+        void StartNewEntry() {
+            auto* book = RE::BookMenu::GetTargetForm();
+            auto* manager = BookManager::GetSingleton();
+            auto* vol = book ? manager->GetBookForFormID(book->GetFormID()) : nullptr;
+            if (!vol || !BookManager::IsPlayerDiary(*vol)) return;
+            if (!IsLatestVolume(*vol)) {
+                Notify(Localization::GetSingleton()->GetEditNotLatest());
+                return;
+            }
+            if (vol->lastKnownEntryCount >= Config::GetSingleton()->GetEntriesPerVolume()) {
+                bool ok = false;
+                const auto entries = manager->GetShownEntries(*vol, &ok);
+                if (ok && static_cast<int>(entries.size()) >= Config::GetSingleton()->GetEntriesPerVolume()) {
+                    if (!Database::CanWriteDiaries()) {
+                        Notify(Localization::GetSingleton()->GetEditNeedsSkyrimNet());
+                        return;
+                    }
+                    StartNextVolume(*vol, entries);
+                    return;
+                }
+            }
+            EnterEditMode();
+            if (g_active) AppendNewEntry();
+        }
+
         // ---- Menu and input ----
 
         class MenuSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
@@ -637,9 +880,35 @@ namespace SkyrimNetDiaries::BookEditor {
             RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event,
                                                   RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
                 if (!a_event || a_event->menuName != RE::BookMenu::MENU_NAME) return RE::BSEventNotifyControl::kContinue;
-                if (!a_event->opening) LeaveEditMode();
+                if (a_event->opening) return RE::BSEventNotifyControl::kContinue;
+                LeaveEditMode();
+                // A full volume's new-entry key closed it: open the next volume, which starts a
+                // new entry once its text is in (BookMenuAdvanceMovie).
+                g_newEntryOnOpen = 0;
+                if (const auto next = std::exchange(g_openNext, 0)) {
+                    SKSE::GetTaskInterface()->AddTask([next]() { OpenForNewEntry(next); });
+                }
                 return RE::BSEventNotifyControl::kContinue;
             }
+        };
+
+        // Every frame the book menu is open: once a book waiting for a new entry has its text
+        // (the engine's SetBookText comes after the menu opens), start the entry.
+        struct BookMenuAdvanceMovie {
+            static void thunk(RE::IMenu* a_menu, float a_interval, std::uint32_t a_currentTime) {
+                func(a_menu, a_interval, a_currentTime);
+                if (g_newEntryOnOpen == 0 || g_active) return;
+                auto* book = RE::BookMenu::GetTargetForm();
+                auto* movie = BookMovie();
+                if (!book || book->GetFormID() != g_newEntryOnOpen || !movie) return;
+                RE::GFxValue ready;
+                if (movie->Invoke("_root.BookMenu_mc.EditReady", &ready, nullptr, 0) && ready.IsBool() &&
+                    ready.GetBool()) {
+                    g_newEntryOnOpen = 0;
+                    SKSE::GetTaskInterface()->AddUITask([]() { StartNewEntry(); });
+                }
+            }
+            static inline REL::Relocation<decltype(thunk)> func;
         };
 
         // True if this press (or held repeat) should produce input now.
@@ -754,13 +1023,23 @@ namespace SkyrimNetDiaries::BookEditor {
                     auto* config = Config::GetSingleton();
 
                     if (!g_active) {
-                        // The edit key while a book is open: edit it, if it's one of the player's
-                        // diaries (EnterEditMode checks).  The menu doesn't get the key.
-                        if (code == config->GetEditKey() && button->IsDown()) {
+                        // The edit or new-entry key while a book is open: write in it, if it's
+                        // one of the player's diaries (checked there).  The menu doesn't get it.
+                        const bool edit = code == config->GetEditKey();
+                        const bool newEntry = config->GetNewEntryKey() != 0 && code == config->GetNewEntryKey();
+                        if ((edit || newEntry) && button->IsDown()) {
                             auto* ui = RE::UI::GetSingleton();
                             if (ui && ui->IsMenuOpen(RE::BookMenu::MENU_NAME)) {
                                 button->SetUserEvent("");
-                                SKSE::GetTaskInterface()->AddUITask([]() { EnterEditMode(); });
+                                if (edit) {
+                                    SKSE::GetTaskInterface()->AddUITask([]() { EnterEditMode(); });
+                                } else {
+                                    SKSE::GetTaskInterface()->AddUITask([]() { StartNewEntry(); });
+                                }
+                            } else if (newEntry && ui && !ui->GameIsPaused()) {
+                                // During play (no menu pausing the game): this runs on the input
+                                // job, so the work goes to the game thread.
+                                SKSE::GetTaskInterface()->AddTask([]() { NewEntryFromPlay(); });
                             }
                         }
                         continue;
@@ -777,6 +1056,10 @@ namespace SkyrimNetDiaries::BookEditor {
                     }
                     if (code == config->GetEditKey()) {
                         if (button->IsDown()) SaveAndRead();
+                        continue;
+                    }
+                    if (config->GetNewEntryKey() != 0 && code == config->GetNewEntryKey()) {
+                        if (button->IsDown()) AppendNewEntry();
                         continue;
                     }
                     if (code == kF5 && button->IsDown()) {
@@ -806,6 +1089,7 @@ namespace SkyrimNetDiaries::BookEditor {
         if (auto* input = RE::BSInputDeviceManager::GetSingleton()) input->PrependEventSink(&inputSink);
         REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_BookMenu[0] };
         BookMenuProcessMessage::func = vtable.write_vfunc(0x4, BookMenuProcessMessage::thunk);
+        BookMenuAdvanceMovie::func = vtable.write_vfunc(0x5, BookMenuAdvanceMovie::thunk);
         SKSE::log::info("[BookEditor] Registered: key 0x{:X} edits the player's diary while it's open",
                         Config::GetSingleton()->GetEditKey());
     }
@@ -814,7 +1098,10 @@ namespace SkyrimNetDiaries::BookEditor {
         ++g_generation;
         g_pending.clear();
         g_edit.clear();
+        g_addQueued.clear();
         g_bookFormId = 0;
+        g_openNext = 0;
+        g_newEntryOnOpen = 0;
     }
 
 } // namespace SkyrimNetDiaries::BookEditor

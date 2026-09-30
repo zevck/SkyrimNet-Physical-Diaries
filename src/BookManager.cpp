@@ -274,8 +274,13 @@ namespace SkyrimNetDiaries {
         return Database::GetVolumeEntries(actorFormId, bounds, ok);
     }
 
+    bool BookManager::IsPlayerDiary(const DiaryBookData& vol) {
+        const std::string playerUuid = Database::GetUUIDFromFormID(0x14);
+        return !playerUuid.empty() && vol.actorUuid == playerUuid;
+    }
+
     void BookManager::SetVolumeText(DiaryBookData& vol, const std::vector<DiaryEntry>& entries) {
-        std::string text = FormatDiaryEntries(entries, vol.actorName);
+        std::string text = FormatDiaryEntries(entries, vol.actorName, IsPlayerDiary(vol));
         const int count = static_cast<int>(entries.size());
         DiaryDB::GetSingleton()->UpdateBookText(vol.actorUuid, vol.volumeNumber, text, count);
         SKSE::log::debug("{} volume {}: text set from {} entries (was {})",

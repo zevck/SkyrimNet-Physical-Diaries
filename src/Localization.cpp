@@ -238,6 +238,9 @@ namespace SkyrimNetDiaries {
                 else if (key == "EditNeedsSkyrimNet") editNeedsSkyrimNet_ = text;
                 else if (key == "EditNeedsPause") editNeedsPause_ = text;
                 else if (key == "EditEmptiedHint") editEmptiedHint_ = text;
+                else if (key == "EditNotLatest") editNotLatest_ = text;
+                else if (key == "EditNewVolume") editNewVolume_ = text;
+                else if (key == "EditStartedVolume") editStartedVolume_ = text;
             } else if (currentSection == "months") {
                 for (auto& [mk, idx] : monthKeys) {
                     if (key == mk) {
@@ -369,6 +372,9 @@ namespace SkyrimNetDiaries {
         editNeedsSkyrimNet_ = "Writing in your diary needs a newer SkyrimNet.";
         editNeedsPause_ = "Writing in your diary needs the book menu to pause the game.";
         editEmptiedHint_ = "An emptied entry is kept. To remove an entry, tear it out.";
+        editNotLatest_ = "New entries go in your latest diary.";
+        editNewVolume_ = "This diary is full. You begin a new one.";
+        editStartedVolume_ = "You begin a new diary.";
 
         // Load locale file (may override formats, months, days)
         LoadLocaleFile(languageString_);

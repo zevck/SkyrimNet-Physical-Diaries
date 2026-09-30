@@ -122,13 +122,17 @@ namespace SkyrimNetDiaries {
         // DirectX scan code of the key that tears out the entry under the caret while the
         // player writes (68 = F10).  Not a key that types.
         static constexpr IntSetting kDeleteKey        { "Diary",   "DeleteKey",        68, 1, 255 };
+        // DirectX scan code of the key that starts a new entry in the player's latest diary
+        // volume, with the book open or during play.  0 = unbound (the default: during play it
+        // would clash with some other mod's key whatever we picked).  Not a key that types.
+        static constexpr IntSetting kNewEntryKey      { "Diary",   "NewEntryKey",      0,  0, 255 };
         static constexpr IntSetting kFontSizeTitle    { "Fonts",   "TitleSize",        18, 8, 24 };
         static constexpr IntSetting kFontSizeDate     { "Fonts",   "DateSize",         16, 8, 24 };
         static constexpr IntSetting kFontSizeContent  { "Fonts",   "ContentSize",      14, 8, 24 };
         static constexpr IntSetting kFontSizeSmall    { "Fonts",   "SmallSize",        12, 8, 24 };
         // INI order.  Language (string) is written first in [General], FontFace last in [Fonts].
         static constexpr IntSetting kIntSettings[] = {
-            kDebugLog, kShowDateHeaders, kEntriesPerVolume, kEditKey, kDeleteKey,
+            kDebugLog, kShowDateHeaders, kEntriesPerVolume, kEditKey, kDeleteKey, kNewEntryKey,
             kFontSizeTitle, kFontSizeDate, kFontSizeContent, kFontSizeSmall,
         };
 
@@ -146,6 +150,7 @@ namespace SkyrimNetDiaries {
         int GetEntriesPerVolume() const { return Get(kEntriesPerVolume); }
         std::uint32_t GetEditKey() const { return static_cast<std::uint32_t>(Get(kEditKey)); }
         std::uint32_t GetDeleteKey() const { return static_cast<std::uint32_t>(Get(kDeleteKey)); }
+        std::uint32_t GetNewEntryKey() const { return static_cast<std::uint32_t>(Get(kNewEntryKey)); }
         int GetFontSizeTitle() const { return Get(kFontSizeTitle); }
         int GetFontSizeDate() const { return Get(kFontSizeDate); }
         int GetFontSizeContent() const { return Get(kFontSizeContent); }
@@ -158,6 +163,7 @@ namespace SkyrimNetDiaries {
         void SetEntriesPerVolume(int v) { Set(kEntriesPerVolume, v); }
         void SetEditKey(int v)          { Set(kEditKey, v); }
         void SetDeleteKey(int v)        { Set(kDeleteKey, v); }
+        void SetNewEntryKey(int v)      { Set(kNewEntryKey, v); }
         void SetFontSizeTitle(int v)    { Set(kFontSizeTitle, v); }
         void SetFontSizeDate(int v)     { Set(kFontSizeDate, v); }
         void SetFontSizeContent(int v)  { Set(kFontSizeContent, v); }

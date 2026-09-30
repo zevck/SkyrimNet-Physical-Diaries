@@ -76,7 +76,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 | Inter-plugin API | `src/InterPluginAPI.cpp`, `include/InterPluginAPI.h` | Answers `SNPD_QUERY_*` SKSE messages. See [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md#inter-plugin-api-skse-messaging). |
 | Persistence | `src/DiaryDB.cpp`, `include/DiaryDB.h` | Per-save SQLite: volumes, actor templates, stolen volumes. See [DATABASE.md](DATABASE.md). |
 | SkyrimNet client | `src/Database.cpp`, `include/Database.h`, `include/SkyrimNetPublicAPI.h` | Loads SkyrimNet's exported functions, parses diary JSON, UUID ↔ FormID, names, bio template names |
-| Diary editing | `src/BookEditor.cpp`, `include/BookEditor.h`, `swf/book/scripts/__Packages/BookMenu.as` | The player writing in their own diary in the book menu: loading the volume into the SWF's edit mode, keyboard input, saving changed entries to SkyrimNet and tearing entries out (both through one write queue, then `BookManager::ReconcileAfterWrite`), going back to reading, the `BookMenu::ProcessMessage` hook that turns a close with unsaved changes into a save prompt. Started by a key while the diary is open. See [EDITING.md](EDITING.md). |
+| Diary editing | `src/BookEditor.cpp`, `include/BookEditor.h`, `swf/book/scripts/__Packages/BookMenu.as` | The player writing in their own diary in the book menu: loading the volume into the SWF's edit mode, keyboard input, saving changed entries to SkyrimNet, writing new ones and tearing entries out (all through one write queue, then `BookManager::ReconcileAfterWrite`), starting the next volume when one is full or lost, going back to reading, the `BookMenu::ProcessMessage` hook that turns a close with unsaved changes into a save prompt. Started by a key while the diary is open. See [EDITING.md](EDITING.md). |
 | Text injection | `src/BookTextHook.cpp`, `include/BookTextHook.h` | Hook on `TESDescription::GetDescription`: the book menu's text (no parent form: refresh, styled, Win-1251 for Cyrillic) and other readers' (SkyrimNet's book-read event, Immersive Reading: cached UTF-8). See [BOOK_TEXT.md](BOOK_TEXT.md). |
 | Theft | `src/DiaryTheftHandler.cpp`, `include/DiaryTheftHandler.h` | Container-change and menu sinks that record theft, returns and willing handovers; the `snpd_diary_stolen` decorator registration and post-load theft reconciliation. See [THEFT.md](THEFT.md). |
 | Papyrus natives | `src/PapyrusAPI.cpp`, `include/PapyrusAPI.h` | MCM getters and setters, the theft API, `UpdateDiaryFromEvent` |
@@ -145,10 +145,10 @@ Rules: anything touching forms, inventories or references must run on the game t
 
 | Dependency | Why |
 |---|---|
-| SkyrimNet | The source of all diary content. SNPD resolves its exports from SkyrimNet's DLL at runtime (`SkyrimNetPublicAPI.h`), checks `PublicGetVersion`, and does nothing if they are missing. Writing in the player's diary needs public API v11 (`PublicUpdateDiaryEntry`, `PublicDeleteDiaryEntry`); without it the editor doesn't start. |
+| SkyrimNet | The source of all diary content. SNPD resolves its exports from SkyrimNet's DLL at runtime (`SkyrimNetPublicAPI.h`), checks `PublicGetVersion`, and does nothing if they are missing. Writing in the player's diary needs public API v11 (`PublicAddDiaryEntry`, `PublicUpdateDiaryEntry`, `PublicDeleteDiaryEntry`); without it the editor doesn't start. |
 | powerofthree's Tweaks **or** Native EditorID Fix | Templates are found with `LookupByEditorID`, which needs one of these. Don't read a form's own ID with `GetFormEditorID()`: it returns "" for books without Native EditorID Fix. |
 | SkyUI | MCM |
-| Address Library (SE/AE) or VR Address Library | The `GetDescription` and `QueueMessage` hooks, and the `BookMenu` vtable the editor's close hook patches. See [DEVELOPMENT.md](DEVELOPMENT.md#engine-touchpoints). |
+| Address Library (SE/AE) or VR Address Library | The `GetDescription` and `QueueMessage` hooks, and the `BookMenu` vtable the editor's hooks patch. See [DEVELOPMENT.md](DEVELOPMENT.md#engine-touchpoints). |
 | Build: CommonLibSSE-NG v9.1.0 (submodule), vcpkg `sqlite3`, `nlohmann-json`, `spdlog`, `fmt`, `minhook` | |
 
 ---

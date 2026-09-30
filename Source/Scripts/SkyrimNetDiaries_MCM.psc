@@ -28,6 +28,8 @@ int  Function GetEditKey()                       global native
      Function SetEditKey(int value)              global native
 int  Function GetDeleteKey()                     global native
      Function SetDeleteKey(int value)            global native
+int  Function GetNewEntryKey()                   global native
+     Function SetNewEntryKey(int value)          global native
 string Function GetFontFace()                    global native
        Function SetFontFace(string value)        global native
 
@@ -44,6 +46,7 @@ int oidFontSizeSmall     = -1
 int oidFontFace          = -1
 int oidEditKey           = -1
 int oidDeleteKey         = -1
+int oidNewEntryKey       = -1
 int oidResetAll          = -1
 
 ; Font presets
@@ -140,6 +143,7 @@ event OnPageReset(string page)
     oidFontFace         = -1
     oidEditKey          = -1
     oidDeleteKey        = -1
+    oidNewEntryKey      = -1
     oidResetAll         = -1
 
     if page == Pages[0]
@@ -165,6 +169,12 @@ function RenderSettingsPage()
     AddHeaderOption("$SNPD_HeaderWriting")
     oidEditKey = AddKeyMapOption("$SNPD_EditKey", GetEditKey())
     oidDeleteKey = AddKeyMapOption("$SNPD_DeleteKey", GetDeleteKey())
+    ; 0 in the INI is unbound (the default); SkyUI shows -1 as no key.
+    int newEntryKey = GetNewEntryKey()
+    if newEntryKey == 0
+        newEntryKey = -1
+    endif
+    oidNewEntryKey = AddKeyMapOption("$SNPD_NewEntryKey", newEntryKey)
 endfunction
 
 function RenderMaintenancePage()
@@ -299,6 +309,9 @@ event OnOptionKeyMapChange(int oid, int keyCode, string conflictControl, string 
     elseif oid == oidDeleteKey && keyCode > 0
         SetDeleteKey(keyCode)
         SetKeyMapOptionValue(oid, keyCode)
+    elseif oid == oidNewEntryKey && keyCode > 0
+        SetNewEntryKey(keyCode)
+        SetKeyMapOptionValue(oid, keyCode)
     endif
 endevent
 
@@ -327,6 +340,8 @@ event OnOptionHighlight(int oid)
         SetInfoText("$SNPD_TipEditKey")
     elseif oid == oidDeleteKey
         SetInfoText("$SNPD_TipDeleteKey")
+    elseif oid == oidNewEntryKey
+        SetInfoText("$SNPD_TipNewEntryKey")
     elseif oid == oidResetAll
         SetInfoText("$SNPD_TipResetAll")
     endif
@@ -368,5 +383,8 @@ event OnOptionDefault(int oid)
     elseif oid == oidDeleteKey
         SetDeleteKey(68)
         SetKeyMapOptionValue(oid, 68)
+    elseif oid == oidNewEntryKey
+        SetNewEntryKey(0)
+        SetKeyMapOptionValue(oid, -1)
     endif
 endevent

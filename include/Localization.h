@@ -80,6 +80,11 @@ namespace SkyrimNetDiaries {
         const std::string& GetEditNeedsSkyrimNet() const { return editNeedsSkyrimNet_; }
         const std::string& GetEditNeedsPause() const { return editNeedsPause_; }
         const std::string& GetEditEmptiedHint() const { return editEmptiedHint_; }
+        // New entries: only in the latest volume; a full one starts the next volume.
+        const std::string& GetEditNotLatest() const { return editNotLatest_; }
+        const std::string& GetEditNewVolume() const { return editNewVolume_; }
+        // The new-entry key during play started a diary volume (none, or the latest isn't carried).
+        const std::string& GetEditStartedVolume() const { return editStartedVolume_; }
 
         // Detected language as uppercase string (e.g. "RUSSIAN")
         const std::string& GetLanguageString() const { return languageString_; }
@@ -128,6 +133,9 @@ namespace SkyrimNetDiaries {
         std::string editNeedsSkyrimNet_;
         std::string editNeedsPause_;
         std::string editEmptiedHint_;
+        std::string editNotLatest_;
+        std::string editNewVolume_;
+        std::string editStartedVolume_;
     };
 
 }  // namespace SkyrimNetDiaries

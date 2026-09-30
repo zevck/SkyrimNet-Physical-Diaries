@@ -32,6 +32,7 @@ namespace SkyrimNetDiaries {
         double entry_date = 0.0;
         double creation_time = 0.0;
         std::vector<std::string> tags;
+        int localKey = 0;              // SNPD only: a new entry the book editor added (0 = from SkyrimNet)
     };
 
     // Tag SNPD adds to an entry the player edited in their diary: shown exactly as written.
@@ -120,9 +121,15 @@ namespace SkyrimNetDiaries {
         static bool RegisterDecorator(const char* name, const char* description,
                                       std::function<std::string(RE::Actor*)> callback);
 
-        // True when SkyrimNet can save and delete diary entries (public API v11): the book
-        // editor needs both before the player writes anything.
+        // True when SkyrimNet can add, save and delete diary entries (public API v11): the
+        // book editor needs all three before the player writes anything.
         static bool CanWriteDiaries();
+
+        // Any thread but the game thread (SkyrimNet embeds the entry's memory): add an entry
+        // for an actor, dated `entryDate` (entry_date units).  The new id, or 0 when SkyrimNet
+        // refuses (its keep/clear timeline check is pending) or the call failed.
+        static int AddDiaryEntry(uint32_t formId, const std::string& content, double entryDate,
+                                 const std::string& tagsCSV);
 
         // Any thread but the game thread (SkyrimNet re-embeds the entry's memory): replace an
         // entry's text and tags.  False when SkyrimNet refuses (its keep/clear timeline check

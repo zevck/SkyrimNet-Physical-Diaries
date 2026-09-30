@@ -74,6 +74,14 @@ namespace SkyrimNetDiaries {
                              const std::vector<DiaryEntry>& entries, const std::string& bioTemplateName,
                              double prevVolumeLastCreationTime, int prevVolumeCountAtBoundary);
 
+        // A volume with no entries yet (endTime = startTime), given to the actor like any other:
+        // the player's volume 1 or next volume, made by the book editor.  Its book's
+        // FormID, or 0 if it couldn't be made.  Game thread.  Defined in BookCreation.cpp.
+        RE::FormID CreateEmptyVolume(const std::string& actorUuid, const std::string& actorName,
+                                     double startTime, int volumeNumber, RE::FormID targetActorFormID,
+                                     const std::string& bioTemplateName, double prevVolumeLastCreationTime,
+                                     int prevVolumeCountAtBoundary);
+
         // Get latest volume for an actor by UUID
         DiaryBookData* GetBookForActor(const std::string& actorUuid);
 
@@ -113,6 +121,9 @@ namespace SkyrimNetDiaries {
         // `ok` is false when the query failed (as opposed to returning no entries).
         std::vector<DiaryEntry> GetLiveEntries(const DiaryBookData& vol, RE::FormID actorFormId,
                                                double endTime, bool* ok);
+
+        // The volume is the player's own diary (by SkyrimNet UUID).
+        static bool IsPlayerDiary(const DiaryBookData& vol);
 
         // Renders `entries` (exactly these) into the volume, writes the
         // text and entry count to DiaryDB, and updates cachedBookText / lastKnownEntryCount.
@@ -154,6 +165,14 @@ namespace SkyrimNetDiaries {
         void Revert();
 
     private:
+        // CreateDiaryBook and CreateEmptyVolume: make or reuse the book, register the volume,
+        // render it, give it to the actor.
+        RE::FormID CreateVolumeBook(const std::string& actorUuid, const std::string& actorName,
+                                    double startTime, double endTime, int volumeNumber,
+                                    RE::FormID targetActorFormID, const std::vector<DiaryEntry>& entries,
+                                    const std::string& bioTemplateName, double prevVolumeLastCreationTime,
+                                    int prevVolumeCountAtBoundary);
+
         // Entries were deleted: endTime becomes the last live entry's date, or
         // QueueNewEntryRecovery looks past the gap on the next load and makes a duplicate volume.
         void MoveEndTimeBack(DiaryBookData& vol, const std::vector<DiaryEntry>& liveEntries);

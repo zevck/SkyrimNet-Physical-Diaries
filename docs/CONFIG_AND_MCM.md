@@ -15,6 +15,7 @@ Code: `include/Config.h` (header-only singleton `SkyrimNetDiaries::Config`), `So
 | `[Diary] ShowDateHeaders` | 1 | 0/1 | SNPD's date header per entry. Also controls whether LLM-written dates are stripped (see [BOOK_TEXT.md](BOOK_TEXT.md#cleaning-llm-output-sanitizebooktext)). |
 | `[Diary] EntriesPerVolume` | 10 | 1–50 | Chunk size for **new** volumes, and when the latest volume is sealed. Existing volumes keep their size: their range comes from stored boundaries, not this setting. |
 | `[Diary] EditKey` | 61 (F3) | 1–255 | DirectX scan code of the key that starts editing while the player reads their own diary, and saves and returns to reading while they write. It must not be a key that types (Enter types line breaks). SkyrimNet's own F3 does nothing in menus, so the default is free there. The MCM's key-map option (SkyUI key codes are the same scan codes) ignores conflicts with game controls: the key only acts in the book menu. See [EDITING.md](EDITING.md#opening). |
+| `[Diary] NewEntryKey` | 0 (unbound) | 0–255 | DirectX scan code of the key that starts a new entry at the end of the player's latest diary volume: with the book open, or during play (it opens the volume, or starts the next one if it's full, not carried, or there's none). Not a key that types. See [EDITING.md](EDITING.md#new-entries). |
 | `[Diary] DeleteKey` | 68 (F10) | 1–255 | DirectX scan code of the key that tears out the entry under the caret while the player writes, after a confirmation. Not a key that types. See [EDITING.md](EDITING.md#tearing-out-an-entry). |
 | `[Fonts] TitleSize` / `DateSize` / `ContentSize` / `SmallSize` | 18 / 16 / 14 / 12 | 8–24 | Sizes in the rendered markup |
 | `[Fonts] FontFace` | `$HandwrittenFont` | font name | `face=` in the rendered markup |
@@ -27,7 +28,7 @@ Code: `include/Config.h` (header-only singleton `SkyrimNetDiaries::Config`), `So
 
 | Page | Options |
 |---|---|
-| `$SNPD_PageSettings` | Entries per volume (slider); show date headers (toggle); font face (menu); four font-size sliders; the edit and delete keys (key maps, under `$SNPD_HeaderWriting`) |
+| `$SNPD_PageSettings` | Entries per volume (slider); show date headers (toggle); font face (menu); four font-size sliders; under `$SNPD_HeaderWriting`: the edit, delete and new-entry keys (key maps) |
 | `$SNPD_PageMaintenance` | Reset All Diaries (confirm → `ResetAllDiaries`); debug logging (toggle) |
 
 Rebuilding the book text:

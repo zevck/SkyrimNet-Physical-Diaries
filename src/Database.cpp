@@ -251,7 +251,25 @@ namespace SkyrimNetDiaries {
 
     bool Database::CanWriteDiaries() {
         if (!api_initialized_ && !InitializeAPI()) return false;
-        return PublicUpdateDiaryEntry && PublicDeleteDiaryEntry;
+        return PublicUpdateDiaryEntry && PublicDeleteDiaryEntry && PublicAddDiaryEntry;
+    }
+
+    int Database::AddDiaryEntry(uint32_t formId, const std::string& content, double entryDate,
+                                const std::string& tagsCSV) {
+        try {
+            if (!api_initialized_ && !InitializeAPI()) return 0;
+            if (!PublicAddDiaryEntry) {
+                SKSE::log::warn("SkyrimNet has no PublicAddDiaryEntry (needs public API v11)");
+                return 0;
+            }
+            return PublicAddDiaryEntry(formId, content.c_str(), entryDate, tagsCSV.c_str(), nullptr, -1.0f, nullptr);
+        } catch (const std::exception& e) {
+            SKSE::log::error("PublicAddDiaryEntry(0x{:X}) threw: {}", formId, e.what());
+            return 0;
+        } catch (...) {
+            SKSE::log::error("PublicAddDiaryEntry(0x{:X}) threw an unknown exception", formId);
+            return 0;
+        }
     }
 
     bool Database::UpdateDiaryEntry(int entryId, const std::string& content, const std::string& tagsCSV) {

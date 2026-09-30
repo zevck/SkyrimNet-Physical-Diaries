@@ -42,6 +42,8 @@ The same data bounds the earlier volume from above: `GetVolumeEntries` keeps, on
 
 `CreateAllVolumesForActor(uuid, name, formId, bioTemplate, entries, startingVolume)` sorts the entries, cuts them into chunks of `EntriesPerVolume` (default 10), computes the boundary fields per chunk, and calls `CreateDiaryBook` for each.
 
+**Empty volumes** (`BookManager::CreateEmptyVolume`, `endTime = startTime`) exist only for the player: volume 1 (start 0) from the new-entry key, and the next volume the book editor makes when the latest is full or the player doesn't carry it (start on the next whole game second after that volume's last entry, which the editor first makes its `endTime`; entries in it are dated at least half a game second after the start, because SkyrimNet truncates stored dates; see [EDITING.md](EDITING.md#a-full-volume)). The not-carried case is the NPC rule below ("no longer holds the latest volume"), made by hand instead of by an arriving entry. The pipeline below needs nothing special for them: the first entry is newer than `endTime`, or dated exactly at `startTime` (the book menu pauses game time) and found by the entry count from the start; the player holds the book, so it lands in that volume.
+
 ---
 
 ## When an entry arrives: `UpdateDiaryForActorInternal`

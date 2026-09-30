@@ -45,7 +45,7 @@ For other SKSE plugins, such as TTS or reading mods, that want a diary's text. *
 | `'SNPE'` `SNPD_QUERY_ENTRY` | `SNPDEntryQuery` | One entry by index (−1 = last) |
 | `'SNPA'` `SNPD_QUERY_ALL_ENTRIES` | `SNPDAllEntriesQuery` | Every entry, packed as null-separated strings, plus a count of any that did not fit |
 
-Result codes: `Success`, `NoEntries` (the volume is the "all entries removed" page, detected by `<!-- SNPD_EMPTY -->`), `NotADiary`, `IndexOutOfRange`. Buffers are fixed-size arrays in the structs; text is cut off to fit.
+Result codes: `Success`, `NoEntries` (the volume has no entries: the "all entries removed" page, or the player's blank one, detected by `<!-- SNPD_EMPTY -->`), `NotADiary`, `IndexOutOfRange`. Buffers are fixed-size arrays in the structs; text is cut off to fit.
 
 Implementation notes:
 - Answers come from **`cachedBookText`** (in memory, refreshed when the book is opened), not from SkyrimNet. Dispatch from the game thread; `books_` is read without a lock.
