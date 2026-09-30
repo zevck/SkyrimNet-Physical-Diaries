@@ -18,6 +18,7 @@
  */
 
 #include "BlankJournals.h"
+#include "BookManager.h"
 #include "Localization.h"
 #include "WritingMode.h"
 
@@ -25,9 +26,15 @@ namespace SkyrimNetDiaries::BlankJournals {
 
     namespace {
 
-        // The three main looks, then the Nightingales' (crafted only, once the player is one).
+        // The three main looks, then the Nightingales' (crafted only, once the player is one),
+        // each with the template book whose look it has.
         constexpr const char* kBooks[] = { "SNPD_BlankJournal1", "SNPD_BlankJournal2", "SNPD_BlankJournal3",
                                            "SNPD_BlankJournalN" };
+        constexpr const char* kLooks[] = { kJournalTemplates[0], kJournalTemplates[1], kJournalTemplates[2],
+                                           kNightingaleTemplate };
+        static_assert(std::size(kBooks) == std::size(kLooks));
+
+        std::unordered_map<RE::FormID, std::string> g_looks;  // blank journal → its look; set at kDataLoaded
         constexpr const char* kRecipes[] = { "SNPD_RecipeBlankJournal1", "SNPD_RecipeBlankJournal2",
                                              "SNPD_RecipeBlankJournal3", "SNPD_RecipeBlankJournalN" };
         // Picks one of the three main looks.
@@ -85,11 +92,12 @@ namespace SkyrimNetDiaries::BlankJournals {
             return;
         }
         const std::string& name = Localization::GetSingleton()->GetBlankJournalName();
-        for (const char* id : kBooks) {
-            if (auto* book = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>(id)) {
+        for (std::size_t i = 0; i < std::size(kBooks); ++i) {
+            if (auto* book = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>(kBooks[i])) {
                 book->SetFullName(name.c_str());
+                g_looks[book->GetFormID()] = kLooks[i];
             } else {
-                SKSE::log::warn("[BlankJournals] {} not found", id);
+                SKSE::log::warn("[BlankJournals] {} not found", kBooks[i]);
             }
         }
         if (auto* list = RE::TESForm::LookupByEditorID<RE::TESLevItem>(kList)) {
@@ -97,6 +105,11 @@ namespace SkyrimNetDiaries::BlankJournals {
         } else {
             SKSE::log::warn("[BlankJournals] {} not found: merchants won't sell them", kList);
         }
+    }
+
+    std::string LookOf(RE::FormID bookFormId) {
+        const auto it = g_looks.find(bookFormId);
+        return it == g_looks.end() ? std::string{} : it->second;
     }
 
 }

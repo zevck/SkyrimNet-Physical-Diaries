@@ -28,6 +28,9 @@ Converted from the binary ESP on 2026-09-29. A round trip (YAML → ESP) gives t
 | `0x809`, `0x80A`, `0x80B` | ConstructibleObject | `SNPD_RecipeBlankJournal1`, `2`, `3` | Tanning rack: 1 Leather + 2 Roll of Paper → one Blank Journal of that look. Hidden (no workbench) while writing is off |
 | `0x80C` | Book | `SNPD_BlankJournalN` | Blank Journal in the Nightingale look (`TG05JournalLowPoly01`). Not sold |
 | `0x80D` | ConstructibleObject | `SNPD_RecipeBlankJournalN` | Its tanning-rack recipe, the same materials, once the player is a Nightingale: `GetStageDone` TG08A ("Trinity Restored", `057F99`) stage 57 (the Oath) OR stage 200 (completed). Hidden while writing is off |
+| `0x80E` | FormList | `SNPD_Quills` | What counts as a quill for writing: `Quill01`, `FVDQuill` (the Quill of Gemination) ([EDITING.md](EDITING.md#quill-and-ink)) |
+| `0x80F` | FormList | `SNPD_Inkwells` | What counts as a full inkwell: `Inkwell01` |
+| `0x810`–`0x818` | MiscItem | `SNPD_Inkwell1` to `SNPD_Inkwell9` | Partly used inkwells, one per uses left: clones of `Inkwell01` (bounds, model, value 1, weight 0.3), renamed to the game's inkwell name at load. Described by `SkyrimNet Physical Diaries_DESC.ini` when Description Framework is installed (which also calls the vanilla `Inkwell01` "Full.") |
 | `0xD62` | Book | `SkyrimNetDiaryTemplate` | Template diary |
 
 The DLL finds the templates by EditorID (`kJournalTemplates`, `kNightingaleTemplate` in `BookManager.h`), so a template's FormID can change, its EditorID can't.
@@ -53,6 +56,6 @@ If a record is easier to make in the Creation Kit or xEdit, edit the deployed `.
 1. `.\utilities\esp_to_spriggit.ps1` converts the newest copy in the deploy folders back into `spriggit/SkyrimNetPhysicalDiaries` (`-EspPath` for another file), with the pinned package and version.
 2. Review `git diff spriggit`, then build: the build is newer than the deployed copy again, so the deploy goes ahead.
 
-**FormIDs:** the plugin is ESL-flagged, so its records use `0x800` to `0xFFF`. Records written by hand take the next free one from `0x80E`; the CK or xEdit assign their own (from `0xD63`).
+**FormIDs:** the plugin is ESL-flagged, so its records use `0x800` to `0xFFF`. Records written by hand take the next free one from `0x819`; the CK or xEdit assign their own (from `0xD63`).
 
 There is no SEQ file: the quest has no dialogue.

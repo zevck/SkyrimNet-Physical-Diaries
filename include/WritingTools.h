@@ -21,16 +21,23 @@
 
 #include "PCH.h"
 
-// Blank journals: the ESP's "Blank Journal" books (one per journal look), sold by general-goods
-// merchants and crafted at a tanning rack; the Nightingale look only crafted, by a Nightingale.  See docs/PLUGIN.md and
-// docs/EDITING.md#blank-journals.
-namespace SkyrimNetDiaries::BlankJournals {
+// Quill and ink: writing needs a quill, and each writing session uses one dip of ink.  A
+// partly used inkwell is its own item, one per uses left (the ESP's SNPD_Inkwell1-9, clones of
+// the vanilla inkwell), swapped for the next one down at each use; Description Framework, if
+// installed, shows which it is.  See docs/EDITING.md#quill-and-ink.
+namespace SkyrimNetDiaries::WritingTools {
 
-    // kDataLoaded, after WritingMode::Detect.  Writing on: names the books in the game's
-    // language and adds them to merchant stock.  Writing off: hides their recipes.
+    // kDataLoaded, writing on: finds the ESP's quills, inkwells and partly used inkwells, and
+    // gives those the game's own name for an inkwell.
     void OnDataLoaded();
 
-    // The journal look (template book EditorID) of a blank journal, or "" if `bookFormId` isn't one.
-    std::string LookOf(RE::FormID bookFormId);
+    // The player carries a quill.
+    bool HasQuill();
+
+    enum class Ink { None, Used, RanDry };
+
+    // Game thread: one use of ink from the player's emptiest inkwell, swapped at once for the
+    // next one down.  Ink::RanDry: that was its last use, and it's gone.  Ink::None: no inkwell.
+    Ink UseInk();
 
 }

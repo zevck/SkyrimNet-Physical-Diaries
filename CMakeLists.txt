@@ -52,6 +52,7 @@ set(sources
     src/TimelineGate.cpp
     src/VolumeSync.cpp
     src/WritingMode.cpp
+    src/WritingTools.cpp
 )
 
 # ---- Generate Plugin.h ----

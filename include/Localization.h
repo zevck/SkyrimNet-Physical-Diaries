@@ -86,9 +86,15 @@ namespace SkyrimNetDiaries {
         const std::string& GetEditEmptiedHint() const { return editEmptiedHint_; }
         // New entries: only in the latest volume; a full one starts the next volume.
         const std::string& GetEditNotLatest() const { return editNotLatest_; }
-        const std::string& GetEditNewVolume() const { return editNewVolume_; }
         // The new-entry key during play started a diary volume (none, or the latest isn't carried).
         const std::string& GetEditStartedVolume() const { return editStartedVolume_; }
+        const std::string& GetEditNoJournal() const { return editNoJournal_; }
+        const std::string& GetEditNeedsQuill() const { return editNeedsQuill_; }
+        const std::string& GetEditNeedsInk() const { return editNeedsInk_; }
+        const std::string& GetEditInkRanDry() const { return editInkRanDry_; }
+        const std::string& GetEditOk() const { return editOk_; }
+        const std::string& GetEditJournalNotCarried() const { return editJournalNotCarried_; }
+        const std::string& GetBlankJournalFailed() const { return blankJournalFailed_; }
 
         // Detected language as uppercase string (e.g. "RUSSIAN")
         const std::string& GetLanguageString() const { return languageString_; }
@@ -140,8 +146,14 @@ namespace SkyrimNetDiaries {
         std::string editNeedsPause_;
         std::string editEmptiedHint_;
         std::string editNotLatest_;
-        std::string editNewVolume_;
         std::string editStartedVolume_;
+        std::string editNoJournal_;
+        std::string editNeedsQuill_;
+        std::string editNeedsInk_;
+        std::string editInkRanDry_;
+        std::string editOk_;
+        std::string editJournalNotCarried_;
+        std::string blankJournalFailed_;
     };
 
 }  // namespace SkyrimNetDiaries

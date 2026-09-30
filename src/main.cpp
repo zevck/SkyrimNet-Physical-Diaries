@@ -35,6 +35,7 @@
 #include "TimelineGate.h"
 #include "VolumeSync.h"
 #include "WritingMode.h"
+#include "WritingTools.h"
 #include <spdlog/sinks/basic_file_sink.h>
 #include <atomic>
 #include <chrono>
@@ -136,7 +137,10 @@ namespace {
 
                 // The player's diary editor, only with SNPD's book.swf installed (docs/EDITING.md).
                 SkyrimNetDiaries::WritingMode::Detect();
-                if (SkyrimNetDiaries::WritingMode::IsOn()) SkyrimNetDiaries::BookEditor::Register();
+                if (SkyrimNetDiaries::WritingMode::IsOn()) {
+                    SkyrimNetDiaries::BookEditor::Register();
+                    SkyrimNetDiaries::WritingTools::OnDataLoaded();
+                }
                 SkyrimNetDiaries::BlankJournals::OnDataLoaded();
 
                 // Now that GMSTs are loaded, read localized month/day names

@@ -276,6 +276,8 @@ function Deploy-To {
             try { Copy-Item -LiteralPath $builtEsp -Destination $deployedEsp -Force } catch { $dllLocked = $true }
         }
     }
+    # Description Framework's config for the partly used inkwells (it reads Data\*_DESC.ini).
+    Copy-Item -LiteralPath "SkyrimNet Physical Diaries_DESC.ini" -Destination $dest -Force
     # The shipped SWFs, then the chosen variant's on top ($swfVariant).
     $swfSources = @("Interface")
     if ($swfVariant) { $swfSources += "build\variants\$swfVariant\Interface" }

@@ -76,12 +76,13 @@ namespace SkyrimNetDiaries {
                              double prevVolumeLastCreationTime, int prevVolumeCountAtBoundary);
 
         // A journal volume with no entries yet (endTime = startTime), given to the actor like any
-        // other: the player's journal volume 1 or next volume, made by the book editor.  Its
-        // book's FormID, or 0 if it couldn't be made.  Game thread.  Defined in BookCreation.cpp.
+        // other: the player's journal volume 1 or next volume, made by the book editor.  `look`:
+        // the template book's EditorID ("" = the actor's usual one).  Its book's FormID, or 0 if
+        // it couldn't be made.  Game thread.  Defined in BookCreation.cpp.
         RE::FormID CreateEmptyVolume(const std::string& actorUuid, const std::string& actorName,
                                      double startTime, int volumeNumber, RE::FormID targetActorFormID,
                                      const std::string& bioTemplateName, double prevVolumeLastCreationTime,
-                                     int prevVolumeCountAtBoundary);
+                                     int prevVolumeCountAtBoundary, const std::string& look);
 
         // An actor's latest volume of a kind, by UUID
         DiaryBookData* GetBookForActor(const std::string& actorUuid, VolumeKind kind = VolumeKind::Generated);
@@ -174,7 +175,7 @@ namespace SkyrimNetDiaries {
                                     double startTime, double endTime, int volumeNumber,
                                     RE::FormID targetActorFormID, const std::vector<DiaryEntry>& entries,
                                     const std::string& bioTemplateName, double prevVolumeLastCreationTime,
-                                    int prevVolumeCountAtBoundary);
+                                    int prevVolumeCountAtBoundary, const std::string& look = {});
 
         // Entries were deleted: endTime becomes the last live entry's date, or
         // QueueNewEntryRecovery looks past the gap on the next load and makes a duplicate volume.

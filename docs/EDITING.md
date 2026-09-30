@@ -52,6 +52,29 @@ A volume has a **kind** (`VolumeKind`: `DiaryBookData::kind`, DiaryDB `kind`), f
 - **Crafting:** at a tanning rack, 1 Leather + 2 Roll of Paper, one recipe per look. A fourth, in the Nightingale look, unlocks once the player has taken the Nightingale Oath (TG08A "Trinity Restored" stage 57, or the quest done); merchants never sell it.
 - **Writing off:** the recipes lose their workbench (so they're hidden), and merchants never get the list.
 
+### Reading a blank journal
+
+Opening a blank journal **from the player's own inventory** turns it into their next journal where it is: the book stays open and becomes the journal (the two share the model); there is nothing else to do with a blank journal, so there is no question. Read in the world (`BookMenu::GetTargetReference`), in a container, a shop or the gift menu, without a quill (`EditNeedsQuill`), or with SkyrimNet unable to save (`EditNeedsSkyrimNet`), it's just an empty book.
+
+1. The book menu opening (`MenuOpenCloseEvent`) checks all that (`NoteBlankJournal`, a UI task) and marks the blank (`g_blankOnOpen`); the `AdvanceMovie` hook waits for its text to be in (`EditReady`) and runs `ConvertBlankJournal`. Closing and reopening instead played the close animation over the opening one (found in game, 2026-09-30).
+2. `StartJournal` makes the player's next journal volume in the blank's look (`BlankJournals::LookOf`: its template's EditorID, passed to `CreateEmptyVolume`, so the volume keeps that look for good): after the latest journal (`CreateNextVolume`, see [No entry limit](#no-entry-limit)), or volume 1 (starting at time 0, so it shows every entry the player ever wrote) if there is none.
+3. Only then is the blank used up (`RemoveItem`, one); if the volume couldn't be made, the player keeps the blank and gets `BlankJournalFailed`.
+4. The book menu is pointed at the journal (`SetBookMenuBook`): the engine keeps the book it shows in globals, the base form (`BookMenu::GetTargetForm`, IDs 519295 / 405835, VR `0x3011200`) and the inventory item's extra data list (519294 / 405834; VR `0x30111F8`, not in VR's address library: 8 bytes before the form's, as on SE, both written by `OpenBookMenu`), which is cleared because it was the blank's. The player gets `EditStartedVolume`, and a new entry starts (`StartNewEntry`). The reading text stays the blank's until the editor goes back to reading (`ReturnToReading` renders the journal's).
+
+### Quill and ink
+
+Writing needs a **quill**, and each writing session **one use of ink**; reading is free. Both are vanilla clutter the ESP lists (`SNPD_Quills`: `Quill01`, the Quill of Gemination `FVDQuill`; `SNPD_Inkwells`, full inkwells: `Inkwell01`; [PLUGIN.md](PLUGIN.md#records)), so a patch or the Physical Letters mod can add its own. `WritingTools`:
+
+- **The quill** is checked when writing starts (`SendDiaryContent`): without one, a message box (`EditNeedsQuill`, OK only: `ShowNotice`) states the requirements and writing doesn't start.
+- **Ink** is used on the session's **first key that changes the text** (a character, Enter, Backspace or Delete; `Inked` in `HandleKey`), once: the rest of the session is free, however many entries it touches, so a session never runs dry halfway through an entry. Opening the editor and closing it, moving the caret, adding an empty entry or tearing one out use none, and discarding the changes gives nothing back. With no ink the key does nothing and a message box says so (`EditNeedsInk`).
+- **A partly used inkwell is its own item**: the ESP's `SNPD_Inkwell1` to `SNPD_Inkwell9`, clones of the vanilla inkwell, one per uses left out of 10 (`kUses`). A use swaps the player's **emptiest** inkwell for the next one down (`UseInk`: `RemoveItem`, then `AddObjectToContainer`), a full one for `SNPD_Inkwell9`; the last use removes it, with the corner notification `EditInkRanDry`. The emptiest goes first so there is only ever one partly used inkwell. The state is the item, so it goes wherever the inkwell goes (dropped, stored, sold) and a reload restores it with the rest of the inventory. **Nothing needs refreshing**: with the book opened from the inventory, the plain swap shows correctly in the inventory afterwards (tested on AE, 2026-09-30). Tried and dropped along the way, each of which made things worse: `SendInventoryUpdateMessage` while the book was open (broke the inventory's navigation), `ItemList::Update` after it closed, and `SendInventoryUpdateMessage` per changed item after it closed (the inkwell line still showed the old one). The navigation break first seen with the clones was most likely the old blank-journal conversion, which closed the blank and reopened the journal from its base form over the inventory; the in-place conversion doesn't. The clones get the game's own name for an inkwell at load (the ESP's is English), so they look like any inkwell.
+- **How full it is** shows only with **Description Framework** (optional): `SkyrimNet Physical Diaries_DESC.ini`, which the build deploys to the mod's root, where DF reads every `*_DESC.ini`, gives each clone a description ("About half full."), and the vanilla `Inkwell01` "Full.". DF keeps the first line it reads for a form unless a later one has a higher priority, so another mod's description of `Inkwell01` can take its place. DF puts it on the item card, disguising a misc item's card as a book's. The file is English only (DF's config has no languages). Without DF a partly used inkwell is a second "Inkwell" line.
+
+**An earlier design** kept the fill on the item itself (`ExtraHealth`, which `ExtraDataList::SaveGame` writes for any inventory item exactly like a stack count) and showed it in a custom name (`ExtraTextDisplayData`). It worked, but renamed the item, and splitting one inkwell off a stack needed the engine's `ExtraDataList` constructor, which CommonLib declares without defining: 0x18 bytes and ID 11437 on SE, 0x20 bytes and ID 11583 on AE, 0x18 bytes at `0x117C80` on VR (found through `InventoryChanges::EnchantObject`, 2026-09-30). Kept here in case per-item state is needed again.
+
+
+**Writing in blood** (planned): with a quill but no ink, a prompt will offer to write in blood instead, and the text written in that session will be red.
+
 ---
 
 ## Opening
@@ -159,30 +182,17 @@ The **new-entry key** (`[Diary] NewEntryKey`, set in the MCM; unbound by default
 - **Left empty**, a new entry is never written and doesn't count as a change (no save prompt); torn out before it was ever saved, it just leaves the editor.
 - SkyrimNet announces the entry (`SkyrimNet_DiaryCreated`) as it does its own. The pipeline handles only the player's diary (not at all with `PlayerDiaryBooks` off), and the kind filter keeps journal entries out of it ([Diaries and journals](#diaries-and-journals)); the editor's `ReconcileAfterWrite` renders the journal.
 
-### A full volume
+### No entry limit
 
-When the latest volume has `EntriesPerVolume` entries, the new-entry key starts the next volume (`StartNextVolume`):
-
-1. Changes in this book are saved (as the edit key does; unreadable text stays, see [Saving](#saving)).
-2. This volume's `endTime` is moved to its last entry, counting the ones just written: the menu pauses game time, so they are dated now, and once a newer volume exists this one is bounded by `endTime`.
-3. `BookManager::CreateEmptyVolume` makes the next volume, empty, in the player's inventory, starting on the next whole game second (so the entries just written can't fall into it). The player gets `EditNewVolume`.
+Journals have **no entry limit**: `[Diary] EntriesPerVolume` is for diaries only (it keeps an NPC's book from growing to hundreds of pages), while a journal holds what the player chose to write in it, and a book's text can hold a novel. A new journal volume begins only when the player reads a blank journal ([Reading a blank journal](#reading-a-blank-journal)).
 
 **No entry is dated on a volume's start.** A new entry in a volume with a start time is dated at least half a game second after it (`kInsideStart`). SkyrimNet truncates the date it stores (`duration_cast` to its clock's tick, then six decimals in the database), so an entry dated exactly on the start came back a hair before it and belonged to no volume (found in game, 2026-09-29: the entry was in SkyrimNet but in no book).
-4. This book closes; when it has (`MenuOpenCloseEvent`), the new book opens (`BookMenu::OpenMenuFromBaseForm`, as reading it from the inventory does).
-5. The book menu's text arrives after it opens (the engine's `SetBookText`), so a hook on the menu's per-frame `AdvanceMovie` (vtable index 5) waits until the SWF says it has it (`EditReady`), then starts a new entry.
+
+A new volume starts on the whole game second after both now and the previous volume's last entry (`CreateNextVolume`), and the previous volume's `endTime` moves to cover the entries just written (the menu pauses game time, so they are dated now), so the two never overlap.
 
 ### Outside the book
 
-The new-entry key also works **during play** (no menu pausing the game; the input sink queues `NewEntryFromPlay` as a game-thread task). It is the way back to writing when the journal is lost:
-
-| The player's latest journal volume | What happens |
-|---|---|
-| Carried, with room | It opens (`BookMenu::OpenMenuFromBaseForm`) and a new entry starts once its text is in (`OpenForNewEntry`, then the `AdvanceMovie` hook) |
-| Carried, full | The next volume is made (`CreateNextVolume`, as for [a full volume](#a-full-volume)) and opens with a new entry; `EditNewVolume` |
-| Not carried (lost, sold, put away; `CountInInventory`) | The next volume is made and opens, the same rule as when an NPC's latest volume is taken ([VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#when-an-entry-arrives-updatediaryforactorinternal)): the missing book keeps its entries as an earlier volume. `EditStartedVolume` |
-| None at all | Volume 1 is made, empty, and opens. `EditStartedVolume` |
-
-SNPD never puts an empty journal in the player's inventory on its own: a journal appears only when the player asks for one with this key.
+The new-entry key also works **during play** (no menu pausing the game; the input sink queues `NewEntryFromPlay` as a game-thread task): it opens the player's latest journal (`BookMenu::OpenMenuFromBaseForm`) and starts a new entry once its text is in (`OpenForNewEntry`, then the `AdvanceMovie` hook). With no journal the player gets `EditNoJournal`; with the latest one not on them (lost, sold, put away; `CountInInventory`), `EditJournalNotCarried`. The key never makes a journal: SNPD never puts an empty journal in the player's inventory on its own, a journal comes only from reading a blank journal.
 
 ---
 
@@ -227,4 +237,4 @@ The editor gets the text the reading view shows, as plain text: `EditableEntryTe
 - **SE, VR and the Convenient Reading variant** are untested, including plain reading through SNPD's `book.swf` on VR. VR also needs a keyboard story.
 - **Cyrillic.** Reading needs Win-1251 because Scaleform's pagination mixes byte and character offsets; the editor gets UTF-8. Untested with Cyrillic text.
 - **Translations** of the fifteen `[Messages] Edit…` strings: only English has them; other languages show the English defaults. The MCM's Writing strings in the other eight languages still say "diary". The `JournalTitle` translations are first drafts.
-- **Reading a blank journal** (planned) will start the next journal, in its look, and replace the new-entry key's journal making; **writing will need a quill and an inkwell**. The items exist ([Blank journals](#blank-journals)); reading one does nothing yet.
+- **Writing in blood** (the prompt, red text kept per character range in DiaryDB): see [Quill and ink](#quill-and-ink).

@@ -211,18 +211,19 @@ namespace SkyrimNetDiaries {
     RE::FormID BookManager::CreateEmptyVolume(const std::string& actorUuid, const std::string& actorName,
                                               double startTime, int volumeNumber, RE::FormID targetActorFormID,
                                               const std::string& bioTemplateName, double prevVolumeLastCreationTime,
-                                              int prevVolumeCountAtBoundary) {
+                                              int prevVolumeCountAtBoundary, const std::string& look) {
         return CreateVolumeBook(actorUuid, actorName, VolumeKind::Written, startTime, startTime, volumeNumber,
                                 targetActorFormID, {}, bioTemplateName, prevVolumeLastCreationTime,
-                                prevVolumeCountAtBoundary);
+                                prevVolumeCountAtBoundary, look);
     }
 
     RE::FormID BookManager::CreateVolumeBook(const std::string& actorUuid, const std::string& actorName,
                                              VolumeKind kind, double startTime, double endTime, int volumeNumber,
                                              RE::FormID targetActorFormID, const std::vector<DiaryEntry>& entries,
                                              const std::string& bioTemplateName, double prevVolumeLastCreationTime,
-                                             int prevVolumeCountAtBoundary) {
-        const std::string templateToUse = SelectJournalTemplate(actorUuid, actorName, targetActorFormID);
+                                             int prevVolumeCountAtBoundary, const std::string& look) {
+        const std::string templateToUse = look.empty() ? SelectJournalTemplate(actorUuid, actorName, targetActorFormID)
+                                                       : look;
 
         // Look the template up by EditorID.  This works with powerofthree's Tweaks or
         // Native EditorID Fix.  Don't scan books comparing GetFormEditorID(): that
