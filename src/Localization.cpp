@@ -227,6 +227,7 @@ namespace SkyrimNetDiaries {
                     }
                 }
                 if (key == "TemplatesMissing") templatesMissingText_ = text;
+                else if (key == "WritingOff") writingOffText_ = text;
                 else if (key == "EditSavePrompt") editSavePrompt_ = text;
                 else if (key == "EditSave") editSave_ = text;
                 else if (key == "EditDiscard") editDiscard_ = text;
@@ -372,6 +373,9 @@ namespace SkyrimNetDiaries {
             " - SkyrimNet Physical Diaries.esp is enabled\n"
             " - powerofthree's Tweaks or Native EditorID Fix is installed for your game version\n\n"
             "See SkyrimNetPhysicalDiaries.log for details.";
+        writingOffText_ =
+            "Physical Diaries' book menu (interface\\book.swf) is missing and writing is disabled. Journals are now read-only. "
+            "Please check your installation if this was not intentional.";
         editSavePrompt_ = "Keep the changes to your journal?";
         editSave_ = "Save";
         editDiscard_ = "Discard";

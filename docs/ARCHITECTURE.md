@@ -110,7 +110,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 3. The post-load sync polls every 100 ms (a sleeper thread re-queues a game-thread task) until `Database::IsMemorySystemReady()` (up to 60 s) **and** `TimelineGate::IsSettled()` (no limit while SkyrimNet's keep/clear prompt is open). Then:
    - Detect the save folder from `SkyrimNet.log` and `DiaryDB::Open()` it.
    - **If the DB didn't open or the memory system never became ready**, `PauseDiaryBooks()` and stop: with this save's volumes not loaded, every NPC would look new and get a second set of books. Diary events are ignored (logged at debug) until the next load or new game, and the error names the cause.
-   - `LoadFromDB()` (rows matched against the save's books; volumes without a book are queued for recreation, books without a volume kept unclaimed), then `ReconcileWithTimeline()` (volumes reaching past the loaded save are matched against the history SkyrimNet kept).
+   - `LoadFromDB()` (rows matched against the save's books; volumes without a book are queued for recreation, books without a volume kept unclaimed), `WarnIfWritingOff()` (writing off but the save has journals: a message box once per game run), then `ReconcileWithTimeline()` (volumes reaching past the loaded save are matched against the history SkyrimNet kept).
    - `DiaryTheftHandler::ReconcileAfterLoad()`: drop theft records made after the loaded save's game time (`stolen_at > now`), then reload the in-memory stolen set the decorator reads.
    - `SetPostLoadSyncReady(true)`, then queue immediate recreation for actors whose volumes had no book in this save, then `QueueNewEntryRecovery()` and `QueueBatchCatchUpScan()`.
 

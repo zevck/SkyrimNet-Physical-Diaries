@@ -37,6 +37,7 @@
 #include "WritingMode.h"
 #include "WritingTools.h"
 #include <spdlog/sinks/basic_file_sink.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -60,6 +61,26 @@ namespace {
             msgBoxData->cancelButtonIndex = 0;
             RE::MessageBoxMenu::QueueMessage(msgBoxData);
         });
+    }
+
+    // Writing is off but this save has journals: say why once per game run, not at every load.
+    void WarnIfWritingOff() {
+        static bool shown = false;
+        if (shown || SkyrimNetDiaries::WritingMode::IsOn()) return;
+        const auto& books = SkyrimNetDiaries::BookManager::GetSingleton()->GetAllBooks();
+        const bool hasJournals = std::ranges::any_of(books, [](const auto& chain) {
+            return !chain.second.empty() && chain.second.front().kind == SkyrimNetDiaries::VolumeKind::Written;
+        });
+        if (!hasJournals) return;
+        shown = true;
+        SKSE::log::error("================================================================");
+        SKSE::log::error("[Physical Diaries] WRITING IS OFF, BUT THIS SAVE HAS JOURNALS: they're read-only.");
+        SKSE::log::error("  The loaded Interface\\book.swf isn't SNPD's writing one (see the [WritingMode] line above):");
+        SKSE::log::error("   1. SNPD was installed without the writing option");
+        SKSE::log::error("   2. Another mod's book.swf wins the file conflict");
+        SKSE::log::error("   3. SNPD's book.swf is older than this plugin");
+        SKSE::log::error("================================================================");
+        ShowWarning(SkyrimNetDiaries::Localization::GetSingleton()->GetWritingOffText());
     }
 
     // Bumped whenever a session ends (a load or a new game) so a post-load setup
@@ -234,6 +255,7 @@ namespace {
 
                     auto invalidActors = SkyrimNetDiaries::BookManager::GetSingleton()->LoadFromDB();
                     volumesLoaded = true;
+                    WarnIfWritingOff();
 
                     // Match SkyrimNet's history: volumes reaching past this save lose the
                     // entries a Clear deleted.

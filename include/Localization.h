@@ -67,6 +67,8 @@ namespace SkyrimNetDiaries {
 
         // Startup warning ([Messages] in the locale file).
         const std::string& GetTemplatesMissingText() const { return templatesMissingText_; }
+        // After a load: writing is off, but the save has journals.
+        const std::string& GetWritingOffText() const { return writingOffText_; }
         // The book editor's prompt on closing with unsaved changes, and its buttons.
         const std::string& GetEditSavePrompt() const { return editSavePrompt_; }
         const std::string& GetEditSave() const { return editSave_; }
@@ -136,6 +138,7 @@ namespace SkyrimNetDiaries {
         std::string volumeSuffixFmt_; // e.g. ", v{n}"
         std::string emptyVolumeText_;
         std::string templatesMissingText_;
+        std::string writingOffText_;
         std::string editSavePrompt_;
         std::string editSave_;
         std::string editDiscard_;
