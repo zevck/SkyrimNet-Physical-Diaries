@@ -21,6 +21,7 @@
 
 #include <array>
 #include <string>
+#include "Database.h"  // VolumeKind
 
 namespace SkyrimNetDiaries {
 
@@ -49,14 +50,14 @@ namespace SkyrimNetDiaries {
         // Format a short date (no weekday): "17 Last Seed, 4E 201"
         std::string FormatDateShort(int day, const char* monthName, int year) const;
 
-        // Format diary title: "Stromm's Diary"
-        std::string FormatDiaryTitle(const std::string& actorName) const;
+        // A volume's title by kind: "Stromm's Diary", "Prisoner's Journal"
+        std::string FormatTitle(const std::string& actorName, VolumeKind kind) const;
 
         // Format volume suffix: ", v2" (empty string for volume 1)
         std::string FormatVolumeSuffix(int volumeNumber) const;
 
         // Convenience: title + volume suffix combined
-        std::string FormatBookName(const std::string& actorName, int volumeNumber) const;
+        std::string FormatBookName(const std::string& actorName, int volumeNumber, VolumeKind kind) const;
 
         // Empty volume placeholder text
         const std::string& GetEmptyVolumeText() const { return emptyVolumeText_; }
@@ -118,6 +119,7 @@ namespace SkyrimNetDiaries {
         std::string dateLongFmt_;    // e.g. "{Day}, {d} {Month}, 4E {y}"
         std::string dateShortFmt_;   // e.g. "{d} {Month}, 4E {y}"
         std::string diaryTitleFmt_;  // e.g. "{Name}'s Diary"
+        std::string journalTitleFmt_;  // e.g. "{Name}'s Journal": the player's written volumes
         std::string volumeSuffixFmt_; // e.g. ", v{n}"
         std::string emptyVolumeText_;
         std::string templatesMissingText_;

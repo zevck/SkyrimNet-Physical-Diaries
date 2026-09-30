@@ -33,6 +33,7 @@
 #include "Serialization.h"
 #include "TimelineGate.h"
 #include "VolumeSync.h"
+#include "WritingMode.h"
 #include <spdlog/sinks/basic_file_sink.h>
 #include <atomic>
 #include <chrono>
@@ -132,8 +133,9 @@ namespace {
                 // Needs the forms loaded: find SkyrimNet's keep/clear prompt text.
                 SkyrimNetDiaries::TimelineGate::OnDataLoaded();
 
-                // The player's diary editor (docs/EDITING.md).
-                SkyrimNetDiaries::BookEditor::Register();
+                // The player's diary editor, only with SNPD's book.swf installed (docs/EDITING.md).
+                SkyrimNetDiaries::WritingMode::Detect();
+                if (SkyrimNetDiaries::WritingMode::IsOn()) SkyrimNetDiaries::BookEditor::Register();
 
                 // Now that GMSTs are loaded, read localized month/day names
                 SkyrimNetDiaries::Localization::GetSingleton()->ReadGMSTs();

@@ -85,15 +85,28 @@ namespace SkyrimNetDiaries {
         return true;
     }
 
-    bool DiaryDB::EnsureSchema() {
-        // Create tables (new installs).
-        bool ok = Exec(R"(
-            CREATE TABLE IF NOT EXISTS volumes (
+    bool DiaryDB::HasColumn(const char* table, const char* column) {
+        sqlite3_stmt* stmt = nullptr;
+        const std::string sql = std::format("PRAGMA table_info({});", table);
+        if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) return false;
+        bool found = false;
+        while (!found && sqlite3_step(stmt) == SQLITE_ROW) {
+            const auto* name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            found = name && std::string_view(name) == column;
+        }
+        sqlite3_finalize(stmt);
+        return found;
+    }
+
+    namespace {
+        // The volumes table's columns and key.
+        constexpr const char* kVolumeColumns = R"(
                 actor_uuid                      TEXT    NOT NULL,
                 actor_name                      TEXT    NOT NULL DEFAULT '',
                 actor_form_id                   INTEGER NOT NULL DEFAULT 0,
                 book_form_id                    INTEGER NOT NULL DEFAULT 0,
                 volume_number                   INTEGER NOT NULL DEFAULT 1,
+                kind                            INTEGER NOT NULL DEFAULT 0,
                 start_time                      REAL    NOT NULL DEFAULT 0,
                 end_time                        REAL    NOT NULL DEFAULT 0,
                 journal_template                TEXT    NOT NULL DEFAULT '',
@@ -102,8 +115,12 @@ namespace SkyrimNetDiaries {
                 prev_volume_last_creation_time  REAL    NOT NULL DEFAULT 0,
                 prev_volume_count_at_boundary   INTEGER NOT NULL DEFAULT 0,
                 book_text                       TEXT    NOT NULL DEFAULT '',
-                PRIMARY KEY (actor_uuid, volume_number)
-            );
+                PRIMARY KEY (actor_uuid, kind, volume_number))";
+    }
+
+    bool DiaryDB::EnsureSchema() {
+        // Create tables (new installs).
+        bool ok = Exec(std::format("CREATE TABLE IF NOT EXISTS volumes ({});", kVolumeColumns).c_str()) && Exec(R"(
             CREATE TABLE IF NOT EXISTS actor_templates (
                 actor_uuid                TEXT PRIMARY KEY,
                 template_name             TEXT NOT NULL DEFAULT '',
@@ -124,6 +141,38 @@ namespace SkyrimNetDiaries {
         sqlite3_exec(db_,
             "ALTER TABLE volumes ADD COLUMN actor_form_id INTEGER NOT NULL DEFAULT 0;",
             nullptr, nullptr, nullptr);
+
+        // Migration (2026-09-29): `kind` joined the key, so the player's journals number their
+        // volumes apart from their diary.  SQLite can't change a primary key: an older table
+        // is rebuilt once, every row a generated volume (kind 0).
+        if (!HasColumn("volumes", "kind")) {
+            // Older SNPD versions can't use the migrated DB: keep a copy to go back to.
+            if (const char* file = sqlite3_db_filename(db_, "main"); file && *file) {
+                std::string backup = std::string(file) + ".pre-kind";
+                if (!std::filesystem::exists(backup)) {
+                    std::string quoted;
+                    for (char c : backup) quoted += c == '\'' ? std::string("''") : std::string(1, c);
+                    if (Exec(std::format("VACUUM INTO '{}';", quoted).c_str())) {
+                        SKSE::log::info("[DiaryDB] Copied the DB to '{}' before migrating", backup);
+                    }
+                }
+            }
+            constexpr const char* kCopied =
+                "actor_uuid, actor_name, actor_form_id, book_form_id, volume_number, start_time, end_time, "
+                "journal_template, bio_template_name, last_known_entry_count, "
+                "prev_volume_last_creation_time, prev_volume_count_at_boundary, book_text";
+            const std::string rebuild = std::format(
+                "BEGIN; CREATE TABLE volumes_new ({0}); "
+                "INSERT INTO volumes_new ({1}) SELECT {1} FROM volumes; "
+                "DROP TABLE volumes; ALTER TABLE volumes_new RENAME TO volumes; COMMIT;",
+                kVolumeColumns, kCopied);
+            if (!Exec(rebuild.c_str())) {
+                Exec("ROLLBACK;");
+                SKSE::log::error("[DiaryDB] Couldn't add the volume kind to an older DiaryDB");
+                return false;
+            }
+            SKSE::log::info("[DiaryDB] Migrated: volumes now have a kind (diary or journal)");
+        }
 
         return true;
     }
@@ -186,9 +235,9 @@ namespace SkyrimNetDiaries {
             "INSERT INTO volumes "
             "(actor_uuid, actor_name, actor_form_id, book_form_id, volume_number, start_time, end_time, "
             " journal_template, bio_template_name, last_known_entry_count, "
-            " prev_volume_last_creation_time, prev_volume_count_at_boundary, book_text) "
-            "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) "
-            "ON CONFLICT(actor_uuid, volume_number) DO UPDATE SET "
+            " prev_volume_last_creation_time, prev_volume_count_at_boundary, book_text, kind) "
+            "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14) "
+            "ON CONFLICT(actor_uuid, kind, volume_number) DO UPDATE SET "
             " actor_name=excluded.actor_name, "
             " actor_form_id=CASE WHEN excluded.actor_form_id!=0 THEN excluded.actor_form_id ELSE volumes.actor_form_id END, "
             " book_form_id=excluded.book_form_id, "
@@ -208,31 +257,33 @@ namespace SkyrimNetDiaries {
                  .Bind(5, r.volumeNumber).Bind(6, r.startTime).Bind(7, r.endTime)
                  .Bind(8, r.journalTemplate).Bind(9, r.bioTemplateName).Bind(10, r.lastKnownEntryCount)
                  .Bind(11, r.prevVolumeLastCreationTime).Bind(12, r.prevVolumeCountAtBoundary)
-                 .Bind(13, r.bookText)
+                 .Bind(13, r.bookText).Bind(14, static_cast<int>(r.kind))
                  .Run();
     }
 
-    bool DiaryDB::UpdateBookText(const std::string& actorUuid, int volumeNumber,
+    bool DiaryDB::UpdateBookText(const std::string& actorUuid, VolumeKind kind, int volumeNumber,
                                   const std::string& text, int entryCount) {
         if (!db_) return false;
         Statement st(db_,
             "UPDATE volumes SET book_text=?1, last_known_entry_count=?2 "
-            "WHERE actor_uuid=?3 AND volume_number=?4;",
+            "WHERE actor_uuid=?3 AND kind=?4 AND volume_number=?5;",
             "UpdateBookText");
-        return st.Bind(1, text).Bind(2, entryCount).Bind(3, actorUuid).Bind(4, volumeNumber).Run();
+        return st.Bind(1, text).Bind(2, entryCount).Bind(3, actorUuid).Bind(4, static_cast<int>(kind))
+                 .Bind(5, volumeNumber).Run();
     }
 
-    bool DiaryDB::UpdateEndTime(const std::string& actorUuid, int volumeNumber,
+    bool DiaryDB::UpdateEndTime(const std::string& actorUuid, VolumeKind kind, int volumeNumber,
                                  double endTime) {
         if (!db_) return false;
-        Statement st(db_, "UPDATE volumes SET end_time=?1 WHERE actor_uuid=?2 AND volume_number=?3;", "UpdateEndTime");
-        return st.Bind(1, endTime).Bind(2, actorUuid).Bind(3, volumeNumber).Run();
+        Statement st(db_, "UPDATE volumes SET end_time=?1 WHERE actor_uuid=?2 AND kind=?3 AND volume_number=?4;",
+                     "UpdateEndTime");
+        return st.Bind(1, endTime).Bind(2, actorUuid).Bind(3, static_cast<int>(kind)).Bind(4, volumeNumber).Run();
     }
 
-    bool DiaryDB::DeleteVolume(const std::string& actorUuid, int volumeNumber) {
+    bool DiaryDB::DeleteVolume(const std::string& actorUuid, VolumeKind kind, int volumeNumber) {
         if (!db_) return false;
-        Statement st(db_, "DELETE FROM volumes WHERE actor_uuid=?1 AND volume_number=?2;", "DeleteVolume");
-        return st.Bind(1, actorUuid).Bind(2, volumeNumber).Run();
+        Statement st(db_, "DELETE FROM volumes WHERE actor_uuid=?1 AND kind=?2 AND volume_number=?3;", "DeleteVolume");
+        return st.Bind(1, actorUuid).Bind(2, static_cast<int>(kind)).Bind(3, volumeNumber).Run();
     }
 
     bool DiaryDB::DeleteActor(const std::string& actorUuid) {
@@ -250,8 +301,8 @@ namespace SkyrimNetDiaries {
         Statement st(db_,
             "SELECT actor_uuid, actor_name, actor_form_id, book_form_id, volume_number, start_time, end_time, "
             "       journal_template, bio_template_name, last_known_entry_count, "
-            "       prev_volume_last_creation_time, prev_volume_count_at_boundary, book_text "
-            "FROM volumes ORDER BY actor_uuid, volume_number;",
+            "       prev_volume_last_creation_time, prev_volume_count_at_boundary, book_text, kind "
+            "FROM volumes ORDER BY actor_uuid, kind, volume_number;",
             "LoadAllVolumes");
         while (st.Next()) {
             VolumeRow r;
@@ -268,6 +319,8 @@ namespace SkyrimNetDiaries {
             r.prevVolumeLastCreationTime  = st.Double(10);
             r.prevVolumeCountAtBoundary   = st.Int(11);
             r.bookText                    = st.Text(12);
+            r.kind                        = st.Int(13) == static_cast<int>(VolumeKind::Written) ? VolumeKind::Written
+                                                                                                 : VolumeKind::Generated;
             rows.push_back(std::move(r));
         }
         return rows;

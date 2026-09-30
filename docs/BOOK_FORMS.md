@@ -42,7 +42,7 @@ A factory failure is logged and the volume is created the next time it is needed
 
 ## The co-save record
 
-The save keeps only a form's flags (fact 3), so SNPD records what each form is. `DynamicForms` keeps the list of tracked forms and writes all of it at every save, as one `'SNBF'` record (version 2) under the `'SNDB'` unique ID. Per form: FormID, form type, flags (retired), key, template EditorID, display name. The key is `"<actor UUID>|v<volume>"` (`VolumeKey`).
+The save keeps only a form's flags (fact 3), so SNPD records what each form is. `DynamicForms` keeps the list of tracked forms and writes all of it at every save, as one `'SNBF'` record (version 2) under the `'SNDB'` unique ID. Per form: FormID, form type, flags (retired), key, template EditorID, display name. The key is `"<actor UUID>|v<volume>"` (`VolumeKey`), or `"<actor UUID>|j<volume>"` for the player's journal (see [EDITING.md](EDITING.md#diaries-and-journals)).
 
 The list is filled at creation and by the load callback, not from `books_`, so a save made before the post-load sync has loaded the volumes (during SkyrimNet's keep/clear prompt, or with diary books paused) still keeps every book's record. A book in the save without its record would load as an empty shell with nothing to fill it in.
 

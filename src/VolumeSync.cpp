@@ -155,6 +155,10 @@ namespace SkyrimNetDiaries {
         }).detach();
     }
 
+    bool PlayerDiaryFrozen(RE::FormID actorFormId) {
+        return actorFormId == 0x14 && !SkyrimNetDiaries::Config::GetSingleton()->GetPlayerDiaryBooks();
+    }
+
     void UpdateDiaryForActorInternal(RE::FormID formId) {
         SKSE::log::debug("=== UpdateDiaryForActorInternal called for FormID 0x{:X} ===", formId);
 
@@ -165,6 +169,10 @@ namespace SkyrimNetDiaries {
         }
         if (g_booksPaused.load()) {
             SKSE::log::debug("Diary books are paused this session — ignoring the entry for FormID 0x{:X}", formId);
+            return;
+        }
+        if (PlayerDiaryFrozen(formId)) {
+            SKSE::log::debug("PlayerDiaryBooks is off: no diary update for the player");
             return;
         }
 
@@ -308,7 +316,7 @@ namespace SkyrimNetDiaries {
                     currentVolumeEntries.end());
                 const double cutTime = finalizedEntries.back().entry_date;
 
-                bookManager->UpdateBookEndTime(uuid, latestVolume->volumeNumber, cutTime);
+                bookManager->UpdateBookEndTime(*latestVolume, cutTime);
                 bookManager->SetVolumeText(*latestVolume, finalizedEntries);
 
                 SKSE::log::info("{} volume {} sealed at {} entries (cutTime {:.2f}), {} overflow entries → creating new volumes",
@@ -330,7 +338,7 @@ namespace SkyrimNetDiaries {
                 }
             } else {
                 // Update the current volume in place.
-                bookManager->UpdateBookEndTime(uuid, latestVolume->volumeNumber, currentVolumeEntries.back().entry_date);
+                bookManager->UpdateBookEndTime(*latestVolume, currentVolumeEntries.back().entry_date);
                 bookManager->SetVolumeText(*latestVolume, currentVolumeEntries);
 
                 SKSE::log::info("Updated {} volume {} with {} entries",
@@ -349,16 +357,25 @@ namespace SkyrimNetDiaries {
         if (now <= 0.0) return;
         auto* bookManager = BookManager::GetSingleton();
 
-        struct Removal { std::string uuid; std::string name; int fromVolume; std::vector<RE::FormID> books; };
+        struct Removal {
+            std::string uuid;
+            VolumeKind kind;
+            std::string name;
+            int fromVolume;
+            std::vector<RE::FormID> books;
+        };
         std::vector<Removal> removals;
         int reRendered = 0;
 
-        for (auto& [uuid, volumes] : bookManager->GetAllBooksRef()) {
+        // Each actor's diary, and the player's journal, on its own.
+        for (auto& [chain, volumes] : bookManager->GetAllBooksRef()) {
             if (volumes.empty() || !DatedAfter(volumes.back().endTime, now)) continue;
+            const std::string uuid = volumes.front().actorUuid;
             const RE::FormID formId = Database::GetFormIDForUUID(uuid);
             if (formId == 0) continue;
 
-            Removal tail{ uuid, volumes.back().actorName, 0, {} };  // trailing volumes left with no entries
+            // Trailing volumes left with no entries.
+            Removal tail{ uuid, volumes.front().kind, volumes.back().actorName, 0, {} };
             bool queryFailed = false;
             for (auto& vol : volumes) {
                 if (!DatedAfter(vol.endTime, now)) continue;
@@ -371,6 +388,18 @@ namespace SkyrimNetDiaries {
                                     vol.actorName, vol.volumeNumber);
                     queryFailed = true;
                     break;
+                }
+                if (live.empty() && vol.kind == VolumeKind::Written && !DatedAfter(vol.startTime, now)) {
+                    // A journal can be empty and still be in the save (made empty, or its
+                    // entries torn out): only the entries after the save are gone.
+                    tail.fromVolume = 0;
+                    tail.books.clear();
+                    SKSE::log::info("[Timeline] {} journal vol {}: its entries after the save are gone — kept, empty",
+                                    vol.actorName, vol.volumeNumber);
+                    bookManager->UpdateBookEndTime(vol, vol.startTime);
+                    bookManager->SetVolumeText(vol, live);
+                    ++reRendered;
+                    continue;
                 }
                 if (live.empty()) {
                     if (tail.fromVolume == 0) tail.fromVolume = vol.volumeNumber;
@@ -386,7 +415,7 @@ namespace SkyrimNetDiaries {
                 SKSE::log::info("[Timeline] {} vol {}: {} → {} entries, end {:.2f} → {:.2f}",
                                 vol.actorName, vol.volumeNumber, vol.lastKnownEntryCount, live.size(),
                                 vol.endTime, live.back().entry_date);
-                bookManager->UpdateBookEndTime(uuid, vol.volumeNumber, live.back().entry_date);
+                bookManager->UpdateBookEndTime(vol, live.back().entry_date);
                 bookManager->SetVolumeText(vol, live);
                 ++reRendered;
             }
@@ -397,7 +426,7 @@ namespace SkyrimNetDiaries {
             SKSE::log::info("[Timeline] {}: volumes from {} have no entries left in SkyrimNet — removing {} book(s)",
                             r.name, r.fromVolume, r.books.size());
             // Also retires the books.
-            bookManager->UnregisterVolumesFrom(r.uuid, r.fromVolume);
+            bookManager->UnregisterVolumesFrom(r.uuid, r.kind, r.fromVolume);
         }
         if (!removals.empty()) {
             // Take the retired books from the NPCs, the loaded cells and merchant chests.
@@ -419,14 +448,17 @@ namespace SkyrimNetDiaries {
         const auto& allBooks = SkyrimNetDiaries::BookManager::GetSingleton()->GetAllBooks();
         int recoveryCount = 0;
 
-        for (const auto& [uuid, volumes] : allBooks) {
+        for (const auto& [chain, volumes] : allBooks) {
             if (volumes.empty()) continue;
-            if (skipUuids.count(uuid)) continue;  // already queued for immediate recovery
-
             const auto* latest = &volumes.back();  // volumes are sorted by number
+            // Only diaries grow from SkyrimNet's entries; the player's journal only in the editor.
+            if (latest->kind != VolumeKind::Generated) continue;
+            const std::string& uuid = latest->actorUuid;
+            if (skipUuids.count(uuid)) continue;  // already queued for immediate recovery
 
             uint32_t actorFormId = SkyrimNetDiaries::Database::GetFormIDForUUID(uuid);
             if (actorFormId == 0) continue;
+            if (PlayerDiaryFrozen(actorFormId)) continue;
 
             bool needsUpdate = false;
             if (latest->endTime > 0.0) {
@@ -585,6 +617,7 @@ namespace SkyrimNetDiaries {
                                     SKSE::log::warn("CatchUp: cannot resolve UUID {} to FormID, skipping", uuid);
                                     return;
                                 }
+                                if (PlayerDiaryFrozen(formId)) return;
 
                                 auto entries = SkyrimNetDiaries::Database::GetDiaryEntries(formId);
                                 if (entries.empty()) return;
@@ -634,11 +667,12 @@ namespace SkyrimNetDiaries {
         auto bookManager   = SkyrimNetDiaries::BookManager::GetSingleton();
 
         try {
-            const auto& allBooks = bookManager->GetAllBooks();
-            int actorsAffected = 0;
-            for (const auto& [uuid, volumes] : allBooks) {
-                if (!volumes.empty()) ++actorsAffected;
+            // A diary and a journal can share an actor.
+            std::unordered_set<std::string> actors;
+            for (const auto& [chain, volumes] : bookManager->GetAllBooks()) {
+                if (!volumes.empty()) actors.insert(volumes.front().actorUuid);
             }
+            const int actorsAffected = static_cast<int>(actors.size());
 
             // Wipe DiaryDB rows BEFORE clearing in-memory state.  Without this,
             // LoadFromDB() on the next save reload reads the persisted rows back,
@@ -649,7 +683,7 @@ namespace SkyrimNetDiaries {
             auto* diaryDb = SkyrimNetDiaries::DiaryDB::GetSingleton();
             if (diaryDb->IsOpen()) {
                 int dbRowsCleared = 0;
-                for (const auto& [uuid, volumes] : allBooks) {
+                for (const auto& uuid : actors) {
                     if (diaryDb->DeleteActor(uuid)) ++dbRowsCleared;
                     diaryDb->ClearAllStolenVolumes(uuid);
                 }
@@ -668,9 +702,10 @@ namespace SkyrimNetDiaries {
             const auto records = DynamicForms::Tracked();
             for (const auto& record : records) {
                 std::string uuid;
+                VolumeKind kind{};
                 int volume = 0;
-                ParseVolumeKey(record.key, uuid, volume);
-                bookManager->RetireBook(record.formId, uuid);
+                ParseVolumeKey(record.key, uuid, kind, volume);
+                bookManager->RetireBook(record.formId, uuid, kind);
             }
 
             SKSE::GetTaskInterface()->AddTask([]() { SweepRetiredBooks(); });

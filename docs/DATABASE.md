@@ -19,13 +19,14 @@ Code: `src/DiaryDB.cpp`, `include/DiaryDB.h` (singleton `SkyrimNetDiaries::Diary
 
 Created in `EnsureSchema()`.
 
-**`volumes`**, one row per volume, `PRIMARY KEY (actor_uuid, volume_number)`:
+**`volumes`**, one row per volume, `PRIMARY KEY (actor_uuid, kind, volume_number)`:
 
 | Column | Notes |
 |---|---|
 | `actor_uuid`, `actor_name` | SkyrimNet identity |
 | `actor_form_id` | Actor FormID when the volume was made. Used only as a fallback, and only after a UUID back-check (see [BOOK_FORMS.md](BOOK_FORMS.md#finding-the-npc-findactorforbook)). |
 | `book_form_id` | The volume's book form (an `0xFF` runtime FormID). On every load it is matched against the save's co-save record: updated if the save has another form for the volume, the row deleted and recreated if the save has none (see [BOOK_FORMS.md](BOOK_FORMS.md#load)). |
+| `kind` | 0: a diary (SkyrimNet's entries; every NPC volume). 1: the player's journal (what they wrote in the book editor). Each kind numbers its volumes from 1. See [EDITING.md](EDITING.md#diaries-and-journals). |
 | `volume_number`, `start_time`, `end_time`, `prev_volume_last_creation_time`, `prev_volume_count_at_boundary` | Boundaries (see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#volume-boundaries)) |
 | `journal_template`, `bio_template_name` | Template EditorID; SkyrimNet bio template name (`player_special` for the player) |
 | `last_known_entry_count` | Entry count at the last render |
@@ -35,17 +36,19 @@ Created in `EnsureSchema()`.
 
 **`stolen_volumes`**: `(actor_uuid, volume_number)` PK, `stolen_at` (game seconds).
 
-Databases from before 2.0.0 also have a `persisted_in_save` column in `volumes`, which is no longer read or written (it existed because DPF forms survived a reload without saving).
+Databases from before 2.0.0 also had a `persisted_in_save` column in `volumes` (it existed because DPF forms survived a reload without saving); the `kind` migration dropped it.
 
 ## Schema changes
 
 There is no version table. New columns are added in `EnsureSchema()` with `ALTER TABLE … ADD COLUMN … DEFAULT …`, and the "duplicate column" error on databases that already have them is ignored (`actor_form_id` was added this way). Existing rows are not rewritten. Code must cope with the default value (for example `actor_form_id = 0` → resolve from the UUID). Follow the same pattern for new columns.
 
+The one exception so far: `kind` joined the primary key (2026-09-29), and SQLite can't change a key. When `volumes` has no `kind` column (`HasColumn`), `EnsureSchema` rebuilds it once in a transaction: a new table, the rows copied (every one kind 0, a diary), the old table dropped, the new one renamed. If that fails it rolls back and the DB doesn't open. It is one-way (an older SNPD fails every volume write on the new key), so the DB is first copied to `diary.db.pre-kind` (`VACUUM INTO`); to go back to 2.0.x, restore that copy.
+
 ## Co-save records
 
 Under the unique ID `'SNDB'`:
 
-- **`SNBF`** (version 2, since 2.0.0): every tracked book form, retired ones included, written by `DynamicForms::Save` at the start of `SaveCallback`. Per form: FormID (`uint32`), form type (`uint8`), flags (`uint8`, bit 0 = retired), then three strings (`uint32` length + bytes): key (`"<actor UUID>|v<volume>"`), template EditorID, display name. The save itself keeps only a form's flags, so the load callback uses this to fill each book in (see [BOOK_FORMS.md](BOOK_FORMS.md#the-co-save-record)).
+- **`SNBF`** (version 2, since 2.0.0): every tracked book form, retired ones included, written by `DynamicForms::Save` at the start of `SaveCallback`. Per form: FormID (`uint32`), form type (`uint8`), flags (`uint8`, bit 0 = retired), then three strings (`uint32` length + bytes): key (`"<actor UUID>|v<volume>"`, or `|j<volume>` for a journal), template EditorID, display name. The save itself keeps only a form's flags, so the load callback uses this to fill each book in (see [BOOK_FORMS.md](BOOK_FORMS.md#the-co-save-record)).
 - `SaveCallback` also opens DiaryDB on a new game's first save and flushes the volumes; `RevertCallback` clears the in-memory volumes and the tracked forms.
 
 The load callback reads only `SNBF`, so the records older saves carry are skipped:
@@ -60,7 +63,7 @@ A save made with 2.0.0 can't go back to an older SNPD: its books are `0xFF` form
 
 ## MCM Reset (`ResetAllDiariesInternal`)
 
-Deletes every tracked actor from DiaryDB (`DeleteActor` + `ClearAllStolenVolumes`), clears memory, **retires** every book form, then on the game thread removes their copies from the loaded cells, their owner NPCs and merchant chests (`SweepRetiredBooks`); copies elsewhere are removed as their cells load. The forms themselves are never removed from the save (see [BOOK_FORMS.md](BOOK_FORMS.md#retirement)). The catch-up scan rebuilds every book on the next load. SkyrimNet's entries are never touched.
+Deletes every tracked actor from DiaryDB (`DeleteActor` + `ClearAllStolenVolumes`), clears memory, **retires** every book form, then on the game thread removes their copies from the loaded cells, their owner NPCs and merchant chests (`SweepRetiredBooks`); copies elsewhere are removed as their cells load. The forms themselves are never removed from the save (see [BOOK_FORMS.md](BOOK_FORMS.md#retirement)). The catch-up scan rebuilds the diaries on the next load (the player's only with `[Diary] PlayerDiaryBooks` on). The player's journals are retired too and not rebuilt: the next new-entry key starts Journal 1, which starts at time 0 and is open-ended, so it shows every entry they wrote. SkyrimNet's entries are never touched.
 
 ## Inspecting a live database
 
@@ -70,9 +73,9 @@ With the game closed, or read-only while it runs:
 sqlite3 "<MO2>\overwrite\SKSE\Plugins\SkyrimNetPhysicalDiaries\SkyrimNet-<id>\diary.db"
 ```
 ```sql
-SELECT actor_name, volume_number, book_form_id, start_time, end_time,
+SELECT actor_name, kind, volume_number, book_form_id, start_time, end_time,
        last_known_entry_count
-FROM volumes ORDER BY actor_name, volume_number;
+FROM volumes ORDER BY actor_name, kind, volume_number;
 
 SELECT * FROM stolen_volumes;
 ```

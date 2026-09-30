@@ -33,7 +33,8 @@ namespace SkyrimNetDiaries {
         RE::FormID bookFormId;         // The actual book FormID (unique identifier)
         double startTime;              // Game seconds (entry_date units): first entry's date (0 for volume 1)
         double endTime;                // Game seconds: the last included entry's date
-        int volumeNumber = 1;
+        int volumeNumber = 1;          // counted per kind
+        VolumeKind kind = VolumeKind::Generated;  // a diary, or the player's journal (docs/EDITING.md#writing-mode)
         std::string journalTemplate;   // Which template book was used (for consistent appearance)
         std::string bioTemplateName;   // Actor-specific subfolder key (e.g. "lydia_3a2") — unique per NPC
         int lastKnownEntryCount = 0;   // Track expected entry count for deletion detection
@@ -74,19 +75,20 @@ namespace SkyrimNetDiaries {
                              const std::vector<DiaryEntry>& entries, const std::string& bioTemplateName,
                              double prevVolumeLastCreationTime, int prevVolumeCountAtBoundary);
 
-        // A volume with no entries yet (endTime = startTime), given to the actor like any other:
-        // the player's volume 1 or next volume, made by the book editor.  Its book's
-        // FormID, or 0 if it couldn't be made.  Game thread.  Defined in BookCreation.cpp.
+        // A journal volume with no entries yet (endTime = startTime), given to the actor like any
+        // other: the player's journal volume 1 or next volume, made by the book editor.  Its
+        // book's FormID, or 0 if it couldn't be made.  Game thread.  Defined in BookCreation.cpp.
         RE::FormID CreateEmptyVolume(const std::string& actorUuid, const std::string& actorName,
                                      double startTime, int volumeNumber, RE::FormID targetActorFormID,
                                      const std::string& bioTemplateName, double prevVolumeLastCreationTime,
                                      int prevVolumeCountAtBoundary);
 
-        // Get latest volume for an actor by UUID
-        DiaryBookData* GetBookForActor(const std::string& actorUuid);
+        // An actor's latest volume of a kind, by UUID
+        DiaryBookData* GetBookForActor(const std::string& actorUuid, VolumeKind kind = VolumeKind::Generated);
 
-        // Get all volumes for an actor by UUID
-        std::vector<DiaryBookData>* GetAllVolumesForActor(const std::string& actorUuid);
+        // An actor's volumes of a kind, by UUID, in order
+        std::vector<DiaryBookData>* GetAllVolumesForActor(const std::string& actorUuid,
+                                                          VolumeKind kind = VolumeKind::Generated);
 
         // Get book data by FormID (searches all actors)
         DiaryBookData* GetBookForFormID(RE::FormID formId);
@@ -100,9 +102,9 @@ namespace SkyrimNetDiaries {
 
         // A book whose volume is gone for certain (Reset, a Clear): retired, so it stays
         // in the save but is swept out of sight (see BookCreation.h).  Game thread.
-        void RetireBook(RE::FormID bookFormId, const std::string& actorUuid);
+        void RetireBook(RE::FormID bookFormId, const std::string& actorUuid, VolumeKind kind);
 
-        // Get all books (for checking volume numbers)
+        // Every chain of volumes, keyed by ChainKey (not a UUID: use the volumes' actorUuid).
         const std::unordered_map<std::string, std::vector<DiaryBookData>>& GetAllBooks() const { return books_; }
         std::unordered_map<std::string, std::vector<DiaryBookData>>& GetAllBooksRef() { return books_; }
 
@@ -110,7 +112,7 @@ namespace SkyrimNetDiaries {
         DiaryBookData& RegisterBook(DiaryBookData data);
 
         // Update a volume's endTime (after an update, a seal or a deletion), in memory and DiaryDB
-        void UpdateBookEndTime(const std::string& actorUuid, int volumeNumber, double endTime);
+        void UpdateBookEndTime(DiaryBookData& vol, double endTime);
 
         // Game thread: the entries the volume's book shows now (what RefreshVolumeOnOpen
         // renders).  `ok` false: SkyrimNet couldn't be read or the actor isn't resolved.
@@ -122,16 +124,13 @@ namespace SkyrimNetDiaries {
         std::vector<DiaryEntry> GetLiveEntries(const DiaryBookData& vol, RE::FormID actorFormId,
                                                double endTime, bool* ok);
 
-        // The volume is the player's own diary (by SkyrimNet UUID).
-        static bool IsPlayerDiary(const DiaryBookData& vol);
-
         // Renders `entries` (exactly these) into the volume, writes the
         // text and entry count to DiaryDB, and updates cachedBookText / lastKnownEntryCount.
         void SetVolumeText(DiaryBookData& vol, const std::vector<DiaryEntry>& entries);
 
-        // Drops the actor's volumes numbered fromVolume and up (memory and DiaryDB) and
-        // retires their books.
-        void UnregisterVolumesFrom(const std::string& actorUuid, int fromVolume);
+        // Drops the actor's volumes of a kind numbered fromVolume and up (memory and DiaryDB)
+        // and retires their books.
+        void UnregisterVolumesFrom(const std::string& actorUuid, VolumeKind kind, int fromVolume);
 
         // Re-render every tracked volume from SkyrimNet (MCM "Regenerate texts" and font changes)
         void RegenerateAllDiaryTexts();
@@ -165,9 +164,13 @@ namespace SkyrimNetDiaries {
         void Revert();
 
     private:
+        // books_' key for an actor's volumes of one kind: the UUID for the diary, so everything
+        // that looks an actor up by UUID alone gets the diary; "<UUID>|j" for the journal.
+        static std::string ChainKey(const std::string& actorUuid, VolumeKind kind);
+
         // CreateDiaryBook and CreateEmptyVolume: make or reuse the book, register the volume,
         // render it, give it to the actor.
-        RE::FormID CreateVolumeBook(const std::string& actorUuid, const std::string& actorName,
+        RE::FormID CreateVolumeBook(const std::string& actorUuid, const std::string& actorName, VolumeKind kind,
                                     double startTime, double endTime, int volumeNumber,
                                     RE::FormID targetActorFormID, const std::vector<DiaryEntry>& entries,
                                     const std::string& bioTemplateName, double prevVolumeLastCreationTime,
@@ -186,8 +189,8 @@ namespace SkyrimNetDiaries {
                                           RE::FormID actorFormId);
 
         std::unordered_map<std::string, std::string> actorTemplates_;  // UUID → template choice (persists across volumes)
-        std::unordered_map<std::string, std::vector<DiaryBookData>> books_; // UUID → all volumes
-        // Book FormID → (UUID, volume number): GetBookForFormID runs on every book open,
+        std::unordered_map<std::string, std::vector<DiaryBookData>> books_; // ChainKey → its volumes
+        // Book FormID → (ChainKey, volume number): GetBookForFormID runs on every book open,
         // container change and description read.  Kept in step with every books_ edit.
         std::unordered_map<RE::FormID, std::pair<std::string, int>> formIndex_;
         // This save's books no volume claims, by volume key: reused if that volume is
@@ -199,8 +202,8 @@ namespace SkyrimNetDiaries {
         std::unordered_map<RE::FormID, std::string> textSnapshot_;
         std::string TextSnapshotLocked(RE::FormID bookFormId) const;
         void SetTextSnapshot(RE::FormID bookFormId, const std::string& text);
-        // The "all entries removed" page, for a book with no volume.
-        void ShowRemovedPage(RE::FormID bookFormId, const std::string& actorUuid);
+        // The "all entries removed" page (a journal's is blank), for a book with no volume.
+        void ShowRemovedPage(RE::FormID bookFormId, const std::string& actorUuid, VolumeKind kind);
 
         // Adds a volume's book to the indexes and snapshot / removes it / clears them.
         void IndexBook(const DiaryBookData& vol);

@@ -31,11 +31,11 @@ namespace SkyrimNetDiaries {
     inline constexpr std::string_view kPageBreak = "[pagebreak]\n\n";
 
     // One volume: blank page, title page with date range, then one page per entry.
-    // Renders exactly the entries given (the caller picks the volume's entries).  An
-    // empty list renders the "all entries removed" page, marked with kEmptySentinel; for the
-    // player's own diary (`playerDiary`) that page is blank, still marked.
+    // Renders exactly the entries given (the caller picks the volume's entries), titled by
+    // kind ("Diary" or "Journal").  An empty list renders the "all entries removed" page,
+    // marked with kEmptySentinel; a journal's is blank, still marked.
     std::string FormatDiaryEntries(const std::vector<DiaryEntry>& entries,
-                                   const std::string& actorName, bool playerDiary = false);
+                                   const std::string& actorName, VolumeKind kind = VolumeKind::Generated);
 
     // Plain-text pieces of that layout for the book editor (no markup, not escaped).
     // An entry's text as its page shows it (the same cleanup as FormatDiaryEntries).

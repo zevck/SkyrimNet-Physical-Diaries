@@ -173,6 +173,22 @@ namespace SkyrimNetDiaries::PapyrusAPI {
         SkyrimNetDiaries::Config::GetSingleton()->Save();
     }
 
+    bool MCM_GetPlayerDiaryBooks(RE::StaticFunctionTag*) {
+        return SkyrimNetDiaries::Config::GetSingleton()->GetPlayerDiaryBooks();
+    }
+    // 1 on, 0 off, -1 the default (off with writing installed, on without).
+    void MCM_SetPlayerDiaryBooks(RE::StaticFunctionTag*, std::int32_t v) {
+        auto* config = SkyrimNetDiaries::Config::GetSingleton();
+        const bool was = config->GetPlayerDiaryBooks();
+        config->SetPlayerDiaryBooks(static_cast<int>(v));
+        config->Save();
+        // Turned on: catch the player's diary up now (the same update a new entry runs) rather
+        // than at their next entry or the next load.
+        if (!was && config->GetPlayerDiaryBooks()) {
+            SKSE::GetTaskInterface()->AddTask([]() { SkyrimNetDiaries::UpdateDiaryForActorInternal(0x14); });
+        }
+    }
+
     std::int32_t MCM_GetEditKey(RE::StaticFunctionTag*) {
         return static_cast<std::int32_t>(SkyrimNetDiaries::Config::GetSingleton()->GetEditKey());
     }
@@ -235,6 +251,8 @@ namespace SkyrimNetDiaries::PapyrusAPI {
         a_vm->RegisterFunction("SetFontSizeSmall",    "SkyrimNetDiaries_MCM", MCM_SetFontSizeSmall);
         a_vm->RegisterFunction("GetShowDateHeaders",  "SkyrimNetDiaries_MCM", MCM_GetShowDateHeaders);
         a_vm->RegisterFunction("SetShowDateHeaders",  "SkyrimNetDiaries_MCM", MCM_SetShowDateHeaders);
+        a_vm->RegisterFunction("GetPlayerDiaryBooks", "SkyrimNetDiaries_MCM", MCM_GetPlayerDiaryBooks);
+        a_vm->RegisterFunction("SetPlayerDiaryBooks", "SkyrimNetDiaries_MCM", MCM_SetPlayerDiaryBooks);
         a_vm->RegisterFunction("GetEditKey",          "SkyrimNetDiaries_MCM", MCM_GetEditKey);
         a_vm->RegisterFunction("SetEditKey",          "SkyrimNetDiaries_MCM", MCM_SetEditKey);
         a_vm->RegisterFunction("GetDeleteKey",        "SkyrimNetDiaries_MCM", MCM_GetDeleteKey);

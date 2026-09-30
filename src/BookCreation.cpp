@@ -28,13 +28,20 @@
 
 namespace SkyrimNetDiaries {
 
-    std::string VolumeKey(const std::string& actorUuid, int volumeNumber) {
-        return std::format("{}|v{}", actorUuid, volumeNumber);
+    std::string VolumeKey(const std::string& actorUuid, VolumeKind kind, int volumeNumber) {
+        return std::format("{}|{}{}", actorUuid, kind == VolumeKind::Written ? 'j' : 'v', volumeNumber);
     }
 
-    bool ParseVolumeKey(const std::string& key, std::string& actorUuid, int& volumeNumber) {
-        const auto bar = key.rfind("|v");
-        if (bar == std::string::npos || bar == 0) return false;
+    bool ParseVolumeKey(const std::string& key, std::string& actorUuid, VolumeKind& kind, int& volumeNumber) {
+        const auto bar = key.rfind('|');
+        if (bar == std::string::npos || bar == 0 || bar + 1 >= key.size()) return false;
+        if (key[bar + 1] == 'v') {
+            kind = VolumeKind::Generated;
+        } else if (key[bar + 1] == 'j') {
+            kind = VolumeKind::Written;
+        } else {
+            return false;
+        }
         const char* first = key.data() + bar + 2;
         const char* last = key.data() + key.size();
         const auto [end, ec] = std::from_chars(first, last, volumeNumber);
@@ -166,8 +173,9 @@ namespace SkyrimNetDiaries {
         std::vector<RE::TESObjectREFR*> holders;
         for (const auto& record : DynamicForms::Tracked()) {
             std::string uuid;
+            VolumeKind kind{};
             int volume = 0;
-            if (record.retired && ParseVolumeKey(record.key, uuid, volume)) {
+            if (record.retired && ParseVolumeKey(record.key, uuid, kind, volume)) {
                 if (auto* owner = RE::TESForm::LookupByID<RE::Actor>(Database::GetFormIDForUUID(uuid))) holders.push_back(owner);
             }
         }
@@ -195,20 +203,22 @@ namespace SkyrimNetDiaries {
                                       const std::vector<DiaryEntry>& entries, const std::string& bioTemplateName,
                                       double prevVolumeLastCreationTime, int prevVolumeCountAtBoundary) {
         if (entries.empty()) return;
-        CreateVolumeBook(actorUuid, actorName, startTime, entries.back().entry_date, volumeNumber, targetActorFormID,
-                         entries, bioTemplateName, prevVolumeLastCreationTime, prevVolumeCountAtBoundary);
+        CreateVolumeBook(actorUuid, actorName, VolumeKind::Generated, startTime, entries.back().entry_date, volumeNumber,
+                         targetActorFormID, entries, bioTemplateName, prevVolumeLastCreationTime,
+                         prevVolumeCountAtBoundary);
     }
 
     RE::FormID BookManager::CreateEmptyVolume(const std::string& actorUuid, const std::string& actorName,
                                               double startTime, int volumeNumber, RE::FormID targetActorFormID,
                                               const std::string& bioTemplateName, double prevVolumeLastCreationTime,
                                               int prevVolumeCountAtBoundary) {
-        return CreateVolumeBook(actorUuid, actorName, startTime, startTime, volumeNumber, targetActorFormID, {},
-                                bioTemplateName, prevVolumeLastCreationTime, prevVolumeCountAtBoundary);
+        return CreateVolumeBook(actorUuid, actorName, VolumeKind::Written, startTime, startTime, volumeNumber,
+                                targetActorFormID, {}, bioTemplateName, prevVolumeLastCreationTime,
+                                prevVolumeCountAtBoundary);
     }
 
     RE::FormID BookManager::CreateVolumeBook(const std::string& actorUuid, const std::string& actorName,
-                                             double startTime, double endTime, int volumeNumber,
+                                             VolumeKind kind, double startTime, double endTime, int volumeNumber,
                                              RE::FormID targetActorFormID, const std::vector<DiaryEntry>& entries,
                                              const std::string& bioTemplateName, double prevVolumeLastCreationTime,
                                              int prevVolumeCountAtBoundary) {
@@ -226,7 +236,7 @@ namespace SkyrimNetDiaries {
         // This save may already have a book for this volume that nothing claims (see
         // LoadFromDB): reuse it, wherever it is.  Otherwise make one.
         RE::TESObjectBOOK* book = nullptr;
-        if (const auto it = unclaimed_.find(VolumeKey(actorUuid, volumeNumber)); it != unclaimed_.end()) {
+        if (const auto it = unclaimed_.find(VolumeKey(actorUuid, kind, volumeNumber)); it != unclaimed_.end()) {
             book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(it->second);
             unclaimed_.erase(it);
         }
@@ -238,11 +248,11 @@ namespace SkyrimNetDiaries {
             return 0;
         }
         const RE::FormID bookId = book->GetFormID();
-        const std::string bookName = Localization::GetSingleton()->FormatBookName(actorName, volumeNumber);
+        const std::string bookName = Localization::GetSingleton()->FormatBookName(actorName, volumeNumber, kind);
         ConfigureDiaryForm(book, templateBook, bookName);
         DynamicForms::Track({ .formId = bookId,
                               .formType = RE::FormType::Book,
-                              .key = VolumeKey(actorUuid, volumeNumber),
+                              .key = VolumeKey(actorUuid, kind, volumeNumber),
                               .templateEditorId = templateToUse,
                               .displayName = bookName });
 
@@ -253,6 +263,7 @@ namespace SkyrimNetDiaries {
         data.startTime = startTime;
         data.endTime = endTime;
         data.volumeNumber = volumeNumber;
+        data.kind = kind;
         data.journalTemplate = templateToUse;
         data.bioTemplateName = bioTemplateName;
         data.prevVolumeLastCreationTime = prevVolumeLastCreationTime;

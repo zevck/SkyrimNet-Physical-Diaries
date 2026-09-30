@@ -343,7 +343,7 @@ namespace SkyrimNetDiaries {
     }
 
     std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& entries,
-                                   const std::string& actorName, bool playerDiary) {
+                                   const std::string& actorName, SkyrimNetDiaries::VolumeKind kind) {
         std::string bookText;
         auto config = SkyrimNetDiaries::Config::GetSingleton();
         int fontTitle = config->GetFontSizeTitle();
@@ -359,16 +359,17 @@ namespace SkyrimNetDiaries {
         bookText += "\n\n\n\n\n\n";
         bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontTitle) + "'><p align='center'>";
         auto* loc = SkyrimNetDiaries::Localization::GetSingleton();
-        bookText += loc->FormatDiaryTitle(EscapeMarkup(actorName));
+        bookText += loc->FormatTitle(EscapeMarkup(actorName), kind);
         bookText += "</p></font>\n\n";
 
         if (entries.empty()) {
-            // The player's own diary is just blank (they tore its entries out); the sentinel
-            // still tells the inter-plugin API there are no entries.
+            // A journal is just blank (new, or its entries torn out); the sentinel still tells
+            // the inter-plugin API there are no entries.
             bookText += std::string(kPageBreak);
             bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'><p align='center'>"
                       + std::string(SkyrimNetDiaries::Localization::kEmptySentinel)
-                      + (playerDiary ? std::string() : loc->GetEmptyVolumeText()) + "</p></font>";
+                      + (kind == SkyrimNetDiaries::VolumeKind::Written ? std::string() : loc->GetEmptyVolumeText())
+                      + "</p></font>";
         } else {
             // Date range below title
             bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontSmall) + "'><p align='center'>";

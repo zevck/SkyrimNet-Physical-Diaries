@@ -96,7 +96,7 @@ namespace SkyrimNetDiaries::InterPluginAPI {
                 query->isDiaryBook   = true;
                 query->entryCount    = bookData->lastKnownEntryCount;
                 query->volumeNumber  = bookData->volumeNumber;
-                auto* allVols        = bm->GetAllVolumesForActor(bookData->actorUuid);
+                auto* allVols        = bm->GetAllVolumesForActor(bookData->actorUuid, bookData->kind);
                 query->totalVolumes  = allVols ? static_cast<std::int32_t>(allVols->size()) : 1;
 
                 // Don't expose the "entries removed" placeholder — it would be read aloud by TTS mods.

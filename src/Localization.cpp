@@ -212,6 +212,7 @@ namespace SkyrimNetDiaries {
                 if (key == "DateLong") dateLongFmt_ = value;
                 else if (key == "DateShort") dateShortFmt_ = value;
                 else if (key == "DiaryTitle") diaryTitleFmt_ = value;
+                else if (key == "JournalTitle") journalTitleFmt_ = value;
                 else if (key == "VolumeSuffix") volumeSuffixFmt_ = value;
                 else if (key == "EmptyVolumeText") emptyVolumeText_ = value;
             } else if (currentSection == "messages") {
@@ -352,6 +353,7 @@ namespace SkyrimNetDiaries {
         dateLongFmt_ = "{Day}, {d} {Month}, 4E {y}";
         dateShortFmt_ = "{d} {Month}, 4E {y}";
         diaryTitleFmt_ = "{Name}'s Diary";
+        journalTitleFmt_ = "{Name}'s Journal";
         volumeSuffixFmt_ = ", v{n}";
         emptyVolumeText_ = "All entries from this time period have been removed.";
         templatesMissingText_ =
@@ -360,21 +362,21 @@ namespace SkyrimNetDiaries {
             " - SkyrimNet Physical Diaries.esp is enabled\n"
             " - powerofthree's Tweaks or Native EditorID Fix is installed for your game version\n\n"
             "See SkyrimNetPhysicalDiaries.log for details.";
-        editSavePrompt_ = "Keep the changes to your diary?";
+        editSavePrompt_ = "Keep the changes to your journal?";
         editSave_ = "Save";
         editDiscard_ = "Discard";
         editKeepWriting_ = "Keep writing";
-        editSaveFailed_ = "Your diary couldn't be saved. See SkyrimNetPhysicalDiaries.log.";
-        editDeletePrompt_ = "Tear out the entry from {Date}?\n\nIt will be gone from your diary and from your memory.";
+        editSaveFailed_ = "Your journal couldn't be saved. See SkyrimNetPhysicalDiaries.log.";
+        editDeletePrompt_ = "Tear out the entry from {Date}?\n\nIt will be gone from your journal and from your memory.";
         editDelete_ = "Tear out";
         editKeep_ = "Keep it";
         editDeleteFailed_ = "The entry couldn't be torn out. See SkyrimNetPhysicalDiaries.log.";
-        editNeedsSkyrimNet_ = "Writing in your diary needs a newer SkyrimNet.";
-        editNeedsPause_ = "Writing in your diary needs the book menu to pause the game.";
+        editNeedsSkyrimNet_ = "Writing in your journal needs a newer SkyrimNet.";
+        editNeedsPause_ = "Writing in your journal needs the book menu to pause the game.";
         editEmptiedHint_ = "An emptied entry is kept. To remove an entry, tear it out.";
-        editNotLatest_ = "New entries go in your latest diary.";
-        editNewVolume_ = "This diary is full. You begin a new one.";
-        editStartedVolume_ = "You begin a new diary.";
+        editNotLatest_ = "New entries go in your latest journal.";
+        editNewVolume_ = "This journal is full. You begin a new one.";
+        editStartedVolume_ = "You begin a new journal.";
 
         // Load locale file (may override formats, months, days)
         LoadLocaleFile(languageString_);
@@ -396,24 +398,25 @@ namespace SkyrimNetDiaries {
         return ApplyTemplate(dateShortFmt_, nullptr, day, monthName, year);
     }
 
-    std::string Localization::FormatDiaryTitle(const std::string& actorName) const {
+    std::string Localization::FormatTitle(const std::string& actorName, VolumeKind kind) const {
+        const std::string& fmt = kind == VolumeKind::Written ? journalTitleFmt_ : diaryTitleFmt_;
         std::string result;
-        result.reserve(diaryTitleFmt_.size() + actorName.size());
-        for (size_t i = 0; i < diaryTitleFmt_.size(); ++i) {
-            if (diaryTitleFmt_[i] == '{') {
-                auto close = diaryTitleFmt_.find('}', i + 1);
+        result.reserve(fmt.size() + actorName.size());
+        for (size_t i = 0; i < fmt.size(); ++i) {
+            if (fmt[i] == '{') {
+                auto close = fmt.find('}', i + 1);
                 if (close != std::string::npos) {
-                    std::string key = diaryTitleFmt_.substr(i + 1, close - i - 1);
+                    std::string key = fmt.substr(i + 1, close - i - 1);
                     if (key == "Name") {
                         result += actorName;
                     } else {
-                        result += diaryTitleFmt_.substr(i, close - i + 1);
+                        result += fmt.substr(i, close - i + 1);
                     }
                     i = close;
                     continue;
                 }
             }
-            result += diaryTitleFmt_[i];
+            result += fmt[i];
         }
         return result;
     }
@@ -424,8 +427,8 @@ namespace SkyrimNetDiaries {
         return ApplyTemplate(volumeSuffixFmt_, nullptr, volumeNumber, nullptr, 0);
     }
 
-    std::string Localization::FormatBookName(const std::string& actorName, int volumeNumber) const {
-        std::string name = FormatDiaryTitle(actorName);
+    std::string Localization::FormatBookName(const std::string& actorName, int volumeNumber, VolumeKind kind) const {
+        std::string name = FormatTitle(actorName, kind);
         name += FormatVolumeSuffix(volumeNumber);
         return name;
     }

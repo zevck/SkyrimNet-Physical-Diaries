@@ -27,8 +27,9 @@ The folder is located from **the DLL's own path** (`GetModuleHandleExA` on a fun
 | `[Format] DateLong` | Entry date headers | `{Day}` weekday, `{d}` day, `{Month}`, `{y}` year |
 | `[Format] DateShort` | Title-page date range | `{d}`, `{Month}`, `{y}` |
 | `[Format] DiaryTitle` | Book title | `{Name}` |
+| `[Format] JournalTitle` | The player's journal's title (writing mode; must differ from `DiaryTitle`) | `{Name}` |
 | `[Format] VolumeSuffix` | Appended from volume 2 on (default `, v{n}`) | `{n}` number, `{cn}` Chinese numeral |
-| `[Format] EmptyVolumeText` | Page shown when all of a volume's entries were deleted (not in the player's own diary, which is left blank) | |
+| `[Format] EmptyVolumeText` | Page shown when all of a volume's entries were deleted (not in a journal, which is left blank) | |
 | `[Messages] TemplatesMissing` | The startup warning shown when the template books are missing. One line; `\n` is a line break. The button uses the game's own `sOk` string. | |
 | `[Messages] EditSavePrompt`, `EditSave`, `EditDiscard`, `EditKeepWriting` | The book editor's prompt when the player closes their diary with unsaved changes, and its three buttons ([EDITING.md](EDITING.md#closing)). Only ENGLISH.ini has them so far; other languages get the English defaults from `Localization.cpp`. | |
 | `[Messages] EditSaveFailed` | Notification when SkyrimNet doesn't save an edit. Same fallback. | |

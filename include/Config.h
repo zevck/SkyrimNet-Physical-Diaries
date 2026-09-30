@@ -20,6 +20,7 @@
 #pragma once
 
 #include "PCH.h"
+#include "WritingMode.h"
 #include <algorithm>
 #include <fstream>
 #include <sstream>
@@ -115,14 +116,16 @@ namespace SkyrimNetDiaries {
         static constexpr IntSetting kDebugLog         { "General", "DebugLog",         0,  0, 1  };
         static constexpr IntSetting kShowDateHeaders  { "Diary",   "ShowDateHeaders",  1,  0, 1  };
         static constexpr IntSetting kEntriesPerVolume { "Diary",   "EntriesPerVolume", 10, 1, 50 };
-        // DirectX scan code of the key that starts writing while the player reads their own
-        // diary, and saves and goes back to reading while they write (61 = F3).  Not a key that
+        // -1 (default): off with writing installed, on without; 0/1 forced.  docs/CONFIG_AND_MCM.md
+        static constexpr IntSetting kPlayerDiaryBooks { "Diary",   "PlayerDiaryBooks", -1, -1, 1 };
+        // DirectX scan code of the key that starts writing while the player reads their
+        // journal, and saves and goes back to reading while they write (61 = F3).  Not a key that
         // types: while writing it can't also type.
         static constexpr IntSetting kEditKey          { "Diary",   "EditKey",          61, 1, 255 };
         // DirectX scan code of the key that tears out the entry under the caret while the
         // player writes (68 = F10).  Not a key that types.
         static constexpr IntSetting kDeleteKey        { "Diary",   "DeleteKey",        68, 1, 255 };
-        // DirectX scan code of the key that starts a new entry in the player's latest diary
+        // DirectX scan code of the key that starts a new entry in the player's latest journal
         // volume, with the book open or during play.  0 = unbound (the default: during play it
         // would clash with some other mod's key whatever we picked).  Not a key that types.
         static constexpr IntSetting kNewEntryKey      { "Diary",   "NewEntryKey",      0,  0, 255 };
@@ -132,7 +135,7 @@ namespace SkyrimNetDiaries {
         static constexpr IntSetting kFontSizeSmall    { "Fonts",   "SmallSize",        12, 8, 24 };
         // INI order.  Language (string) is written first in [General], FontFace last in [Fonts].
         static constexpr IntSetting kIntSettings[] = {
-            kDebugLog, kShowDateHeaders, kEntriesPerVolume, kEditKey, kDeleteKey, kNewEntryKey,
+            kDebugLog, kShowDateHeaders, kEntriesPerVolume, kPlayerDiaryBooks, kEditKey, kDeleteKey, kNewEntryKey,
             kFontSizeTitle, kFontSizeDate, kFontSizeContent, kFontSizeSmall,
         };
 
@@ -148,6 +151,10 @@ namespace SkyrimNetDiaries {
         bool GetDebugLog() const { return Get(kDebugLog) != 0; }
         bool GetShowDateHeaders() const { return Get(kShowDateHeaders) != 0; }
         int GetEntriesPerVolume() const { return Get(kEntriesPerVolume); }
+        bool GetPlayerDiaryBooks() const {
+            const int v = Get(kPlayerDiaryBooks);
+            return v < 0 ? !WritingMode::IsOn() : v != 0;
+        }
         std::uint32_t GetEditKey() const { return static_cast<std::uint32_t>(Get(kEditKey)); }
         std::uint32_t GetDeleteKey() const { return static_cast<std::uint32_t>(Get(kDeleteKey)); }
         std::uint32_t GetNewEntryKey() const { return static_cast<std::uint32_t>(Get(kNewEntryKey)); }
@@ -161,6 +168,7 @@ namespace SkyrimNetDiaries {
         void SetDebugLog(bool v) { Set(kDebugLog, v ? 1 : 0); }
         void SetShowDateHeaders(bool v) { Set(kShowDateHeaders, v ? 1 : 0); }
         void SetEntriesPerVolume(int v) { Set(kEntriesPerVolume, v); }
+        void SetPlayerDiaryBooks(int v) { Set(kPlayerDiaryBooks, v); }  // -1: the default, by writing mode
         void SetEditKey(int v)          { Set(kEditKey, v); }
         void SetDeleteKey(int v)        { Set(kDeleteKey, v); }
         void SetNewEntryKey(int v)      { Set(kNewEntryKey, v); }

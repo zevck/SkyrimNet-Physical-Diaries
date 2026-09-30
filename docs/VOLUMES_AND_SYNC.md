@@ -8,7 +8,7 @@ Code: `src/VolumeSync.cpp` (`CreateAllVolumesForActor`, `UpdateDiaryForActorInte
 
 ## Entries
 
-`Database::GetDiaryEntries(formId, limit, startTime, endTime, &ok)` calls SkyrimNet's `PublicGetDiaryEntries` and parses the JSON into `DiaryEntry`:
+`Database::GetDiaryEntries(formId, limit, startTime, endTime, &ok, kind)` calls SkyrimNet's `PublicGetDiaryEntries` and parses the JSON into `DiaryEntry`. For the player it keeps only the entries of one `kind`: a diary's (by default) or a journal's (see [EDITING.md](EDITING.md#diaries-and-journals)). Everything below is about diaries; the player's journal grows only in the book editor.
 
 | Field | Meaning |
 |---|---|
@@ -17,7 +17,7 @@ Code: `src/VolumeSync.cpp` (`CreateAllVolumesForActor`, `UpdateDiaryForActorInte
 | `creation_time` | Real-world write time. Breaks ties between entries with the same `entry_date`. |
 | `content` | The entry text. |
 | `id` | SkyrimNet's entry id (stable: `AUTOINCREMENT`). Only the book editor uses it, to save and delete; 0 if SkyrimNet sent none. |
-| `tags` | SkyrimNet's tags. `snpd_player_written` marks an entry the player edited; its first line is then kept as written (see [BOOK_TEXT.md](BOOK_TEXT.md#cleaning-llm-output-sanitizebooktext)). SkyrimNet's other fields, such as `location`, aren't read. |
+| `tags` | SkyrimNet's tags. `snpd_player_written` marks an entry the player wrote in their journal; its first line is then kept as written (see [BOOK_TEXT.md](BOOK_TEXT.md#cleaning-llm-output-sanitizebooktext)). SkyrimNet's other fields, such as `location`, aren't read. |
 
 The result is always sorted oldest first by `(entry_date, creation_time)` (`EntryOlder`). **The limit is applied by SkyrimNet to the newest entries** (its query is `ORDER BY entry_date DESC LIMIT n`), so a limited query returns the latest *n* entries in the range, not the first. The catch-up scan's backward paging, the recovery probe and `TimelineGate` rely on that. Whenever "a volume's entries" or "the first N" is meant, use `Database::GetVolumeEntries(formId, VolumeBounds, &ok)`, or `BookManager::GetLiveEntries(vol, …)`, which fills the bounds from the volume and its successor: it fetches the whole range and removes the entries the previous and next volumes own on a shared date (see [Volume boundaries](#volume-boundaries)). `formId = 0` returns entries for all actors (used by the catch-up scan). Volumes are bounded by timestamps, not entry ids. (SkyrimNet's ids are stable: `diary_entries.id` is `INTEGER PRIMARY KEY AUTOINCREMENT`, never reused or renumbered. The book editor saves and deletes by id; see [EDITING.md](EDITING.md).)
 
@@ -27,7 +27,7 @@ The result is always sorted oldest first by `(entry_date, creation_time)` (`Entr
 
 ## Volume boundaries
 
-A volume is a time range of one actor's entries (`DiaryBookData` / DiaryDB `volumes`):
+A volume is a time range of one actor's entries of one kind (`DiaryBookData` / DiaryDB `volumes`):
 
 | Field | Meaning |
 |---|---|
@@ -84,7 +84,7 @@ Each is spread over game-thread ticks to avoid a load-time hitch. The scan remem
 
 ## On open: `RefreshVolumeOnOpen`
 
-Called by the book hook right before the text is injected. It asks SkyrimNet for the volume's live entries through `GetLiveEntries` (bounded by `endTime` if a newer volume exists; open-ended for the latest volume), and re-renders if the count differs from `lastKnownEntryCount` or the cached text predates font tags. `FormatDiaryEntries` renders exactly the entries it is given, so a newer entry the latest volume hasn't absorbed yet is shown (and counted) until the next update seals or extends the volume. Until 2026-09-27 it filtered them back out by `endTime` while still counting them, which left a blank last page that the inter-plugin API returned as the latest entry. If entries were deleted, it also moves a sealed volume's `endTime` back to the new last entry.
+Called by the book hook right before the text is injected. It asks SkyrimNet for the volume's live entries through `GetLiveEntries` (bounded by `endTime` if a newer volume of its kind exists, or for the player's diary with `[Diary] PlayerDiaryBooks` off; open-ended for the latest volume), and re-renders if the count differs from `lastKnownEntryCount` or the cached text predates font tags. `FormatDiaryEntries` renders exactly the entries it is given, so a newer entry the latest volume hasn't absorbed yet is shown (and counted) until the next update seals or extends the volume. Until 2026-09-27 it filtered them back out by `endTime` while still counting them, which left a blank last page that the inter-plugin API returned as the latest entry. If entries were deleted, it also moves a sealed volume's `endTime` back to the new last entry.
 
 ---
 

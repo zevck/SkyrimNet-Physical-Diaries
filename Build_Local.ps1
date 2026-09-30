@@ -202,10 +202,23 @@ if (-not $skipSwf -and (Test-Path swf)) {
                 $log | ForEach-Object { Write-Host "  $_" }
                 Complete-Build -Status 'FAILURE' -Stage 'swf' -Code $LASTEXITCODE -Message "xml2swf failed for $($xml.Name)"
             }
-            $log = & $ffdecPath -importScript $baseSwf (Join-Path $PSScriptRoot $output) $dir.FullName 2>&1
+            $scriptedSwf = Join-Path $PSScriptRoot "build\swf\$($xml.BaseName)_scripted.swf"
+            $log = & $ffdecPath -importScript $baseSwf $scriptedSwf $dir.FullName 2>&1
             if ($LASTEXITCODE -ne 0 -or ($log | Where-Object { "$_" -match '(?i)error|exception' })) {
                 $log | ForEach-Object { Write-Host "  $_" }
                 Complete-Build -Status 'FAILURE' -Stage 'swf' -Code $LASTEXITCODE -Message "importScript failed for $($xml.Name)"
+            }
+            # Shipped uncompressed: the plugin finds book.swf's marker as plain text (WritingMode.cpp).
+            $log = & $ffdecPath -decompress $scriptedSwf (Join-Path $PSScriptRoot $output) 2>&1
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $output)) {
+                $log | ForEach-Object { Write-Host "  $_" }
+                Complete-Build -Status 'FAILURE' -Stage 'swf' -Code $LASTEXITCODE -Message "decompress failed for $($xml.Name)"
+            }
+            # What the plugin checks: uncompressed, with the marker.  A stale output passes the steps above.
+            $bytes = [System.IO.File]::ReadAllBytes((Join-Path $PSScriptRoot $output))
+            $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+            if (-not $text.StartsWith('FWS') -or -not $text.Contains('BOOKMENU_WRITING_INTERFACE=')) {
+                Complete-Build -Status 'FAILURE' -Stage 'swf' -Message "$output isn't uncompressed with the writing marker"
             }
         }
     }

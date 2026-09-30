@@ -15,6 +15,10 @@ class BookMenu extends MovieClip
    var iPageSetIndex;
    var iPaginationIndex;
    static var BookMenuInstance;
+   // Read as plain text by the plugins (SNPD's WritingMode.cpp; the SWF ships uncompressed):
+   // this book.swf being installed turns player writing on.  Mod-neutral, since Physical
+   // Letters ships the same SWF.  Bump when a call is added; a plugin needs at least its version.
+   static var WRITING_INTERFACE = "BOOKMENU_WRITING_INTERFACE=1";
    static var PAGE_BREAK_TAG = "[pagebreak]";
    static var NOTE_WIDTH = 400;
    static var NOTE_X_OFFSET = 20;

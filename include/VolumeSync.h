@@ -31,6 +31,10 @@ namespace SkyrimNetDiaries {
     // volumes.  Game thread only.
     void UpdateDiaryForActorInternal(RE::FormID formId);
 
+    // The player's diary doesn't grow: [Diary] PlayerDiaryBooks is off
+    // (docs/EDITING.md#diaries-and-journals).  True only for the player (0x14).
+    bool PlayerDiaryFrozen(RE::FormID actorFormId);
+
     // False from kPreLoadGame until the post-load sync has run.  While false, diary
     // events wait (DeferUntilSyncReady): DiaryDB isn't loaded yet, so every actor
     // would look new and get duplicate volumes.

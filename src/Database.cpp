@@ -137,7 +137,8 @@ namespace SkyrimNetDiaries {
         return entries;
     }
 
-    std::vector<DiaryEntry> Database::GetDiaryEntries(uint32_t formId, int limit, double startTime, double endTime, bool* ok) {
+    std::vector<DiaryEntry> Database::GetDiaryEntries(uint32_t formId, int limit, double startTime, double endTime, bool* ok,
+                                                      VolumeKind kind) {
         if (ok) *ok = false;  // until the query has succeeded
         try {
             if (!api_initialized_ && !InitializeAPI()) {
@@ -148,7 +149,10 @@ namespace SkyrimNetDiaries {
             SKSE::log::debug("Calling PublicGetDiaryEntries(formId=0x{:X}, limit={}, startTime={:.2f}, endTime={:.2f})",
                             formId, limit, startTime, endTime);
 
-            std::string jsonResponse = PublicGetDiaryEntries(formId, limit, startTime, endTime);
+            // The player's entries are filtered by kind here, so SkyrimNet's limit (the newest
+            // `limit`) is applied after the filter instead.
+            const bool byKind = formId == 0x14;
+            std::string jsonResponse = PublicGetDiaryEntries(formId, byKind ? kFetchAllEntries : limit, startTime, endTime);
 
             bool parsed = true;
             auto entries = ParseDiaryJSON(jsonResponse, &parsed);
@@ -166,6 +170,13 @@ namespace SkyrimNetDiaries {
                 entries.erase(std::remove_if(entries.begin(), entries.end(),
                     [endTime](const DiaryEntry& e) { return e.entry_date > endTime; }), entries.end());
             }
+            if (byKind) {
+                const bool written = kind == VolumeKind::Written;
+                std::erase_if(entries, [written](const DiaryEntry& e) { return IsPlayerWritten(e) != written; });
+                if (limit >= 0 && entries.size() > static_cast<std::size_t>(limit)) {
+                    entries.erase(entries.begin(), entries.end() - limit);
+                }
+            }
 
             SKSE::log::debug("Retrieved {} diary entries for FormID 0x{:X}", entries.size(), formId);
 
@@ -178,10 +189,11 @@ namespace SkyrimNetDiaries {
         return {};
     }
 
-    std::vector<DiaryEntry> Database::GetVolumeEntries(uint32_t formId, const VolumeBounds& bounds, bool* ok) {
+    std::vector<DiaryEntry> Database::GetVolumeEntries(uint32_t formId, const VolumeBounds& bounds, bool* ok,
+                                                       VolumeKind kind) {
         // Fetch the whole range: SkyrimNet's limit keeps the newest entries, which would
         // drop the volume's oldest ones.
-        auto entries = GetDiaryEntries(formId, kFetchAllEntries, bounds.startTime, bounds.endTime, ok);
+        auto entries = GetDiaryEntries(formId, kFetchAllEntries, bounds.startTime, bounds.endTime, ok, kind);
 
         // Exclude the previous volume's entries on a shared boundary date: exactly
         // prevCountAtBoundary of them (entry_date <= startTime and creation_time <=

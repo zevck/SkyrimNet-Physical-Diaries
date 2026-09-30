@@ -1,19 +1,48 @@
 # Player Diary Editing
 
-The player can write in their own diary in the game's book menu: the pages look as they do when reading, and the entries' text is editable in place. Saving writes the changed entries back to SkyrimNet; an entry can be torn out (deleted), and new entries can be written at the end.
+The player can write in their own **journal** in the game's book menu: the pages look as they do when reading, and the entries' text is editable in place. Saving writes the changed entries back to SkyrimNet; an entry can be torn out (deleted), and new entries can be written at the end.
 
 Status (2026-09-29, branch `player-writing`): editing, saving, going back to reading and tearing out entries work on AE; new entries and the next volume are built but not yet run in game. SE, VR, the Convenient Reading variant and Cyrillic text are not tested, and there is no FOMOD yet. See [Not done yet](#not-done-yet).
 
-Code: `swf/book/scripts/__Packages/BookMenu.as` (the edit mode in the book menu's SWF), `src/BookEditor.cpp` (the plugin side), `Database::AddDiaryEntry` / `UpdateDiaryEntry` / `DeleteDiaryEntry` (SkyrimNet public API v11), `BookManager::ReconcileAfterWrite` and `BookManager::CreateEmptyVolume`.
+Code: `swf/book/scripts/__Packages/BookMenu.as` (the edit mode in the book menu's SWF), `src/WritingMode.cpp` (is it installed), `src/BookEditor.cpp` (the plugin side), `Database::AddDiaryEntry` / `UpdateDiaryEntry` / `DeleteDiaryEntry` (SkyrimNet public API v11), `BookManager::ReconcileAfterWrite` and `BookManager::CreateEmptyVolume`.
 
 ---
 
 ## Rules
 
-- **Only the player's own diary.** A volume is editable only when its owner's UUID is the player's (`Database::GetUUIDFromFormID(0x14)`). An NPC's diary entries are also that NPC's memories in SkyrimNet; editing one would rewrite what they remember.
+- **Only the player's journal.** A volume is editable only when it is a journal (`VolumeKind::Written`, see [Diaries and journals](#diaries-and-journals)); journals are only ever the player's. An NPC's diary entries are also that NPC's memories in SkyrimNet; editing one would rewrite what they remember. The player's own diary (SkyrimNet's AI-written entries for the player) is read-only too.
 - **Only changed entries are written.** An entry the player didn't touch stays exactly as SkyrimNet has it, including the lines the reading view hides (see [Text](#text)).
 - **Headings and the title page are not editable.** Each entry's date heading is the anchor that ties the text under it to one SkyrimNet entry id.
 - **Nothing the player writes may be lost silently.** Writing doesn't start unless it can be saved, a refused save keeps the text for the next edit, and a text that can't be read back is reported, not dropped.
+
+---
+
+## Writing mode
+
+Writing is optional: it is on when **SNPD's `book.swf` is the one the game loads** (the FOMOD's writing option installs it; there is no setting). `WritingMode::Detect` runs at `kDataLoaded`, before anything else of the editor's:
+
+- It reads `Data\Interface\book.swf`, the file the game sees (under MO2, the winning loose file; a loose file beats every BSA). No file means the game's own or a BSA's: off.
+- SNPD's SWF ships **uncompressed** (`FWS`; the build runs `ffdec-cli -decompress` and fails if the output isn't uncompressed with the marker, see [DEVELOPMENT.md](DEVELOPMENT.md#swf)), so the marker `BookMenu.as` carries, `WRITING_INTERFACE = "BOOKMENU_WRITING_INTERFACE=<n>"`, is plain text in the file. A compressed file (`CWS`/`ZWS`) or one without the marker is another mod's: off.
+- The marker is **mod-neutral**: Physical Letters will ship the same SWF, and whichever copy wins the file conflict serves both mods. So `<n>` only ever goes up: bump it when a call is added, and a plugin needs `<n>` of at least its `kMinInterface` (`WritingMode.cpp`), raised only when the plugin starts using a newer call. An older SWF is logged as an error and writing is off. The marker's name can't change once a SWF has shipped.
+
+Only with writing on does `BookEditor::Register` install the input sink, the menu sink and the two book menu hooks; with it off, the edit and new-entry keys do nothing. The result is in the log (`[WritingMode] On` / `Off: <why>`).
+
+### Diaries and journals
+
+A volume has a **kind** (`VolumeKind`: `DiaryBookData::kind`, DiaryDB `kind`), fixed when it is made, so turning writing on or off never rebuilds a book:
+
+| Kind | Title | Holds | Made by |
+|---|---|---|---|
+| `Generated`: a diary | `[Format] DiaryTitle`, "{Name}'s Diary" | SkyrimNet's entries without the `snpd_player_written` tag | The pipeline ([VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md)): every NPC's volumes, and the player's unless `[Diary] PlayerDiaryBooks` is off |
+| `Written`: a journal | `[Format] JournalTitle`, "{Name}'s Journal" | The player's entries with the tag | The book editor only |
+
+- **Each kind numbers its own volumes from 1**: the player can have Diary v1 to v3 and Journal v1. `BookManager` keeps each kind as its own chain (`ChainKey`: the UUID for the diary, so every lookup by UUID alone gets the diary; `"<UUID>|j"` for the journal). DiaryDB's key is `(actor_uuid, kind, volume_number)`, and a journal's co-save key is `"<UUID>|j<n>"`.
+- **The filter** is in `Database::GetDiaryEntries`, so also `GetVolumeEntries`: for the player (FormID `0x14`) it keeps only the entries of the kind asked for, fetching them all and applying the limit afterwards (SkyrimNet's limit keeps the newest). Only the player has written entries, so for anyone else it changes nothing. Counts, seals and boundary data only ever see one kind.
+- **The player's diary is a diary like any NPC's, read-only,** whether writing is on or off: it sits beside the journal, and the two titles tell them apart. With **`[Diary] PlayerDiaryBooks`** off (MCM "Your Diary Books"; by default off with writing installed, on without) it stops growing: `UpdateDiaryForActorInternal`, the recovery probe and the catch-up scan skip the player, and `GetShownEntries` bounds the player's latest diary volume by its `endTime` instead of leaving it open, so SkyrimNet's new AI-written entries for the player are in no book (they stay in SkyrimNet as memories; SkyrimNet's own settings can stop writing them). Turned on in the MCM, the diary catches up at once through the usual update (`UpdateDiaryForActorInternal(0x14)`, as a new entry would): the latest volume fills first if the player carries it, then new volumes; with no diary yet, every volume from 1. Turned on any other way (the INI, or the default flipping because `book.swf` came or went), the load's recovery probe or catch-up scan does the same. Turned off, nothing moves: the latest volume just stops at its `endTime` from its next render. A journal's latest volume is always open-ended.
+- **Writing off:** journals stay, read-only (the editor isn't registered) and still rendered.
+- A journal whose book isn't in the loaded save (it was made later) is dropped like any volume ([BOOK_FORMS.md](BOOK_FORMS.md#load)) and not remade. If SkyrimNet kept its entries (Keep), they show in the latest journal, which is open-ended, or in the next one.
+- DiaryDBs from before 2026-09-29 are migrated once, every volume a diary ([DATABASE.md](DATABASE.md#schema-changes)). Entries already written through the editor then leave the diary; the first journal (volume 1 starts at time 0 and is open-ended) shows them all.
+- **A journal on SkyrimNet's Clear:** a trailing journal volume left empty is kept if it started before the loaded save (it was in the save, made empty or torn out) and re-rendered empty; only one that started after the save is retired, as a diary's would be (`ReconcileWithTimeline`).
 
 ---
 
@@ -21,14 +50,14 @@ Code: `swf/book/scripts/__Packages/BookMenu.as` (the edit mode in the book menu'
 
 1. While the player reads a book, the **edit key** (`[Diary] EditKey`, default F3, set in the MCM) queues `EnterEditMode` as a UI task (the new-entry key does the same, then adds an entry: see [New entries](#new-entries)). The book menu doesn't get the key. Nothing on screen mentions the key; the README and the MCM tooltip tell players.
 2. `EnterEditMode` → `SendDiaryContent` checks, in order, and does nothing (logged) if one fails:
-   - the open book (`BookMenu::GetTargetForm`) is one of SNPD's volumes (`BookManager::GetBookForFormID`) and the player's (any other book, and another actor's diary above all, isn't editable);
+   - the open book (`BookMenu::GetTargetForm`) is one of SNPD's volumes (`BookManager::GetBookForFormID`) and a journal (any other book isn't editable: an NPC's diary above all, and the player's own diary too);
    - **SkyrimNet can save** (`Database::CanWriteDiaries`: both v11 functions resolved), or the player gets `EditNeedsSkyrimNet`;
    - **the book menu pauses the game** (`UI::GameIsPaused`), or the player gets `EditNeedsPause`. Key handling runs straight from the input sink and relies on the paused menu's input arriving on the main thread (Skyrim Souls RE, for one, can unpause the book menu).
 3. The entries: `BookManager::GetShownEntries` (the same entries `RefreshVolumeOnOpen` renders), or the editor's own copy if writes to this volume are still in SkyrimNet (see [Saving](#saving)). They go to the SWF as `SetEditContent(font, title size, small size, date size, content size, title, dates, entries)`, packed as `heading \x1F body` and joined by `\x1E`. The plugin keeps each one in `g_edit`: the whole `DiaryEntry` plus the text it was given (`savedBody`).
 4. The SWF's `EnterEditMode` builds the editor. **Editing starts on the page being read:** the SWF takes the reading view's page (`iLeftPageNumber`) and, for a book, which engine slots its spread is in (`iLeftPageNumber - iPageSetIndex`), and turns the editor there. Both views break pages the same way, so it's the same page. The caret goes to the first place to type on it. A page with nowhere to type (the title spread) turns to the first entry's page instead; with no entry at all the view stays and there is no caret: the field is switched to non-selectable display text (`EditSetCaretOrNone`), because an unfocused input field still draws one. The caret comes back with a new entry (`EditSetCaret`).
 5. Text input is allowed (`ControlMap::AllowTextInput`) while editing.
 
-A `SetEditContent` or `EnterEditMode` that fails means the loaded `book.swf` isn't SNPD's (another mod's won the file conflict); edit mode stays off.
+A `SetEditContent` or `EnterEditMode` that fails means the loaded `book.swf` isn't SNPD's after all (see [Writing mode](#writing-mode)); edit mode stays off.
 
 ---
 
@@ -98,14 +127,14 @@ Two ways: the **edit key** while writing (`SaveAndRead`: save, then back to read
 
 ## Tearing out an entry
 
-The **delete key** (`[Diary] DeleteKey`, default F10, set in the MCM) while writing asks about the entry the caret is in (`EditCurrentEntry`): "Tear out the entry from {Date}? It will be gone from your diary and from your memory." (`EditDeletePrompt`, with `EntryDate`, so the date shows even with headings off), **Tear out** or **Keep it** (the cancel button). The caret outside any entry does nothing.
+The **delete key** (`[Diary] DeleteKey`, default F10, set in the MCM) while writing asks about the entry the caret is in (`EditCurrentEntry`): "Tear out the entry from {Date}? It will be gone from your journal and from your memory." (`EditDeletePrompt`, with `EntryDate`, so the date shows even with headings off), **Tear out** or **Keep it** (the cancel button). The caret outside any entry does nothing.
 
 **Tear out** (`TearOut`) acts at once:
 
 - The SWF removes the entry's segment, heading and text (`EditRemoveEntry`); the caret goes to the end of the entry before. `g_edit` drops it, so the other entries keep their indexes in step with the SWF. Their unsaved changes stay in the editor.
 - The volume is re-rendered from the remaining entries, and a delete job goes to the write queue (`PublicDeleteDiaryEntry`: the entry and its memory), counted in the volume's pending writes like a save.
 - On failure the player gets `EditDeleteFailed`; the volume's pending entries are dropped when its writes finish (they lack an entry SkyrimNet still has), and the reconcile puts the entry back in the book.
-- Tearing out every entry leaves the title page and a blank page (the player's diary never shows the "all entries removed" notice NPC diaries get; see [BOOK_TEXT.md](BOOK_TEXT.md#rendering-formatdiaryentries)). The book stays, ready for new entries.
+- Tearing out every entry leaves the title page and a blank page (a journal never shows the "all entries removed" notice diaries get; see [BOOK_TEXT.md](BOOK_TEXT.md#rendering-formatdiaryentries)). The book stays, ready for new entries.
 
 Deleting an entry never moves another entry to a different volume, and the reconcile's `endTime` move stops the next load from making a duplicate volume: see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md).
 
@@ -113,14 +142,14 @@ Deleting an entry never moves another entry to a different volume, and the recon
 
 ## New entries
 
-The **new-entry key** (`[Diary] NewEntryKey`, set in the MCM; unbound by default, because during play any key we picked would clash with some other mod's) with the player's diary open:
+The **new-entry key** (`[Diary] NewEntryKey`, set in the MCM; unbound by default, because during play any key we picked would clash with some other mod's) with the player's journal open:
 
-- **Only in the latest volume** (`BookManager::GetBookForActor`): a new entry is dated now, so it belongs at the end of the diary. In an older volume the player gets `EditNotLatest`.
+- **Only in the latest volume** (`BookManager::GetBookForActor(uuid, VolumeKind::Written)`): a new entry is dated now, so it belongs at the end of the journal. In an older volume the player gets `EditNotLatest`.
 - **While reading** (`StartNewEntry`): writing starts (the same checks as the edit key) with a new entry. **While writing** (`AppendNewEntry`): the new entry is added; if one is already there and not saved, the key goes back to it (`EditFocusEntry`), one at a time.
 - **The new entry** (`EditAppendEntry` in the SWF) is a new page at the end: its heading (today's date, if headings are on) and an empty body with the caret in it. In the plugin it is a `DiaryEntry` with no id and a **local key** (`localKey`, from `g_nextLocalKey`), dated `max(now, the volume's startTime)`.
 - **Saving it** queues an **add** (`PublicAddDiaryEntry`, with that date and the `snpd_player_written` tag) instead of an update. The worker records the id SkyrimNet returns against the local key (`ids_`); the completion task writes it into the editor's and the pending entries. Until then, later saves and tear-outs of the entry are queued by local key, and the worker finds the id because the add ran first. An add that fails leaves the entry unsaved, and the next save adds it again (`g_addQueued`).
 - **Left empty**, a new entry is never written and doesn't count as a change (no save prompt); torn out before it was ever saved, it just leaves the editor.
-- SkyrimNet announces the entry (`SkyrimNet_DiaryCreated`) as it does its own, and the usual pipeline places it (`UpdateDiaryForActorInternal`, see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md)).
+- SkyrimNet announces the entry (`SkyrimNet_DiaryCreated`) as it does its own. The pipeline handles only the player's diary (not at all with `PlayerDiaryBooks` off), and the kind filter keeps journal entries out of it ([Diaries and journals](#diaries-and-journals)); the editor's `ReconcileAfterWrite` renders the journal.
 
 ### A full volume
 
@@ -136,16 +165,16 @@ When the latest volume has `EntriesPerVolume` entries, the new-entry key starts 
 
 ### Outside the book
 
-The new-entry key also works **during play** (no menu pausing the game; the input sink queues `NewEntryFromPlay` as a game-thread task). It is the way back to writing when the diary is lost:
+The new-entry key also works **during play** (no menu pausing the game; the input sink queues `NewEntryFromPlay` as a game-thread task). It is the way back to writing when the journal is lost:
 
-| The player's latest volume | What happens |
+| The player's latest journal volume | What happens |
 |---|---|
 | Carried, with room | It opens (`BookMenu::OpenMenuFromBaseForm`) and a new entry starts once its text is in (`OpenForNewEntry`, then the `AdvanceMovie` hook) |
 | Carried, full | The next volume is made (`CreateNextVolume`, as for [a full volume](#a-full-volume)) and opens with a new entry; `EditNewVolume` |
 | Not carried (lost, sold, put away; `CountInInventory`) | The next volume is made and opens, the same rule as when an NPC's latest volume is taken ([VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#when-an-entry-arrives-updatediaryforactorinternal)): the missing book keeps its entries as an earlier volume. `EditStartedVolume` |
 | None at all | Volume 1 is made, empty, and opens. `EditStartedVolume` |
 
-SNPD never puts an empty diary in the player's inventory on its own: a diary appears when SkyrimNet writes the player's first entry, or when the player asks for one with this key.
+SNPD never puts an empty journal in the player's inventory on its own: a journal appears only when the player asks for one with this key.
 
 ---
 
@@ -186,7 +215,8 @@ The editor gets the text the reading view shows, as plain text: `EditableEntryTe
 
 ## Not done yet
 
-- **Shipping the SWF.** `Interface/book.swf` replaces the book menu for every book and note. It needs a FOMOD (vanilla, Convenient Reading, none), a SWF interface version the plugin checks, and a message to the player (not just the log) when another mod's `book.swf` won. The planned Physical Letters mod will ship the same SWF, so its interface must stay mod-neutral (no `SNPD_` events).
+- **Shipping the SWF.** `Interface/book.swf` replaces the book menu for every book and note. It needs a FOMOD (vanilla, Convenient Reading, none) and a message to the player (not just the log) when writing is off but the save has written volumes. The interface version check is done ([Writing mode](#writing-mode)). The planned Physical Letters mod will ship the same SWF, so its interface must stay mod-neutral (no `SNPD_` events).
 - **SE, VR and the Convenient Reading variant** are untested, including plain reading through SNPD's `book.swf` on VR. VR also needs a keyboard story.
 - **Cyrillic.** Reading needs Win-1251 because Scaleform's pagination mixes byte and character offsets; the editor gets UTF-8. Untested with Cyrillic text.
-- **Translations** of the fifteen `[Messages] Edit…` strings: only English has them; other languages show the English defaults.
+- **Translations** of the fifteen `[Messages] Edit…` strings: only English has them; other languages show the English defaults. The MCM's Writing strings in the other eight languages still say "diary". The `JournalTitle` translations are first drafts.
+- **Blank journals, quill and ink** (planned): a journal will come from reading a blank journal item, and writing will need a quill and an inkwell. Until then the new-entry key makes journals.

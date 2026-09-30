@@ -14,6 +14,8 @@ bool Function GetDebugLog()                      global native
      Function SetDebugLog(bool value)            global native
 bool Function GetShowDateHeaders()               global native
      Function SetShowDateHeaders(bool value)     global native
+bool Function GetPlayerDiaryBooks()              global native
+     Function SetPlayerDiaryBooks(int value)     global native  ; 1 on, 0 off, -1 default (by writing mode)
 int  Function GetEntriesPerVolume()              global native
      Function SetEntriesPerVolume(int value)     global native
 int  Function GetFontSizeTitle()                 global native
@@ -38,6 +40,7 @@ string Function GetFontFace()                    global native
 ; ============================================================================
 int oidEntriesPerVolume  = -1
 int oidShowDateHeaders   = -1
+int oidPlayerDiaryBooks  = -1
 int oidDebugLog          = -1
 int oidFontSizeTitle     = -1
 int oidFontSizeDate      = -1
@@ -135,6 +138,7 @@ event OnPageReset(string page)
 
     oidEntriesPerVolume = -1
     oidShowDateHeaders  = -1
+    oidPlayerDiaryBooks = -1
     oidDebugLog         = -1
     oidFontSizeTitle    = -1
     oidFontSizeDate     = -1
@@ -157,6 +161,7 @@ function RenderSettingsPage()
     AddHeaderOption("$SNPD_HeaderDiaryVolumes")
     oidEntriesPerVolume = AddSliderOption("$SNPD_EntriesPerVolume", GetEntriesPerVolume(), "{0}")
     oidShowDateHeaders  = AddToggleOption("$SNPD_ShowDateHeaders", GetShowDateHeaders())
+    oidPlayerDiaryBooks = AddToggleOption("$SNPD_PlayerDiaryBooks", GetPlayerDiaryBooks())
 
     AddHeaderOption("$SNPD_HeaderFontSizes")
     UpdateFontIndex()
@@ -195,6 +200,10 @@ event OnOptionSelect(int oid)
         SetShowDateHeaders(newVal)
         SetToggleOptionValue(oid, newVal)
         RegenerateTextsOnly()
+    elseif oid == oidPlayerDiaryBooks
+        bool newVal = !GetPlayerDiaryBooks()
+        SetPlayerDiaryBooks(newVal as int)
+        SetToggleOptionValue(oid, newVal)
     elseif oid == oidDebugLog
         bool newVal = !GetDebugLog()
         SetDebugLog(newVal)
@@ -324,6 +333,8 @@ event OnOptionHighlight(int oid)
         SetInfoText("$SNPD_TipEntriesPerVolume")
     elseif oid == oidShowDateHeaders
         SetInfoText("$SNPD_TipShowDateHeaders")
+    elseif oid == oidPlayerDiaryBooks
+        SetInfoText("$SNPD_TipPlayerDiaryBooks")
     elseif oid == oidDebugLog
         SetInfoText("$SNPD_TipDebugLog")
     elseif oid == oidFontFace
@@ -358,6 +369,9 @@ event OnOptionDefault(int oid)
     elseif oid == oidShowDateHeaders
         SetShowDateHeaders(true)
         SetToggleOptionValue(oid, true)
+    elseif oid == oidPlayerDiaryBooks
+        SetPlayerDiaryBooks(-1)
+        SetToggleOptionValue(oid, GetPlayerDiaryBooks())
     elseif oid == oidDebugLog
         SetDebugLog(false)
         SetToggleOptionValue(oid, false)

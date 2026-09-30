@@ -20,6 +20,7 @@
 #pragma once
 
 #include "PCH.h"
+#include "Database.h"  // VolumeKind
 
 // Forward-declare sqlite3 to avoid pulling the full header into every TU.
 struct sqlite3;
@@ -36,7 +37,8 @@ namespace SkyrimNetDiaries {
     //   <cwd>/Data/SKSE/Plugins/SkyrimNetPhysicalDiaries/<saveFolder>/diary.db
     //
     // Schema (three tables):
-    //   volumes         — one row per diary volume (metadata + rendered book_text)
+    //   volumes         — one row per diary volume (metadata + rendered book_text),
+    //                     keyed by (actor_uuid, kind, volume_number)
     //   actor_templates — one row per actor UUID: journal template choice (its
     //                     last_known_game_time column is no longer used)
     //   stolen_volumes  — one row per stolen volume
@@ -61,6 +63,7 @@ namespace SkyrimNetDiaries {
             std::uint32_t actorFormId                  = 0;  // Actor's FormID at creation; a hint, checked against the UUID before use
             std::uint32_t bookFormId                   = 0;
             int           volumeNumber                 = 1;
+            VolumeKind    kind                         = VolumeKind::Generated;
             double        startTime                    = 0.0;
             double        endTime                      = 0.0;
             std::string  journalTemplate;
@@ -77,20 +80,20 @@ namespace SkyrimNetDiaries {
         bool UpsertVolume(const VolumeRow& row);
 
         // Update only the rendered text and entry count (called after formatting).
-        bool UpdateBookText(const std::string& actorUuid, int volumeNumber,
+        bool UpdateBookText(const std::string& actorUuid, VolumeKind kind, int volumeNumber,
                             const std::string& text, int entryCount);
 
         // Update only end_time (a volume's last entry moved: update, seal or deletion).
-        bool UpdateEndTime(const std::string& actorUuid, int volumeNumber,
+        bool UpdateEndTime(const std::string& actorUuid, VolumeKind kind, int volumeNumber,
                            double endTime);
 
         // Delete a single volume row.
-        bool DeleteVolume(const std::string& actorUuid, int volumeNumber);
+        bool DeleteVolume(const std::string& actorUuid, VolumeKind kind, int volumeNumber);
 
-        // Delete all volumes (and template) for an actor.
+        // Delete all volumes of both kinds (and the template) for an actor.
         bool DeleteActor(const std::string& actorUuid);
 
-        // Return all volume rows ordered by (actor_uuid, volume_number).
+        // Return all volume rows ordered by (actor_uuid, kind, volume_number).
         std::vector<VolumeRow> LoadAllVolumes();
 
         // ── Actor-template operations ─────────────────────────────────────────
@@ -119,6 +122,7 @@ namespace SkyrimNetDiaries {
 
         bool EnsureSchema();
         bool Exec(const char* sql);
+        bool HasColumn(const char* table, const char* column);
 
         sqlite3*    db_          = nullptr;
         std::string openFolder_;  // folder name the DB was opened for

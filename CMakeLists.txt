@@ -50,6 +50,7 @@ set(sources
     src/Serialization.cpp
     src/TimelineGate.cpp
     src/VolumeSync.cpp
+    src/WritingMode.cpp
 )
 
 # ---- Generate Plugin.h ----

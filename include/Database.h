@@ -42,6 +42,10 @@ namespace SkyrimNetDiaries {
         return std::ranges::find(entry.tags, kPlayerWrittenTag) != entry.tags.end();
     }
 
+    // Generated: SkyrimNet's entries (a diary).  Written: the player's tagged entries (a journal).
+    // docs/EDITING.md#diaries-and-journals
+    enum class VolumeKind : int { Generated = 0, Written = 1 };
+
     // Where a volume's entry range starts and ends (docs/VOLUMES_AND_SYNC.md#volume-boundaries).
     // The prev* fields are the volume's own boundary data; the next* fields are the
     // next volume's, when there is one.
@@ -100,16 +104,19 @@ namespace SkyrimNetDiaries {
         //
         // An empty result can mean "no entries" or "the query failed"; pass `ok` to
         // tell them apart (false: SkyrimNet unavailable, an exception, bad JSON).
+        //
+        // `kind`: the player's entries of that kind only (only the player has written
+        // entries, so for anyone else, and for every actor at once, it changes nothing).
         static std::vector<DiaryEntry> GetDiaryEntries(uint32_t formId, int limit = kFetchAllEntries,
                                                         double startTime = 0.0, double endTime = 0.0,
-                                                        bool* ok = nullptr);
+                                                        bool* ok = nullptr, VolumeKind kind = VolumeKind::Generated);
 
         // A volume's entries, oldest first: the whole [startTime, endTime] range minus
         // the previous volume's boundary entries and, on a date shared with the next
         // volume, the entries that volume owns.  Volume sizes come only from these
         // stored boundaries, never from the current EntriesPerVolume setting.
         static std::vector<DiaryEntry> GetVolumeEntries(uint32_t formId, const VolumeBounds& bounds,
-                                                         bool* ok = nullptr);
+                                                         bool* ok = nullptr, VolumeKind kind = VolumeKind::Generated);
 
         // Game time of the player's most recent SkyrimNet event, in entry_date units
         // (0 when there is none).  SkyrimNet asks its keep/clear question on load

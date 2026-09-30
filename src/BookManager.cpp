@@ -25,9 +25,11 @@
 #include "DiaryDB.h"
 #include "DynamicForms.h"
 #include "Localization.h"
+#include "VolumeSync.h"
 #include <algorithm>
 #include <map>
 #include <mutex>
+#include <tuple>
 
 namespace SkyrimNetDiaries {
 
@@ -46,6 +48,7 @@ namespace SkyrimNetDiaries {
             r.actorFormId                = static_cast<std::uint32_t>(d.actorFormId);
             r.bookFormId                 = static_cast<std::uint32_t>(d.bookFormId);
             r.volumeNumber               = d.volumeNumber;
+            r.kind                       = d.kind;
             r.startTime                  = d.startTime;
             r.endTime                    = d.endTime;
             r.journalTemplate            = d.journalTemplate;
@@ -64,6 +67,7 @@ namespace SkyrimNetDiaries {
             d.actorFormId                = static_cast<RE::FormID>(r.actorFormId);
             d.bookFormId                 = static_cast<RE::FormID>(r.bookFormId);
             d.volumeNumber               = r.volumeNumber;
+            d.kind                       = r.kind;
             d.startTime                  = r.startTime;
             d.endTime                    = r.endTime;
             d.journalTemplate            = r.journalTemplate;
@@ -134,8 +138,12 @@ namespace SkyrimNetDiaries {
         return selectedTemplate;
     }
 
-    DiaryBookData* BookManager::GetBookForActor(const std::string& actorUuid) {
-        auto it = books_.find(actorUuid);
+    std::string BookManager::ChainKey(const std::string& actorUuid, VolumeKind kind) {
+        return kind == VolumeKind::Written ? actorUuid + "|j" : actorUuid;
+    }
+
+    DiaryBookData* BookManager::GetBookForActor(const std::string& actorUuid, VolumeKind kind) {
+        auto it = books_.find(ChainKey(actorUuid, kind));
         if (it == books_.end() || it->second.empty()) {
             return nullptr;
         }
@@ -143,8 +151,8 @@ namespace SkyrimNetDiaries {
         return &it->second.back();
     }
 
-    std::vector<DiaryBookData>* BookManager::GetAllVolumesForActor(const std::string& actorUuid) {
-        auto it = books_.find(actorUuid);
+    std::vector<DiaryBookData>* BookManager::GetAllVolumesForActor(const std::string& actorUuid, VolumeKind kind) {
+        auto it = books_.find(ChainKey(actorUuid, kind));
         if (it == books_.end()) {
             return nullptr;
         }
@@ -193,17 +201,17 @@ namespace SkyrimNetDiaries {
         textSnapshot_[bookFormId] = text;
     }
 
-    void BookManager::ShowRemovedPage(RE::FormID bookFormId, const std::string& actorUuid) {
-        SetTextSnapshot(bookFormId, FormatDiaryEntries({}, Database::GetActorName(actorUuid)));
+    void BookManager::ShowRemovedPage(RE::FormID bookFormId, const std::string& actorUuid, VolumeKind kind) {
+        SetTextSnapshot(bookFormId, FormatDiaryEntries({}, Database::GetActorName(actorUuid), kind));
     }
 
-    void BookManager::RetireBook(RE::FormID bookFormId, const std::string& actorUuid) {
+    void BookManager::RetireBook(RE::FormID bookFormId, const std::string& actorUuid, VolumeKind kind) {
         DynamicForms::Retire(bookFormId);
-        ShowRemovedPage(bookFormId, actorUuid);
+        ShowRemovedPage(bookFormId, actorUuid, kind);
     }
 
     void BookManager::IndexBook(const DiaryBookData& vol) {
-        formIndex_[vol.bookFormId] = { vol.actorUuid, vol.volumeNumber };
+        formIndex_[vol.bookFormId] = { ChainKey(vol.actorUuid, vol.kind), vol.volumeNumber };
         SetTextSnapshot(vol.bookFormId, vol.cachedBookText);
     }
 
@@ -226,11 +234,12 @@ namespace SkyrimNetDiaries {
         if (data.actorFormId != 0) {
             data.cachedActorFormId = data.actorFormId;
         }
-        auto& volumes = books_[data.actorUuid];
+        auto& volumes = books_[ChainKey(data.actorUuid, data.kind)];
         auto& registered = volumes.emplace_back(std::move(data));
         IndexBook(registered);
-        SKSE::log::info("Registered book for actor {}: FormID 0x{:X}, Volume {} (template: {}, subfolder: {})",
-                       registered.actorUuid, registered.bookFormId, registered.volumeNumber,
+        SKSE::log::info("Registered book for actor {}: FormID 0x{:X}, {} volume {} (template: {}, subfolder: {})",
+                       registered.actorUuid, registered.bookFormId,
+                       registered.kind == VolumeKind::Written ? "journal" : "diary", registered.volumeNumber,
                        registered.journalTemplate, registered.bioTemplateName);
 
         // Persist the row (the caller writes the text next, via SetVolumeText).
@@ -238,19 +247,11 @@ namespace SkyrimNetDiaries {
         return registered;
     }
 
-    void BookManager::UpdateBookEndTime(const std::string& actorUuid, int volumeNumber, double endTime) {
-        auto it = books_.find(actorUuid);
-        if (it != books_.end()) {
-            for (auto& book : it->second) {
-                if (book.volumeNumber == volumeNumber) {
-                    book.endTime = endTime;
-                    SKSE::log::debug("Updated book endTime for {} volume {} (FormID 0x{:X}) to {}",
-                                   actorUuid, volumeNumber, book.bookFormId, endTime);
-                    DiaryDB::GetSingleton()->UpdateEndTime(actorUuid, volumeNumber, endTime);
-                    return;
-                }
-            }
-        }
+    void BookManager::UpdateBookEndTime(DiaryBookData& vol, double endTime) {
+        vol.endTime = endTime;
+        SKSE::log::debug("Updated book endTime for {} volume {} (FormID 0x{:X}) to {}",
+                         vol.actorUuid, vol.volumeNumber, vol.bookFormId, endTime);
+        DiaryDB::GetSingleton()->UpdateEndTime(vol.actorUuid, vol.kind, vol.volumeNumber, endTime);
     }
 
     std::vector<DiaryEntry> BookManager::GetLiveEntries(const DiaryBookData& vol, RE::FormID actorFormId,
@@ -261,7 +262,7 @@ namespace SkyrimNetDiaries {
             .prevLastCreationTime = vol.prevVolumeLastCreationTime,
             .prevCountAtBoundary = vol.prevVolumeCountAtBoundary,
         };
-        if (const auto* volumes = GetAllVolumesForActor(vol.actorUuid)) {
+        if (const auto* volumes = GetAllVolumesForActor(vol.actorUuid, vol.kind)) {
             for (const auto& next : *volumes) {
                 if (next.volumeNumber == vol.volumeNumber + 1) {
                     bounds.nextStartTime = next.startTime;
@@ -271,18 +272,13 @@ namespace SkyrimNetDiaries {
                 }
             }
         }
-        return Database::GetVolumeEntries(actorFormId, bounds, ok);
-    }
-
-    bool BookManager::IsPlayerDiary(const DiaryBookData& vol) {
-        const std::string playerUuid = Database::GetUUIDFromFormID(0x14);
-        return !playerUuid.empty() && vol.actorUuid == playerUuid;
+        return Database::GetVolumeEntries(actorFormId, bounds, ok, vol.kind);
     }
 
     void BookManager::SetVolumeText(DiaryBookData& vol, const std::vector<DiaryEntry>& entries) {
-        std::string text = FormatDiaryEntries(entries, vol.actorName, IsPlayerDiary(vol));
+        std::string text = FormatDiaryEntries(entries, vol.actorName, vol.kind);
         const int count = static_cast<int>(entries.size());
-        DiaryDB::GetSingleton()->UpdateBookText(vol.actorUuid, vol.volumeNumber, text, count);
+        DiaryDB::GetSingleton()->UpdateBookText(vol.actorUuid, vol.kind, vol.volumeNumber, text, count);
         SKSE::log::debug("{} volume {}: text set from {} entries (was {})",
                          vol.actorName, vol.volumeNumber, count, vol.lastKnownEntryCount);
         vol.cachedBookText = std::move(text);
@@ -290,17 +286,17 @@ namespace SkyrimNetDiaries {
         SetTextSnapshot(vol.bookFormId, vol.cachedBookText);
     }
 
-    void BookManager::UnregisterVolumesFrom(const std::string& actorUuid, int fromVolume) {
-        auto it = books_.find(actorUuid);
+    void BookManager::UnregisterVolumesFrom(const std::string& actorUuid, VolumeKind kind, int fromVolume) {
+        auto it = books_.find(ChainKey(actorUuid, kind));
         if (it == books_.end()) return;
         auto& volumes = it->second;
         auto* db = DiaryDB::GetSingleton();
         int removed = 0;
         for (auto vol = volumes.begin(); vol != volumes.end();) {
             if (vol->volumeNumber >= fromVolume) {
-                db->DeleteVolume(actorUuid, vol->volumeNumber);
+                db->DeleteVolume(actorUuid, kind, vol->volumeNumber);
                 UnindexBook(vol->bookFormId);
-                RetireBook(vol->bookFormId, actorUuid);
+                RetireBook(vol->bookFormId, actorUuid, kind);
                 vol = volumes.erase(vol);
                 ++removed;
             } else {
@@ -315,15 +311,17 @@ namespace SkyrimNetDiaries {
 
         try {
             int totalRegenerated = 0;
-            for (auto& [uuid, volumes] : books_) {
-                uint32_t actorFormId = SkyrimNetDiaries::Database::GetFormIDForUUID(uuid);
+            for (auto& [chain, volumes] : books_) {
+                if (volumes.empty()) continue;
+                uint32_t actorFormId = SkyrimNetDiaries::Database::GetFormIDForUUID(volumes.front().actorUuid);
                 if (actorFormId == 0) continue;
 
                 for (auto& bookData : volumes) {
                     // Keep cached FormID warm so the next open can skip the UUID lookup.
                     bookData.cachedActorFormId = actorFormId;
 
-                    std::string bookTitle = Localization::GetSingleton()->FormatBookName(bookData.actorName, bookData.volumeNumber);
+                    std::string bookTitle = Localization::GetSingleton()->FormatBookName(bookData.actorName, bookData.volumeNumber,
+                                                                                         bookData.kind);
 
                     SKSE::log::debug("[Regen] '{}' vol={} startTime={:.2f} endTime={:.2f}",
                                     bookTitle, bookData.volumeNumber, bookData.startTime, bookData.endTime);
@@ -409,15 +407,16 @@ namespace SkyrimNetDiaries {
         // This save's live books by volume, from its co-save records: the record, not
         // the row, says which form is the volume in this save (DiaryDB is shared by
         // every save of the character).  Retired books match no row.
-        std::map<std::pair<std::string, int>, std::vector<DynamicForms::Record>> saved;
+        std::map<std::tuple<std::string, VolumeKind, int>, std::vector<DynamicForms::Record>> saved;
         for (auto& record : DynamicForms::Tracked()) {
             std::string uuid;
+            VolumeKind kind{};
             int volume = 0;
-            if (!ParseVolumeKey(record.key, uuid, volume)) continue;
+            if (!ParseVolumeKey(record.key, uuid, kind, volume)) continue;
             if (record.retired) {
-                ShowRemovedPage(record.formId, uuid);
+                ShowRemovedPage(record.formId, uuid, kind);
             } else {
-                saved[{ uuid, volume }].push_back(std::move(record));
+                saved[{ uuid, kind, volume }].push_back(std::move(record));
             }
         }
 
@@ -428,7 +427,7 @@ namespace SkyrimNetDiaries {
         for (auto& row : rows) {
             // The save's book for this volume; with two, the one DiaryDB names.
             auto* candidates = [&]() -> std::vector<DynamicForms::Record>* {
-                const auto match = saved.find({ row.actorUuid, row.volumeNumber });
+                const auto match = saved.find({ row.actorUuid, row.kind, row.volumeNumber });
                 return match != saved.end() && !match->second.empty() ? &match->second : nullptr;
             }();
             auto chosen = candidates ? std::ranges::find(*candidates, static_cast<RE::FormID>(row.bookFormId),
@@ -449,13 +448,13 @@ namespace SkyrimNetDiaries {
                                     row.actorName, row.volumeNumber, row.bookFormId);
                     DynamicForms::Track({ .formId = old->GetFormID(),
                                           .formType = RE::FormType::Book,
-                                          .key = VolumeKey(row.actorUuid, row.volumeNumber),
+                                          .key = VolumeKey(row.actorUuid, row.kind, row.volumeNumber),
                                           .templateEditorId = row.journalTemplate,
                                           .displayName = old->GetFullName() ? old->GetFullName() : "",
                                           .retired = true });
-                    RetireBook(old->GetFormID(), row.actorUuid);
+                    RetireBook(old->GetFormID(), row.actorUuid, row.kind);
                 }
-                db->DeleteVolume(row.actorUuid, row.volumeNumber);
+                db->DeleteVolume(row.actorUuid, row.kind, row.volumeNumber);
                 invalidActors.push_back(row.actorUuid);
                 continue;
             }
@@ -473,13 +472,13 @@ namespace SkyrimNetDiaries {
             // DiaryDB is authoritative for the look: re-apply it (the actor's name or the
             // game's language may have changed since the save) and keep the record in step.
             if (!data.journalTemplate.empty()) record.templateEditorId = data.journalTemplate;
-            record.displayName = localization->FormatBookName(data.actorName, data.volumeNumber);
+            record.displayName = localization->FormatBookName(data.actorName, data.volumeNumber, data.kind);
             auto* templateBook = RE::TESForm::LookupByEditorID<RE::TESObjectBOOK>(record.templateEditorId);
             ConfigureDiaryForm(book, templateBook, record.displayName);
             DynamicForms::Track(std::move(record));
 
             IndexBook(data);
-            books_[data.actorUuid].push_back(std::move(data));
+            books_[ChainKey(data.actorUuid, data.kind)].push_back(std::move(data));
         }
 
         // Books with no volume in DiaryDB are not proof of a Reset (DiaryDB may be new,
@@ -490,7 +489,7 @@ namespace SkyrimNetDiaries {
                 SKSE::log::info("[LoadFromDB] Book 0x{:X} ('{}') has no volume in DiaryDB — kept unclaimed",
                                 record.formId, record.key);
                 unclaimed_.try_emplace(record.key, record.formId);
-                ShowRemovedPage(record.formId, volume.first);
+                ShowRemovedPage(record.formId, std::get<0>(volume), std::get<1>(volume));
             }
         }
         SweepRetiredBooks();
@@ -529,15 +528,14 @@ namespace SkyrimNetDiaries {
 
         // For the active (latest) volume use 0.0 so entries written after the
         // last update are visible even if UpdateDiaryForActorInternal hasn't run yet.
-        // For an earlier volume (a newer one exists), vol.endTime is the upper cutoff.
+        // For an earlier volume (a newer one of its kind exists), or a frozen player diary,
+        // vol.endTime is the upper cutoff.
         double queryEnd = 0.0;
         {
-            auto* allVols = GetAllVolumesForActor(vol.actorUuid);
-            if (allVols && !allVols->empty() &&
-                allVols->back().volumeNumber != vol.volumeNumber) {
-                // A newer volume exists: stop at this one's end.
-                queryEnd = vol.endTime;
-            }
+            auto* allVols = GetAllVolumesForActor(vol.actorUuid, vol.kind);
+            const bool newerExists = allVols && !allVols->empty() && allVols->back().volumeNumber != vol.volumeNumber;
+            const bool frozen = vol.kind == VolumeKind::Generated && PlayerDiaryFrozen(vol.cachedActorFormId);
+            if (newerExists || frozen) queryEnd = vol.endTime;
         }
         return GetLiveEntries(vol, vol.cachedActorFormId, queryEnd, ok);
     }
@@ -593,7 +591,7 @@ namespace SkyrimNetDiaries {
             double newEnd = liveEntries.back().entry_date;
             if (newEnd != vol.endTime) {
                 SKSE::log::debug("[SNPD]   endTime updated {:.2f} → {:.2f}", vol.endTime, newEnd);
-                DiaryDB::GetSingleton()->UpdateEndTime(vol.actorUuid, vol.volumeNumber, newEnd);
+                DiaryDB::GetSingleton()->UpdateEndTime(vol.actorUuid, vol.kind, vol.volumeNumber, newEnd);
                 vol.endTime = newEnd;
             }
         }

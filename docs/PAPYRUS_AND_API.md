@@ -22,7 +22,7 @@ All registered in `PapyrusAPI::RegisterFunctions`.
 |---|---|---|
 | `SkyrimNetDiaries_Native.UpdateDiaryFromEvent(String)` | `UpdateDiaryFromEventWrapper`: parses `actorFormId` from the event JSON, then `UpdateDiaryForFormID` (clears stolen volumes, then `UpdateDiaryForActorInternal`) | EventListener |
 | `SkyrimNetDiaries_Native.UpdateDiaryForActor(int)` | `UpdateDiaryForActorWrapper` → `UpdateDiaryForFormID`. Legacy, kept for older listener scripts; wrong for FormIDs ≥ `0x80000000` | Nothing in SNPD |
-| `SkyrimNetDiaries_MCM.*` (16 getters and setters, `RegenerateTextsOnly`, `ResetAllDiaries`) | `MCM_*` | MCM |
+| `SkyrimNetDiaries_MCM.*` (getters and setters for each setting, `RegenerateTextsOnly`, `ResetAllDiaries`) | `MCM_*` | MCM |
 
 The `SkyrimNetDiaries_API` script (`IsDiaryStolen`, `GetDiaryTheftStatus`, `SetTheftCleared`) was removed on 2026-09-27: nothing in SNPD called it once the decorator went native, and its `.pex` never shipped in a release up to v1.1.0, so no other mod could have relied on it. Other mods see theft state through SkyrimNet's `snpd_diary_stolen` decorator.
 
@@ -41,11 +41,11 @@ For other SKSE plugins, such as TTS or reading mods, that want a diary's text. *
 
 | Message | Struct | Returns |
 |---|---|---|
-| `'SNPD'` `SNPD_QUERY_BOOK` | `SNPDBookQuery` | Whole rendered volume (font-tagged) plus entry count, volume number, total volumes |
+| `'SNPD'` `SNPD_QUERY_BOOK` | `SNPDBookQuery` | Whole rendered volume (font-tagged) plus entry count, volume number, total volumes. The player's journals answer like diaries, titled `JournalTitle`; volume number and total count within the book's kind (diary or journal) |
 | `'SNPE'` `SNPD_QUERY_ENTRY` | `SNPDEntryQuery` | One entry by index (−1 = last) |
 | `'SNPA'` `SNPD_QUERY_ALL_ENTRIES` | `SNPDAllEntriesQuery` | Every entry, packed as null-separated strings, plus a count of any that did not fit |
 
-Result codes: `Success`, `NoEntries` (the volume has no entries: the "all entries removed" page, or the player's blank one, detected by `<!-- SNPD_EMPTY -->`), `NotADiary`, `IndexOutOfRange`. Buffers are fixed-size arrays in the structs; text is cut off to fit.
+Result codes: `Success`, `NoEntries` (the volume has no entries: the "all entries removed" page, or a journal's blank one, detected by `<!-- SNPD_EMPTY -->`), `NotADiary`, `IndexOutOfRange`. Buffers are fixed-size arrays in the structs; text is cut off to fit.
 
 Implementation notes:
 - Answers come from **`cachedBookText`** (in memory, refreshed when the book is opened), not from SkyrimNet. Dispatch from the game thread; `books_` is read without a lock.

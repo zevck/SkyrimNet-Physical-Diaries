@@ -335,9 +335,10 @@ namespace SkyrimNetDiaries::BookEditor {
             auto* vol = book && manager ? manager->GetBookForFormID(book->GetFormID()) : nullptr;
             if (!vol) return false;
 
-            // Another actor's diary is never editable: its entries are that actor's memories.
-            if (!BookManager::IsPlayerDiary(*vol)) {
-                SKSE::log::info("[BookEditor] {} vol {} isn't the player's diary: not editable", vol->actorName,
+            // Only the player's journal is editable: an NPC's diary holds that NPC's memories, and
+            // the player's diary SkyrimNet's (docs/EDITING.md#writing-mode).
+            if (vol->kind != VolumeKind::Written) {
+                SKSE::log::info("[BookEditor] {} vol {} isn't the player's journal: not editable", vol->actorName,
                                 vol->volumeNumber);
                 return false;
             }
@@ -384,7 +385,7 @@ namespace SkyrimNetDiaries::BookEditor {
             }
             auto* config = Config::GetSingleton();
             const std::string font = config->GetFontFace();
-            const std::string title = Localization::GetSingleton()->FormatDiaryTitle(vol->actorName);
+            const std::string title = Localization::GetSingleton()->FormatTitle(vol->actorName, vol->kind);
             const std::string dates = TitlePageDates(entries);
             RE::GFxValue args[8];
             args[0].SetString(font.c_str());
@@ -590,7 +591,7 @@ namespace SkyrimNetDiaries::BookEditor {
             if (!SavedOrStay()) return;
             auto* movie = BookMovie();
             const std::string text =
-                BookTextHook::ForBookMenu(FormatDiaryEntries(EditedEntries(), g_actorName, /*playerDiary=*/true));
+                BookTextHook::ForBookMenu(FormatDiaryEntries(EditedEntries(), g_actorName, VolumeKind::Written));
             LeaveEditMode();
             RE::GFxValue arg;
             arg.SetString(text.c_str());
@@ -713,20 +714,20 @@ namespace SkyrimNetDiaries::BookEditor {
         RE::FormID g_newEntryOnOpen = 0;  // start a new entry once this book is open with its text
 
         bool IsLatestVolume(const DiaryBookData& vol) {
-            const auto* latest = BookManager::GetSingleton()->GetBookForActor(vol.actorUuid);
+            const auto* latest = BookManager::GetSingleton()->GetBookForActor(vol.actorUuid, vol.kind);
             return latest && latest->bookFormId == vol.bookFormId;
         }
 
         // The volume after `vol` (full, or not held), empty, in the player's inventory.  Its
         // book's FormID, or 0.  `entries`: vol's, saved.
-        RE::FormID CreateNextVolume(const DiaryBookData& vol, const std::vector<DiaryEntry>& entries) {
+        RE::FormID CreateNextVolume(DiaryBookData& vol, const std::vector<DiaryEntry>& entries) {
             auto* manager = BookManager::GetSingleton();
             // The menu pauses game time, so entries just written here are dated now.  They stay
             // in this volume: its endTime covers them (a newer volume bounds it by endTime), and
             // the next volume starts on the next whole game second, clear of them.
             double end = vol.endTime;
             for (const auto& e : entries) end = std::max(end, e.entry_date);
-            if (end != vol.endTime) manager->UpdateBookEndTime(vol.actorUuid, vol.volumeNumber, end);
+            if (end != vol.endTime) manager->UpdateBookEndTime(vol, end);
             const double start = std::floor(std::max(CurrentGameTimeSeconds(), end)) + 1.0;
             const double lastCreation = entries.empty() ? 0.0 : entries.back().creation_time;
             // Copies: creating a volume adds to the list `vol` lives in.
@@ -743,7 +744,7 @@ namespace SkyrimNetDiaries::BookEditor {
 
         // The volume is full: make the next one, close this book and open that one with a new
         // entry.  `entries`: this volume's, saved.
-        void StartNextVolume(const DiaryBookData& vol, const std::vector<DiaryEntry>& entries) {
+        void StartNextVolume(DiaryBookData& vol, const std::vector<DiaryEntry>& entries) {
             const RE::FormID next = CreateNextVolume(vol, entries);
             if (next == 0) return;
             Notify(Localization::GetSingleton()->GetEditNewVolume());
@@ -773,7 +774,7 @@ namespace SkyrimNetDiaries::BookEditor {
             auto* player = RE::PlayerCharacter::GetSingleton();
             if (uuid.empty() || !player) return;
             auto* manager = BookManager::GetSingleton();
-            auto* latest = manager->GetBookForActor(uuid);
+            auto* latest = manager->GetBookForActor(uuid, VolumeKind::Written);
             RE::FormID target = 0;
             if (!latest) {
                 std::string name = Database::GetActorName(uuid);
@@ -852,7 +853,7 @@ namespace SkyrimNetDiaries::BookEditor {
             auto* book = RE::BookMenu::GetTargetForm();
             auto* manager = BookManager::GetSingleton();
             auto* vol = book ? manager->GetBookForFormID(book->GetFormID()) : nullptr;
-            if (!vol || !BookManager::IsPlayerDiary(*vol)) return;
+            if (!vol || vol->kind != VolumeKind::Written) return;
             if (!IsLatestVolume(*vol)) {
                 Notify(Localization::GetSingleton()->GetEditNotLatest());
                 return;
@@ -1090,7 +1091,7 @@ namespace SkyrimNetDiaries::BookEditor {
         REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_BookMenu[0] };
         BookMenuProcessMessage::func = vtable.write_vfunc(0x4, BookMenuProcessMessage::thunk);
         BookMenuAdvanceMovie::func = vtable.write_vfunc(0x5, BookMenuAdvanceMovie::thunk);
-        SKSE::log::info("[BookEditor] Registered: key 0x{:X} edits the player's diary while it's open",
+        SKSE::log::info("[BookEditor] Registered: key 0x{:X} edits the player's journal while it's open",
                         Config::GetSingleton()->GetEditKey());
     }
 
