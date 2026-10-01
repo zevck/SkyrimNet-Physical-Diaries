@@ -123,24 +123,24 @@ namespace SkyrimNetDiaries::PapyrusAPI {
         SkyrimNetDiaries::NpcDiaries::DailyDiaryChanged(actor, daily);
     }
 
-    // NPC diaries (docs/NPC_DIARIES.md)
-    std::int32_t MCM_GetNpcSetting(RE::StaticFunctionTag*, RE::BSFixedString key) {
-        auto* config = SkyrimNetDiaries::Config::GetSingleton();
+    // NPC diaries (docs/NPC_DIARIES.md): the [NpcDiaries] setting with this key, or null.
+    const SkyrimNetDiaries::Config::IntSetting* FindNpcSetting(const RE::BSFixedString& key) {
         for (const auto& s : SkyrimNetDiaries::Config::kIntSettings) {
-            if (std::string_view(s.section) == "NpcDiaries" && std::string_view(key.c_str()) == s.key) return config->Get(s);
+            if (std::string_view(s.section) == "NpcDiaries" && std::string_view(key.c_str()) == s.key) return &s;
         }
-        return 0;
+        return nullptr;
+    }
+    std::int32_t MCM_GetNpcSetting(RE::StaticFunctionTag*, RE::BSFixedString key) {
+        const auto* s = FindNpcSetting(key);
+        return s ? SkyrimNetDiaries::Config::GetSingleton()->Get(*s) : 0;
     }
     void MCM_SetNpcSetting(RE::StaticFunctionTag*, RE::BSFixedString key, std::int32_t v) {
+        const auto* s = FindNpcSetting(key);
+        if (!s) return;
         auto* config = SkyrimNetDiaries::Config::GetSingleton();
-        for (const auto& s : SkyrimNetDiaries::Config::kIntSettings) {
-            if (std::string_view(s.section) == "NpcDiaries" && std::string_view(key.c_str()) == s.key) {
-                config->Set(s, static_cast<int>(v));
-                config->Save();
-                SkyrimNetDiaries::NpcDiaries::SyncEnabled();
-                return;
-            }
-        }
+        config->Set(*s, static_cast<int>(v));
+        config->Save();
+        SkyrimNetDiaries::NpcDiaries::SyncEnabled();
     }
 
     // MCM Config getter/setter natives

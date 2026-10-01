@@ -31,7 +31,7 @@ namespace SkyrimNetDiaries::NpcDiaries {
     // The dialogue's global follows [NpcDiaries] Enabled: after a load (saves keep globals) and MCM changes.
     void SyncEnabled();
 
-    // The co-save: the game day the diaries last ran.
+    // The co-save: the game day the diaries last ran, and the NPCs asked to write daily.
     void Save(SKSE::SerializationInterface* a_intfc, std::uint32_t a_type);
     void Load(SKSE::SerializationInterface* a_intfc, std::uint32_t a_version);
     void Revert();

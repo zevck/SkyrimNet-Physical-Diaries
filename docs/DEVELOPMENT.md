@@ -108,6 +108,7 @@ Levels: `debug` for routine tracing, `info` for state changes worth seeing in a 
 | `[BlankJournals]` | At `kDataLoaded`: added to merchants' stock, or the recipes hidden (writing off) |
 | `[WritingTools]` | Ink used (the uses an inkwell has left) and inkwells running dry |
 | `[WritingMode]` | At `kDataLoaded`: whether player writing is on, and why not |
+| `[NpcDiaries]` | At `kDataLoaded`: ready (on/off). Each day's run: a summary (quiet, not loaded, filtered, written up, candidates, daily writers) and each pick with its score; a fast-travel early run; daily writers starting and stopping. Every actor's numbers at debug ([NPC_DIARIES.md](NPC_DIARIES.md)) |
 | `[BookEditor]` | The diary editor: entering and leaving edit mode, saves and tear-outs (and SkyrimNet's answers), new entries, ink and blood, blank journals becoming journals |
 | `[Physical Diaries]`, `[Theft Reconciliation]` | Theft |
 | `[DiaryDB]`, `[BookManager]`, `[Localization]`, `[PapyrusAPI]` | As named |

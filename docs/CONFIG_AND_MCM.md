@@ -20,7 +20,7 @@ Code: `include/Config.h` (header-only singleton `SkyrimNetDiaries::Config`), `So
 | `[Diary] DeleteKey` | 68 (F10) | 1–255 | DirectX scan code of the key that tears out the entry under the caret while the player writes, after a confirmation. Not a key that types. See [EDITING.md](EDITING.md#tearing-out-an-entry). |
 | `[NpcDiaries] Enabled` | 0 | 0–1 | NPCs write diary entries on their own once a game day ([NPC_DIARIES.md](NPC_DIARIES.md)). Also sets the global the whitelist dialogue checks |
 | `[NpcDiaries] DailyRandom` | 3 | 0–20 | Weighted random picks a day, from actors with recent activity |
-| `[NpcDiaries] RunHour` | 22 | 12–23 | The game hour the day's diaries run; sleeping, waiting or the map 4 hours earlier run them first |
+| `[NpcDiaries] RunHour` | 22 | 12–23 | The game hour the day's diaries run; sleeping, waiting, fast travel or a carriage in the 4 hours before runs them first |
 | `[NpcDiaries] CloseBoost` | 1 | 0–1 | Followers and the spouse weigh double in the random picks |
 | `[Fonts] TitleSize` / `DateSize` / `ContentSize` / `SmallSize` | 18 / 16 / 14 / 12 | 8–24 | Sizes in the rendered markup |
 | `[Fonts] FontFace` | `$HandwrittenFont` | font name | `face=` in the rendered markup |
@@ -33,7 +33,7 @@ Code: `include/Config.h` (header-only singleton `SkyrimNetDiaries::Config`), `So
 
 | Page | Options |
 |---|---|
-| `$SNPD_PageSettings` | Entries per volume (slider); show date headers (toggle); Your Diary Books (toggle; its default button sets -1, by writing mode); font face (menu); four font-size sliders; under `$SNPD_HeaderWriting`: the edit, delete and new-entry keys (key maps) |
+| `$SNPD_PageSettings` | Entries per volume (slider); show date headers (toggle); Your Diary Books (toggle; its default button sets -1, by writing mode); font face (menu); four font-size sliders; under `$SNPD_HeaderWriting`: the edit, delete and new-entry keys; under `$SNPD_HeaderNpcDiaries`: NPCs write diaries (toggle), random writers per day (slider), writing hour (slider, shown `{0}:00`), favor followers and spouse (toggle). The NPC Diaries options go through two generic natives, `GetNpcSetting` / `SetNpcSetting(key)`, which look the key up among the `[NpcDiaries]` entries of `kIntSettings`: a new `[NpcDiaries]` key needs no new native pair. Setting one also sets the dialogue's global (`NpcDiaries::SyncEnabled`) (key maps) |
 | `$SNPD_PageMaintenance` | Reset All Diaries (confirm → `ResetAllDiaries`); debug logging (toggle) |
 
 Rebuilding the book text:

@@ -51,7 +51,7 @@ The one exception so far: `kind` joined the primary key (2026-09-29), and SQLite
 Under the unique ID `'SNDB'`:
 
 - **`SNBF`** (version 2, since 2.0.0): every tracked book form, retired ones included, written by `DynamicForms::Save` at the start of `SaveCallback`. Per form: FormID (`uint32`), form type (`uint8`), flags (`uint8`, bit 0 = retired), then three strings (`uint32` length + bytes): key (`"<actor UUID>|v<volume>"`, or `|j<volume>` for a journal), template EditorID, display name. The save itself keeps only a form's flags, so the load callback uses this to fill each book in (see [BOOK_FORMS.md](BOOK_FORMS.md#the-co-save-record)).
-- **`SNND`** (version 1): the game day NPC diaries last ran (`int32`, -1 = never), so a reload doesn't run the same day twice ([NPC_DIARIES.md](NPC_DIARIES.md#when)).
+- **`SNND`** (version 2): NPC diaries' state ([NPC_DIARIES.md](NPC_DIARIES.md)): the game day they last ran (`int32`, -1 = never), so a reload doesn't run the same day twice, then the NPCs asked to write daily (`uint32` count, then FormIDs, resolved with `ResolveFormID` on load). Version 1 had only the day.
 - `SaveCallback` also opens DiaryDB on a new game's first save and flushes the volumes; `RevertCallback` clears the in-memory volumes and the tracked forms.
 
 The load callback reads only `SNBF` and `SNND`, so the records older saves carry are skipped:
