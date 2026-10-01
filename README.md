@@ -27,7 +27,7 @@ Optionally (MCM, off by default, since every entry is an LLM call), NPCs write d
 
 ## 📝 MCM Settings
 
-Found under **SkyrimNet Physical Diaries** in the Mod Configuration Menu.
+Found under **Physical Diaries** in the Mod Configuration Menu.
 
  **Settings**
 - **Your Diary Books** - Makes books of the diary SkyrimNet writes for you, as for NPCs (default: off with writing installed, on without). Off, your diary stops at its last entry; your journal isn't affected.
@@ -39,8 +39,9 @@ Found under **SkyrimNet Physical Diaries** in the Mod Configuration Menu.
 - **New Entry Key** - Starts a new entry in the open journal, or during play in the journal you last wrote in (unbound by default). A new journal begins when you read a Blank Journal.
 - **NPCs Write Diaries** - NPCs write diary entries on their own once a day (default: off). Each entry is one LLM call; NPCs with too little to write about cost nothing. Ask an NPC "Would you keep a diary?" to have them write every day.
 - **Random Writers Per Day** - How many NPCs with an eventful day are picked to write, besides those you asked (default: 3).
-- **Writing Hour** - When NPCs write (default: 22:00). Sleeping, waiting, fast travel or a carriage in the 4 hours before has them write first.
+- **Writing Hour** - When NPCs write (default: 22:00). A sleep, wait, fast travel or carriage ride that passes it still has them write.
 - **Favor Followers and Spouse** - Followers and your spouse are twice as likely to be picked (default: on).
+- **SkyrimNet: Diary Generation** and **SkyrimNet: Diary Day Boundary** - SkyrimNet's own diary settings, changed here and saved in SkyrimNet's config. With the day boundary off, an NPC's entry covers everything since their last one, so days you skip past midnight (sleeping, fast travel) aren't lost.
 
 **Maintenance**
 - **Reset All Diaries** - Removes all physical diary books from NPCs and clears all tracking. Your SkyrimNet diary entries are untouched; diaries regenerate automatically on next load. Your journals are kept as they are.

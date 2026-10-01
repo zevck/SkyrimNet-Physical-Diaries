@@ -20,6 +20,7 @@
 #pragma once
 
 #include "PCH.h"
+#include <optional>
 
 // NPCs writing diary entries on their own, once a game day, through SkyrimNet's own diary
 // generation.  Optional and off by default.  See docs/NPC_DIARIES.md.
@@ -35,6 +36,12 @@ namespace SkyrimNetDiaries::NpcDiaries {
     void Save(SKSE::SerializationInterface* a_intfc, std::uint32_t a_type);
     void Load(SKSE::SerializationInterface* a_intfc, std::uint32_t a_version);
     void Revert();
+
+    // The MCM: SkyrimNet's own diary settings, "SkyrimNetDiaries" (enabled) and "SkyrimNetDayBoundary"
+    // (respect_day_boundary), as last read, and changed through its Papyrus PatchConfig (saved to its file).
+    std::optional<bool> GetSkyrimNetDiarySetting(std::string_view a_key);
+    void RefreshSkyrimNetSettings();  // the MCM opens: read them again (answers before the page is drawn, normally)
+    bool SetSkyrimNetDiarySetting(std::string_view a_key, bool a_value);
 
     // Papyrus (the dialogue's fragments): an NPC starts or stops writing every day.
     void DailyDiaryChanged(RE::Actor* a_actor, bool a_daily);

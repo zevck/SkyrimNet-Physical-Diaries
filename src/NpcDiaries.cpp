@@ -29,16 +29,20 @@
 #include <cmath>
 #include <random>
 #include <set>
+#include <functional>
+#include <memory>
+#include <optional>
 #include <thread>
 
 namespace SkyrimNetDiaries::NpcDiaries {
 
     namespace {
-        // Sleeping, waiting or fast travel this many game hours before the run hour runs the day's diaries first:
-        // they skip time, and SkyrimNet only reads the current day (docs/NPC_DIARIES.md#when).
-        constexpr float kEarlyHours = 4.0f;
         constexpr auto kTickInterval = std::chrono::seconds(10);
         constexpr auto kStagger = std::chrono::seconds(3);
+        // While the Sleep/Wait menu is open: a wait passes the writing hour in well under a second.
+        constexpr auto kWaitPoll = std::chrono::milliseconds(100);
+        // While SkyrimNet's AI or diaries are off and a day is due: how often to ask again.
+        constexpr auto kWaitingRecheck = std::chrono::minutes(1);
         constexpr double kDaySeconds = 86400.0, kWeekSeconds = 604800.0;
         constexpr std::string_view kNamePlaceholder = "{Name}";
 
@@ -65,34 +69,47 @@ namespace SkyrimNetDiaries::NpcDiaries {
 
         bool Enabled() { return Config::GetSingleton()->Get(Config::kNpcDiaries) != 0; }
 
-        // SkyrimNet's global AI toggle and its diary switch, read live through its Papyrus config natives (the
-        // C++ API can't).  A Papyrus call answers later, so they are cached: at load, MCM changes, every clock tick.
+        // SkyrimNet's global AI toggle, diary switch and day boundary, read through its Papyrus config natives (the
+        // C++ API can't) only when they matter: a run is due, or the MCM opens.  As last read.
         std::atomic<bool> g_globalAI{ true };
         std::atomic<bool> g_skyrimNetDiaries{ true };
+        std::atomic<bool> g_dayBoundary{ true };  // shown in the MCM; SkyrimNet applies it
+
+        // A Papyrus call answers later: `then` runs once every read in the batch has answered.
+        struct PendingReads {
+            int left = 0;
+            std::function<void()> then;
+        };
 
         class StoreBool : public RE::BSScript::IStackCallbackFunctor {
         public:
-            explicit StoreBool(std::atomic<bool>& a_target) : target_(a_target) {}
+            StoreBool(std::atomic<bool>& a_target, std::shared_ptr<PendingReads> a_pending) :
+                target_(a_target), pending_(std::move(a_pending)) {}
             void operator()(RE::BSScript::Variable a_result) override {
                 if (a_result.IsBool()) target_ = a_result.GetBool();
+                if (pending_ && --pending_->left == 0 && pending_->then) pending_->then();
             }
             void SetObject(const RE::BSTSmartPointer<RE::BSScript::Object>&) override {}
 
         private:
             std::atomic<bool>& target_;
+            std::shared_ptr<PendingReads> pending_;
         };
 
-        void ReadSkyrimNetBool(const char* config, const char* path, std::atomic<bool>& target) {
+        void ReadSkyrimNetBool(const char* config, const char* path, std::atomic<bool>& target,
+                               const std::shared_ptr<PendingReads>& pending) {
             auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
             if (!vm) return;
             auto* args = RE::MakeFunctionArguments(RE::BSFixedString(config), RE::BSFixedString(path), true);
-            RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback(new StoreBool(target));
+            RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback(new StoreBool(target, pending));
             vm->DispatchStaticCall("SkyrimNetApi", "GetConfigBool", args, callback);
         }
 
-        void RefreshSkyrimNetSwitches() {
-            ReadSkyrimNetBool("game", "general.globalAIEnabled", g_globalAI);
-            ReadSkyrimNetBool("Diary", "enabled", g_skyrimNetDiaries);
+        void ReadSkyrimNetSettings(std::function<void()> then = {}) {
+            auto pending = std::make_shared<PendingReads>(PendingReads{ 3, std::move(then) });
+            ReadSkyrimNetBool("game", "general.globalAIEnabled", g_globalAI, pending);
+            ReadSkyrimNetBool("Diary", "enabled", g_skyrimNetDiaries, pending);
+            ReadSkyrimNetBool("Diary", "respect_day_boundary", g_dayBoundary, pending);
         }
 
         // Part of SkyrimNet's actor filter: its black/whitelist factions and speaking races.  SkyrimNet applies
@@ -268,44 +285,97 @@ namespace SkyrimNetDiaries::NpcDiaries {
             }
         }
 
-        // Not before the post-load sync, not twice a day, not before `fromHour`; never while SkyrimNet's AI or
-        // diaries are off (every request would fail with an error).  Turned back on, the day still runs.
-        bool Due(float fromHour) {
+        float RunHour() { return static_cast<float>(Config::GetSingleton()->Get(Config::kNpcRunHour)); }
+
+        // On, loaded and synced: a run may be due.
+        bool Ready() {
             if (!Enabled() || !IsPostLoadSyncReady()) return false;
             auto* player = RE::PlayerCharacter::GetSingleton();
-            if (!player || !player->Is3DLoaded()) return false;  // the main menu, or a load in progress
-            const auto today = Today();
-            if (today < 0 || today == g_lastRunDay || Hour() < fromHour) return false;
-            if (!g_globalAI || !g_skyrimNetDiaries) {
-                static std::int32_t loggedDay = -1;
-                if (std::exchange(loggedDay, today) != today) {
-                    SKSE::log::info("[NpcDiaries] Day {}: waiting, SkyrimNet's {} off", today,
-                                    !g_globalAI ? "AI is" : "diaries are");
-                }
-                return false;
-            }
-            return true;
+            return player && player->Is3DLoaded();  // not the main menu, or a load in progress
         }
 
-        float RunHour() { return static_cast<float>(Config::GetSingleton()->Get(Config::kNpcRunHour)); }
+        // Asks SkyrimNet first: with its AI or diaries off every request would fail with an error, so the day
+        // waits (not marked as run) and asks again every kWaitingRecheck.  Game thread.
+        bool g_checking = false;
+        std::chrono::steady_clock::time_point g_nextCheck{};
+
+        void RunWhenAllowed(std::int32_t day, bool now) {
+            if (g_checking || std::chrono::steady_clock::now() < g_nextCheck) return;
+            g_checking = true;
+            ReadSkyrimNetSettings([day, now, session = g_session]() {
+                SKSE::GetTaskInterface()->AddTask([day, now, session]() {
+                    if (session != g_session) return;  // a load in between (Revert reset the flag)
+                    g_checking = false;
+                    if (day == g_lastRunDay || !Ready()) return;
+                    if (!g_globalAI || !g_skyrimNetDiaries) {
+                        g_nextCheck = std::chrono::steady_clock::now() + kWaitingRecheck;
+                        static std::int32_t loggedDay = -1;
+                        if (std::exchange(loggedDay, day) != day) {
+                            SKSE::log::info("[NpcDiaries] Day {}: waiting, SkyrimNet's {} off", day,
+                                            !g_globalAI ? "AI is" : "diaries are");
+                        }
+                        return;
+                    }
+                    Run(day, now);
+                });
+            });
+        }
+
+        // Today has reached the writing hour and hasn't run.
+        bool Due() {
+            const auto today = Today();
+            return today >= 0 && today != g_lastRunDay && Hour() >= RunHour() && Ready();
+        }
+
+        // A time skip (sleep, wait, fast travel, a carriage): where it started.  When it ends in a later day,
+        // the start day passed its writing hour without a run: run it now.  Game thread.
+        std::int32_t g_skipStartDay = -1;
+        std::atomic<bool> g_waiting{ false };
+
+        void SkipStarts() { g_skipStartDay = Today(); }
+
+        void SkipEnds() {
+            const auto day = std::exchange(g_skipStartDay, -1);
+            if (day < 0 || day == g_lastRunDay || Today() <= day || !Ready()) return;
+            SKSE::log::info("[NpcDiaries] Day {}: a time skip passed the writing hour", day);
+            RunWhenAllowed(day, true);
+        }
+
+        // Every kWaitPoll while sleeping or waiting: run the moment the clock passes the writing hour.
+        void WatchWait() {
+            g_waiting = true;
+            std::thread([]() {
+                while (g_waiting) {
+                    SKSE::GetTaskInterface()->AddTask([]() {
+                        if (g_waiting && Due()) RunWhenAllowed(Today(), true);
+                    });
+                    std::this_thread::sleep_for(kWaitPoll);
+                }
+            }).detach();
+        }
 
         class MenuSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
         public:
             RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event,
                                                   RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
-                if (!a_event || !a_event->opening) return RE::BSEventNotifyControl::kContinue;
-                // Fast travel and carriages: the loading screen opens before the time skip, with the flag set
-                // (doors: not set).  Now, not as a task: a later frame can be after the skip.
-                auto* player = RE::PlayerCharacter::GetSingleton();
-                if (a_event->menuName == RE::LoadingMenu::MENU_NAME && player && player->GetPlayerFlags().fastTraveling &&
-                    Due(RunHour() - kEarlyHours)) {
-                    SKSE::log::info("[NpcDiaries] Fast travel at {:.2f}: the day's diaries first", Hour());
-                    Run(Today(), true);
-                }
+                if (!a_event) return RE::BSEventNotifyControl::kContinue;
                 if (a_event->menuName == RE::SleepWaitMenu::MENU_NAME) {
-                    SKSE::GetTaskInterface()->AddTask([]() {
-                        if (Due(RunHour() - kEarlyHours)) Run(Today(), true);
-                    });
+                    if (a_event->opening) {
+                        SkipStarts();
+                        WatchWait();
+                    } else {
+                        g_waiting = false;
+                        SkipEnds();
+                    }
+                } else if (a_event->menuName == RE::LoadingMenu::MENU_NAME) {
+                    // Fast travel and carriages skip time during the load: the flag is set when the screen
+                    // opens (not for doors), and the game time is still the departure's.
+                    auto* player = RE::PlayerCharacter::GetSingleton();
+                    if (a_event->opening && player && player->GetPlayerFlags().fastTraveling) {
+                        SkipStarts();
+                    } else if (!a_event->opening) {
+                        SkipEnds();
+                    }
                 }
                 return RE::BSEventNotifyControl::kContinue;
             }
@@ -316,9 +386,7 @@ namespace SkyrimNetDiaries::NpcDiaries {
                 for (;;) {
                     std::this_thread::sleep_for(kTickInterval);
                     SKSE::GetTaskInterface()->AddTask([]() {
-                        if (!Enabled()) return;
-                        RefreshSkyrimNetSwitches();  // answers by the next tick
-                        if (Due(RunHour())) Run(Today(), false);
+                        if (Due()) RunWhenAllowed(Today(), false);
                     });
                 }
             }).detach();
@@ -353,7 +421,6 @@ namespace SkyrimNetDiaries::NpcDiaries {
 
     void SyncEnabled() {
         if (g_enabledGlobal) g_enabledGlobal->value = Enabled() ? 1.0f : 0.0f;
-        if (Enabled()) RefreshSkyrimNetSwitches();
     }
 
     // Version 2: the day, then the daily writers (count, FormIDs).  Version 1 had only the day.
@@ -380,7 +447,31 @@ namespace SkyrimNetDiaries::NpcDiaries {
     void Revert() {
         g_lastRunDay = -1;
         g_writers.clear();
+        g_skipStartDay = -1;
+        g_waiting = false;
+        g_checking = false;
+        g_nextCheck = {};
         ++g_session;
+    }
+
+    void RefreshSkyrimNetSettings() { ReadSkyrimNetSettings(); }
+
+    std::optional<bool> GetSkyrimNetDiarySetting(std::string_view a_key) {
+        if (a_key == "SkyrimNetDiaries") return g_skyrimNetDiaries.load();
+        if (a_key == "SkyrimNetDayBoundary") return g_dayBoundary.load();
+        return std::nullopt;
+    }
+
+    bool SetSkyrimNetDiarySetting(std::string_view a_key, bool a_value) {
+        const char* path = a_key == "SkyrimNetDiaries" ? "enabled" : a_key == "SkyrimNetDayBoundary" ? "respect_day_boundary" : nullptr;
+        auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+        if (!path || !vm) return false;
+        (a_key == "SkyrimNetDiaries" ? g_skyrimNetDiaries : g_dayBoundary) = a_value;
+        const auto patch = nlohmann::json{ { path, a_value } }.dump();
+        auto* args = RE::MakeFunctionArguments(RE::BSFixedString("Diary"), RE::BSFixedString(patch.c_str()));
+        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
+        SKSE::log::info("[NpcDiaries] SkyrimNet's Diary config: {}", patch);
+        return vm->DispatchStaticCall("SkyrimNetApi", "PatchConfig", args, callback);
     }
 
     void DailyDiaryChanged(RE::Actor* a_actor, bool a_daily) {

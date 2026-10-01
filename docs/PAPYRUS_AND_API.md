@@ -26,7 +26,7 @@ All registered in `PapyrusAPI::RegisterFunctions`.
 | `SkyrimNetDiaries_Native.DailyDiaryChanged(Actor, bool)` | `DailyDiaryChangedWrapper` → `NpcDiaries::DailyDiaryChanged`: the localized notice | The whitelist dialogue's fragments |
 | `SkyrimNetDiaries_MCM.*` (getters and setters for each setting, `RegenerateTextsOnly`, `ResetAllDiaries`; `GetNpcSetting`/`SetNpcSetting(key)` for `[NpcDiaries]`) | `MCM_*` | MCM |
 
-SNPD also calls SkyrimNet's Papyrus natives from C++ (`DispatchStaticCall`) for [NPC diaries](NPC_DIARIES.md): `SkyrimNetApi.GenerateDiaryEntry(Actor)`, and `SkyrimNetApi.GetConfigBool` for SkyrimNet's global AI toggle and diary switch (the result arrives through an `IStackCallbackFunctor`).
+SNPD also calls SkyrimNet's Papyrus natives from C++ (`DispatchStaticCall`) for [NPC diaries](NPC_DIARIES.md): `SkyrimNetApi.GenerateDiaryEntry(Actor)`, `SkyrimNetApi.GetConfigBool` for SkyrimNet's global AI toggle, diary switch and day boundary (the result arrives through an `IStackCallbackFunctor`), and `SkyrimNetApi.PatchConfig` when the MCM changes the last two.
 
 The `SkyrimNetDiaries_API` script (`IsDiaryStolen`, `GetDiaryTheftStatus`, `SetTheftCleared`) was removed on 2026-09-27: nothing in SNPD called it once the decorator went native, and its `.pex` never shipped in a release up to v1.1.0, so no other mod could have relied on it. Other mods see theft state through SkyrimNet's `snpd_diary_stolen` decorator.
 

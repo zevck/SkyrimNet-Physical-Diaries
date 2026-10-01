@@ -131,10 +131,15 @@ namespace SkyrimNetDiaries::PapyrusAPI {
         return nullptr;
     }
     std::int32_t MCM_GetNpcSetting(RE::StaticFunctionTag*, RE::BSFixedString key) {
+        if (const auto skyrimNet = SkyrimNetDiaries::NpcDiaries::GetSkyrimNetDiarySetting(key.c_str())) return *skyrimNet;
         const auto* s = FindNpcSetting(key);
         return s ? SkyrimNetDiaries::Config::GetSingleton()->Get(*s) : 0;
     }
     void MCM_SetNpcSetting(RE::StaticFunctionTag*, RE::BSFixedString key, std::int32_t v) {
+        if (SkyrimNetDiaries::NpcDiaries::GetSkyrimNetDiarySetting(key.c_str())) {
+            SkyrimNetDiaries::NpcDiaries::SetSkyrimNetDiarySetting(key.c_str(), v != 0);
+            return;
+        }
         const auto* s = FindNpcSetting(key);
         if (!s) return;
         auto* config = SkyrimNetDiaries::Config::GetSingleton();
@@ -142,6 +147,8 @@ namespace SkyrimNetDiaries::PapyrusAPI {
         config->Save();
         SkyrimNetDiaries::NpcDiaries::SyncEnabled();
     }
+
+    void MCM_RefreshSkyrimNetSettings(RE::StaticFunctionTag*) { SkyrimNetDiaries::NpcDiaries::RefreshSkyrimNetSettings(); }
 
     // MCM Config getter/setter natives
 
@@ -251,6 +258,7 @@ namespace SkyrimNetDiaries::PapyrusAPI {
         a_vm->RegisterFunction("UpdateDiaryFromEvent", "SkyrimNetDiaries_Native", UpdateDiaryFromEventWrapper);
         a_vm->RegisterFunction("DailyDiaryChanged",    "SkyrimNetDiaries_Native", DailyDiaryChangedWrapper);
         a_vm->RegisterFunction("GetNpcSetting",        "SkyrimNetDiaries_MCM", MCM_GetNpcSetting);
+        a_vm->RegisterFunction("RefreshSkyrimNetSettings", "SkyrimNetDiaries_MCM", MCM_RefreshSkyrimNetSettings);
         a_vm->RegisterFunction("SetNpcSetting",        "SkyrimNetDiaries_MCM", MCM_SetNpcSetting);
 
         // MCM Debug log

@@ -30,7 +30,9 @@ int  Function GetNewEntryKey()                   global native
      Function SetNewEntryKey(int value)          global native
 string Function GetFontFace()                    global native
        Function SetFontFace(string value)        global native
-; [NpcDiaries] settings by key: Enabled, DailyRandom, RunHour, CloseBoost
+Function RefreshSkyrimNetSettings() global native  ; read SkyrimNet's diary settings again (on open)
+; [NpcDiaries] settings by key: Enabled, DailyRandom, RunHour, CloseBoost; and SkyrimNet's own diary
+; settings, SkyrimNetDiaries and SkyrimNetDayBoundary (changed in SkyrimNet's config)
 int  Function GetNpcSetting(string key)          global native
      Function SetNpcSetting(string key, int value) global native
 
@@ -52,6 +54,8 @@ int oidNpcEnabled        = -1
 int oidNpcDailyRandom    = -1
 int oidNpcRunHour        = -1
 int oidNpcCloseBoost     = -1
+int oidSkyrimNetDiaries   = -1
+int oidSkyrimNetDayBound  = -1
 
 ; Font presets
 string[] _fontValues
@@ -68,7 +72,7 @@ string _fontFaceOnOpen = ""
 ; ======== Lifecycle ========
 
 event OnConfigInit()
-    ModName = "SkyrimNet Physical Diaries"
+    ModName = "Physical Diaries"
     Pages   = new string[2]
     Pages[0] = "$SNPD_PageSettings"
     Pages[1] = "$SNPD_PageMaintenance"
@@ -97,6 +101,7 @@ event OnConfigOpen()
     _fontDisplayNames[1] = "Everywhere"
     _fontDisplayNames[2] = "Book"
 
+    RefreshSkyrimNetSettings()
     _fontTitleOnOpen   = GetFontSizeTitle()
     _fontDateOnOpen    = GetFontSizeDate()
     _fontContentOnOpen = GetFontSizeContent()
@@ -150,6 +155,8 @@ event OnPageReset(string page)
     oidNpcDailyRandom   = -1
     oidNpcRunHour       = -1
     oidNpcCloseBoost    = -1
+    oidSkyrimNetDiaries = -1
+    oidSkyrimNetDayBound = -1
 
     if page == Pages[0]
         RenderSettingsPage()
@@ -172,6 +179,7 @@ function RenderSettingsPage()
     oidFontSizeContent = AddSliderOption("$SNPD_ContentFontSize", GetFontSizeContent(), "{0}")
     oidFontSizeSmall   = AddSliderOption("$SNPD_SmallFontSize",   GetFontSizeSmall(),   "{0}")
 
+    SetCursorPosition(1)  ; the right column
     AddHeaderOption("$SNPD_HeaderWriting")
     oidEditKey = AddKeyMapOption("$SNPD_EditKey", GetEditKey())
     oidDeleteKey = AddKeyMapOption("$SNPD_DeleteKey", GetDeleteKey())
@@ -187,12 +195,15 @@ function RenderSettingsPage()
     oidNpcDailyRandom  = AddSliderOption("$SNPD_NpcDailyRandom", GetNpcSetting("DailyRandom"), "{0}")
     oidNpcRunHour      = AddSliderOption("$SNPD_NpcRunHour", GetNpcSetting("RunHour"), "{0}:00")
     oidNpcCloseBoost   = AddToggleOption("$SNPD_NpcCloseBoost", GetNpcSetting("CloseBoost") != 0)
+    oidSkyrimNetDiaries = AddToggleOption("$SNPD_SkyrimNetDiaries", GetNpcSetting("SkyrimNetDiaries") != 0)
+    oidSkyrimNetDayBound = AddToggleOption("$SNPD_SkyrimNetDayBoundary", GetNpcSetting("SkyrimNetDayBoundary") != 0)
 endfunction
 
 function RenderMaintenancePage()
     AddHeaderOption("$SNPD_HeaderMaintenance")
     oidResetAll = AddTextOption("$SNPD_ResetAllDiaries", "")
 
+    SetCursorPosition(1)
     AddHeaderOption("$SNPD_HeaderLogging")
     oidDebugLog = AddToggleOption("$SNPD_DebugLogging", GetDebugLog())
 endfunction
@@ -220,6 +231,14 @@ event OnOptionSelect(int oid)
     elseif oid == oidNpcCloseBoost
         bool newVal = GetNpcSetting("CloseBoost") == 0
         SetNpcSetting("CloseBoost", newVal as int)
+        SetToggleOptionValue(oid, newVal)
+    elseif oid == oidSkyrimNetDiaries
+        bool newVal = GetNpcSetting("SkyrimNetDiaries") == 0
+        SetNpcSetting("SkyrimNetDiaries", newVal as int)
+        SetToggleOptionValue(oid, newVal)
+    elseif oid == oidSkyrimNetDayBound
+        bool newVal = GetNpcSetting("SkyrimNetDayBoundary") == 0
+        SetNpcSetting("SkyrimNetDayBoundary", newVal as int)
         SetToggleOptionValue(oid, newVal)
     elseif oid == oidResetAll
         bool confirmed = ShowMessage( \
@@ -380,6 +399,10 @@ event OnOptionHighlight(int oid)
         SetInfoText("$SNPD_TipNpcRunHour")
     elseif oid == oidNpcCloseBoost
         SetInfoText("$SNPD_TipNpcCloseBoost")
+    elseif oid == oidSkyrimNetDiaries
+        SetInfoText("$SNPD_TipSkyrimNetDiaries")
+    elseif oid == oidSkyrimNetDayBound
+        SetInfoText("$SNPD_TipSkyrimNetDayBoundary")
     endif
 endevent
 
@@ -434,6 +457,12 @@ event OnOptionDefault(int oid)
         SetSliderOptionValue(oid, 22.0, "{0}:00")
     elseif oid == oidNpcCloseBoost
         SetNpcSetting("CloseBoost", 1)
+        SetToggleOptionValue(oid, true)
+    elseif oid == oidSkyrimNetDiaries
+        SetNpcSetting("SkyrimNetDiaries", 1)
+        SetToggleOptionValue(oid, true)
+    elseif oid == oidSkyrimNetDayBound
+        SetNpcSetting("SkyrimNetDayBoundary", 1)
         SetToggleOptionValue(oid, true)
     endif
 endevent
