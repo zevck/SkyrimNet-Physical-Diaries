@@ -22,6 +22,7 @@
 #include "BookManager.h"
 #include "DiaryDB.h"
 #include "DynamicForms.h"
+#include "NpcDiaries.h"
 #include "SaveFolder.h"
 #include "VolumeSync.h"
 
@@ -32,12 +33,14 @@ namespace SkyrimNetDiaries::Serialization {
         // (docs/DATABASE.md#co-save-records).
         constexpr std::uint32_t kSerializationId = 'SNDB';
         constexpr std::uint32_t kBookFormsRecord = 'SNBF';
+        constexpr std::uint32_t kNpcDiariesRecord = 'SNND';  // the game day NPC diaries last ran
 
         void SaveCallback(SKSE::SerializationInterface* a_intfc) {
             try {
                 // First, so a DiaryDB failure below can't lose it: without its record a
                 // book in the save loads as an empty shell.
                 DynamicForms::Save(a_intfc, kBookFormsRecord);
+                NpcDiaries::Save(a_intfc, kNpcDiariesRecord);
 
                 // A new game's first save opens DiaryDB here (no post-load sync).  Not during a load's post-load wait:
                 // SkyrimNet.log may still name the previous save's folder then.
@@ -64,6 +67,7 @@ namespace SkyrimNetDiaries::Serialization {
             // A new game or a load: clear in-memory volumes (DiaryDB on disk stays).
             BookManager::GetSingleton()->Revert();
             DynamicForms::Revert();
+            NpcDiaries::Revert();
             SaveFolder::Clear();
             SKSE::log::info("Reverted all diary data and caches");
         }
@@ -75,6 +79,7 @@ namespace SkyrimNetDiaries::Serialization {
                 std::uint32_t type = 0, version = 0, length = 0;
                 while (a_intfc->GetNextRecordInfo(type, version, length)) {
                     if (type == kBookFormsRecord) DynamicForms::Load(a_intfc, version);
+                    else if (type == kNpcDiariesRecord) NpcDiaries::Load(a_intfc, version);
                 }
                 ConfigureLoadedBooks();
             } catch (const std::exception& e) {

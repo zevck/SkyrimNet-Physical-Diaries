@@ -213,6 +213,8 @@ namespace SkyrimNetDiaries {
                 else if (key == "DiaryTitle") diaryTitleFmt_ = value;
                 else if (key == "JournalTitle") journalTitleFmt_ = value;
                 else if (key == "BlankJournal") blankJournalName_ = value;
+                else if (key == "DailyDiaryAsk") dailyDiaryAsk_ = value;
+                else if (key == "DailyDiaryStop") dailyDiaryStop_ = value;
                 else if (key == "VolumeSuffix") volumeSuffixFmt_ = value;
                 else if (key == "EmptyVolumeText") emptyVolumeText_ = value;
             } else if (currentSection == "messages") {
@@ -252,6 +254,8 @@ namespace SkyrimNetDiaries {
                 else if (key == "EditTooWeak") editTooWeak_ = text;
                 else if (key == "EditJournalNotCarried") editJournalNotCarried_ = text;
                 else if (key == "BlankJournalFailed") blankJournalFailed_ = text;
+                else if (key == "DailyDiaryOn") dailyDiaryOn_ = text;
+                else if (key == "DailyDiaryOff") dailyDiaryOff_ = text;
             } else if (currentSection == "months") {
                 for (auto& [mk, idx] : monthKeys) {
                     if (key == mk) {
@@ -365,6 +369,8 @@ namespace SkyrimNetDiaries {
         diaryTitleFmt_ = "{Name}'s Diary";
         journalTitleFmt_ = "{Name}'s Journal";
         blankJournalName_ = "Blank Journal";
+        dailyDiaryAsk_ = "Would you keep a diary? Write in it every day.";
+        dailyDiaryStop_ = "You don't need to write in your diary every day anymore.";
         volumeSuffixFmt_ = ", v{n}";
         emptyVolumeText_ = "All entries from this time period have been removed.";
         templatesMissingText_ =
@@ -400,6 +406,8 @@ namespace SkyrimNetDiaries {
         editTooWeak_ = "You're too weak to write in blood.";
         editJournalNotCarried_ = "Your journal isn't with you.";
         blankJournalFailed_ = "The journal couldn't be started. See SkyrimNetPhysicalDiaries.log.";
+        dailyDiaryOn_ = "{Name} will write in their diary every day.";
+        dailyDiaryOff_ = "{Name} will no longer write in their diary every day.";
 
         // Load locale file (may override formats, months, days)
         LoadLocaleFile(languageString_);

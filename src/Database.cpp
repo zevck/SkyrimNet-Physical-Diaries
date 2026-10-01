@@ -258,6 +258,17 @@ namespace SkyrimNetDiaries {
         }
     }
 
+    std::string Database::GetActorEngagement(double shortWindowSeconds, double mediumWindowSeconds) {
+        try {
+            if (!api_initialized_ && !InitializeAPI()) return {};
+            if (!PublicGetActorEngagement) return {};
+            return PublicGetActorEngagement(0, true, false, shortWindowSeconds, mediumWindowSeconds);
+        } catch (const std::exception& e) {
+            SKSE::log::error("GetActorEngagement exception: {}", e.what());
+            return {};
+        }
+    }
+
     bool Database::CanWriteDiaries() {
         if (!api_initialized_ && !InitializeAPI()) return false;
         return PublicUpdateDiaryEntry && PublicDeleteDiaryEntry && PublicAddDiaryEntry;

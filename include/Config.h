@@ -126,6 +126,11 @@ namespace SkyrimNetDiaries {
         // Scan code that starts a new journal entry, book open or during play.  Unbound by default: during
         // play any key would clash with some other mod's.  Not a key that types.
         static constexpr IntSetting kNewEntryKey      { "Diary",   "NewEntryKey",      0,  0, 255 };
+        // NPCs writing diaries on their own (docs/NPC_DIARIES.md).  Off by default: each entry is an LLM call.
+        static constexpr IntSetting kNpcDiaries       { "NpcDiaries", "Enabled",       0,  0, 1  };
+        static constexpr IntSetting kNpcDailyRandom   { "NpcDiaries", "DailyRandom",   3,  0, 20 };
+        static constexpr IntSetting kNpcRunHour       { "NpcDiaries", "RunHour",       22, 12, 23 };
+        static constexpr IntSetting kNpcCloseBoost    { "NpcDiaries", "CloseBoost",    1,  0, 1  };
         static constexpr IntSetting kFontSizeTitle    { "Fonts",   "TitleSize",        18, 8, 24 };
         static constexpr IntSetting kFontSizeDate     { "Fonts",   "DateSize",         16, 8, 24 };
         static constexpr IntSetting kFontSizeContent  { "Fonts",   "ContentSize",      14, 8, 24 };
@@ -133,6 +138,7 @@ namespace SkyrimNetDiaries {
         // INI order.  Language (string) is written first in [General], FontFace last in [Fonts].
         static constexpr IntSetting kIntSettings[] = {
             kDebugLog, kShowDateHeaders, kEntriesPerVolume, kPlayerDiaryBooks, kEditKey, kDeleteKey, kNewEntryKey,
+            kNpcDiaries, kNpcDailyRandom, kNpcRunHour, kNpcCloseBoost,
             kFontSizeTitle, kFontSizeDate, kFontSizeContent, kFontSizeSmall,
         };
 

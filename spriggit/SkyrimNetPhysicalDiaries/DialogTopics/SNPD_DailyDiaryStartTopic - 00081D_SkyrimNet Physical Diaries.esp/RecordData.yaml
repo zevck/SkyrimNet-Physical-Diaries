@@ -1,0 +1,8 @@
+FormKey: 00081D:SkyrimNet Physical Diaries.esp
+EditorID: SNPD_DailyDiaryStartTopic
+Name:
+  TargetLanguage: English
+  Value: Would you keep a diary? Write in it every day.
+Branch: 00081C:SkyrimNet Physical Diaries.esp
+Quest: 00081B:SkyrimNet Physical Diaries.esp
+SubtypeName: CUST

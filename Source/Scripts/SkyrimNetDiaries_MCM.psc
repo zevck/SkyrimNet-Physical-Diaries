@@ -30,6 +30,9 @@ int  Function GetNewEntryKey()                   global native
      Function SetNewEntryKey(int value)          global native
 string Function GetFontFace()                    global native
        Function SetFontFace(string value)        global native
+; [NpcDiaries] settings by key: Enabled, DailyRandom, RunHour, CloseBoost
+int  Function GetNpcSetting(string key)          global native
+     Function SetNpcSetting(string key, int value) global native
 
 ; ======== Option handles ========
 int oidEntriesPerVolume  = -1
@@ -45,6 +48,10 @@ int oidEditKey           = -1
 int oidDeleteKey         = -1
 int oidNewEntryKey       = -1
 int oidResetAll          = -1
+int oidNpcEnabled        = -1
+int oidNpcDailyRandom    = -1
+int oidNpcRunHour        = -1
+int oidNpcCloseBoost     = -1
 
 ; Font presets
 string[] _fontValues
@@ -139,6 +146,10 @@ event OnPageReset(string page)
     oidDeleteKey        = -1
     oidNewEntryKey      = -1
     oidResetAll         = -1
+    oidNpcEnabled       = -1
+    oidNpcDailyRandom   = -1
+    oidNpcRunHour       = -1
+    oidNpcCloseBoost    = -1
 
     if page == Pages[0]
         RenderSettingsPage()
@@ -170,6 +181,12 @@ function RenderSettingsPage()
         newEntryKey = -1
     endif
     oidNewEntryKey = AddKeyMapOption("$SNPD_NewEntryKey", newEntryKey)
+
+    AddHeaderOption("$SNPD_HeaderNpcDiaries")
+    oidNpcEnabled      = AddToggleOption("$SNPD_NpcEnabled", GetNpcSetting("Enabled") != 0)
+    oidNpcDailyRandom  = AddSliderOption("$SNPD_NpcDailyRandom", GetNpcSetting("DailyRandom"), "{0}")
+    oidNpcRunHour      = AddSliderOption("$SNPD_NpcRunHour", GetNpcSetting("RunHour"), "{0}:00")
+    oidNpcCloseBoost   = AddToggleOption("$SNPD_NpcCloseBoost", GetNpcSetting("CloseBoost") != 0)
 endfunction
 
 function RenderMaintenancePage()
@@ -195,6 +212,14 @@ event OnOptionSelect(int oid)
     elseif oid == oidDebugLog
         bool newVal = !GetDebugLog()
         SetDebugLog(newVal)
+        SetToggleOptionValue(oid, newVal)
+    elseif oid == oidNpcEnabled
+        bool newVal = GetNpcSetting("Enabled") == 0
+        SetNpcSetting("Enabled", newVal as int)
+        SetToggleOptionValue(oid, newVal)
+    elseif oid == oidNpcCloseBoost
+        bool newVal = GetNpcSetting("CloseBoost") == 0
+        SetNpcSetting("CloseBoost", newVal as int)
         SetToggleOptionValue(oid, newVal)
     elseif oid == oidResetAll
         bool confirmed = ShowMessage( \
@@ -260,6 +285,16 @@ event OnOptionSliderOpen(int oid)
         SetSliderDialogDefaultValue(12)
         SetSliderDialogRange(8, 24)
         SetSliderDialogInterval(1)
+    elseif oid == oidNpcDailyRandom
+        SetSliderDialogStartValue(GetNpcSetting("DailyRandom"))
+        SetSliderDialogDefaultValue(3)
+        SetSliderDialogRange(0, 20)
+        SetSliderDialogInterval(1)
+    elseif oid == oidNpcRunHour
+        SetSliderDialogStartValue(GetNpcSetting("RunHour"))
+        SetSliderDialogDefaultValue(22)
+        SetSliderDialogRange(12, 23)
+        SetSliderDialogInterval(1)
     endif
 endevent
 
@@ -282,6 +317,12 @@ event OnOptionSliderAccept(int oid, float value)
     elseif oid == oidFontSizeSmall
         SetFontSizeSmall(intVal)
         SetSliderOptionValue(oid, intVal, "{0}")
+    elseif oid == oidNpcDailyRandom
+        SetNpcSetting("DailyRandom", intVal)
+        SetSliderOptionValue(oid, intVal, "{0}")
+    elseif oid == oidNpcRunHour
+        SetNpcSetting("RunHour", intVal)
+        SetSliderOptionValue(oid, intVal, "{0}:00")
     endif
 endevent
 
@@ -331,6 +372,14 @@ event OnOptionHighlight(int oid)
         SetInfoText("$SNPD_TipNewEntryKey")
     elseif oid == oidResetAll
         SetInfoText("$SNPD_TipResetAll")
+    elseif oid == oidNpcEnabled
+        SetInfoText("$SNPD_TipNpcEnabled")
+    elseif oid == oidNpcDailyRandom
+        SetInfoText("$SNPD_TipNpcDailyRandom")
+    elseif oid == oidNpcRunHour
+        SetInfoText("$SNPD_TipNpcRunHour")
+    elseif oid == oidNpcCloseBoost
+        SetInfoText("$SNPD_TipNpcCloseBoost")
     endif
 endevent
 
@@ -374,5 +423,17 @@ event OnOptionDefault(int oid)
     elseif oid == oidNewEntryKey
         SetNewEntryKey(0)
         SetKeyMapOptionValue(oid, -1)
+    elseif oid == oidNpcEnabled
+        SetNpcSetting("Enabled", 0)
+        SetToggleOptionValue(oid, false)
+    elseif oid == oidNpcDailyRandom
+        SetNpcSetting("DailyRandom", 3)
+        SetSliderOptionValue(oid, 3.0, "{0}")
+    elseif oid == oidNpcRunHour
+        SetNpcSetting("RunHour", 22)
+        SetSliderOptionValue(oid, 22.0, "{0}:00")
+    elseif oid == oidNpcCloseBoost
+        SetNpcSetting("CloseBoost", 1)
+        SetToggleOptionValue(oid, true)
     endif
 endevent

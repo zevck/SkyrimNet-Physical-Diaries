@@ -23,6 +23,7 @@
 #include "Database.h"
 #include "DiaryDB.h"
 #include "DiaryTheftHandler.h"
+#include "NpcDiaries.h"
 #include "VolumeSync.h"
 #include <spdlog/spdlog.h>
 
@@ -116,6 +117,30 @@ namespace SkyrimNetDiaries::PapyrusAPI {
         SKSE::log::info("[PapyrusAPI] MCM_ResetAllDiaries called");
         int affected = SkyrimNetDiaries::ResetAllDiariesInternal();
         return affected >= 0;
+    }
+
+    void DailyDiaryChangedWrapper(RE::StaticFunctionTag*, RE::Actor* actor, bool daily) {
+        SkyrimNetDiaries::NpcDiaries::DailyDiaryChanged(actor, daily);
+    }
+
+    // NPC diaries (docs/NPC_DIARIES.md)
+    std::int32_t MCM_GetNpcSetting(RE::StaticFunctionTag*, RE::BSFixedString key) {
+        auto* config = SkyrimNetDiaries::Config::GetSingleton();
+        for (const auto& s : SkyrimNetDiaries::Config::kIntSettings) {
+            if (std::string_view(s.section) == "NpcDiaries" && std::string_view(key.c_str()) == s.key) return config->Get(s);
+        }
+        return 0;
+    }
+    void MCM_SetNpcSetting(RE::StaticFunctionTag*, RE::BSFixedString key, std::int32_t v) {
+        auto* config = SkyrimNetDiaries::Config::GetSingleton();
+        for (const auto& s : SkyrimNetDiaries::Config::kIntSettings) {
+            if (std::string_view(s.section) == "NpcDiaries" && std::string_view(key.c_str()) == s.key) {
+                config->Set(s, static_cast<int>(v));
+                config->Save();
+                SkyrimNetDiaries::NpcDiaries::SyncEnabled();
+                return;
+            }
+        }
     }
 
     // MCM Config getter/setter natives
@@ -224,6 +249,9 @@ namespace SkyrimNetDiaries::PapyrusAPI {
 
         a_vm->RegisterFunction("UpdateDiaryForActor",  "SkyrimNetDiaries_Native", UpdateDiaryForActorWrapper);
         a_vm->RegisterFunction("UpdateDiaryFromEvent", "SkyrimNetDiaries_Native", UpdateDiaryFromEventWrapper);
+        a_vm->RegisterFunction("DailyDiaryChanged",    "SkyrimNetDiaries_Native", DailyDiaryChangedWrapper);
+        a_vm->RegisterFunction("GetNpcSetting",        "SkyrimNetDiaries_MCM", MCM_GetNpcSetting);
+        a_vm->RegisterFunction("SetNpcSetting",        "SkyrimNetDiaries_MCM", MCM_SetNpcSetting);
 
         // MCM Debug log
         a_vm->RegisterFunction("GetDebugLog", "SkyrimNetDiaries_MCM", MCM_GetDebugLog);

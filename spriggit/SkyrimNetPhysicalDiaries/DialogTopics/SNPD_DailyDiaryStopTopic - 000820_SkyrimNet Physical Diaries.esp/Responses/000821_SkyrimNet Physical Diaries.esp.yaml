@@ -1,0 +1,31 @@
+FormKey: 000821:SkyrimNet Physical Diaries.esp
+VirtualMachineAdapter:
+  Scripts:
+  - Name: SNPD_TIF_DailyDiaryStop
+    Properties:
+    - MutagenObjectType: ScriptObjectProperty
+      Name: SNPD_DailyDiaryFaction
+      Object: 000819:SkyrimNet Physical Diaries.esp
+  ScriptFragments:
+    MutagenObjectType: ScriptFragments
+    FileName: SNPD_TIF_DailyDiaryStop
+    OnEnd:
+      ExtraBindDataVersion: 1
+      ScriptName: SNPD_TIF_DailyDiaryStop
+      FragmentName: Fragment_0
+Flags: {}
+FavorLevel: None
+Responses:
+- EmotionValue: 50
+  ResponseNumber: 1
+  Text:
+    TargetLanguage: English
+    Value: ''
+  ScriptNotes: ''
+  Edits: ''
+Conditions:
+- MutagenObjectType: ConditionFloat
+  Data:
+    MutagenObjectType: GetInFactionConditionData
+    Faction: 000819:SkyrimNet Physical Diaries.esp
+  ComparisonValue: 1

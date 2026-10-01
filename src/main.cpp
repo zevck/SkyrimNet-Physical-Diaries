@@ -35,6 +35,7 @@
 #include "TimelineGate.h"
 #include "VolumeSync.h"
 #include "WritingMode.h"
+#include "NpcDiaries.h"
 #include "WritingTools.h"
 #include <spdlog/sinks/basic_file_sink.h>
 #include <algorithm>
@@ -158,6 +159,7 @@ namespace {
                     SkyrimNetDiaries::WritingTools::OnDataLoaded();
                 }
                 SkyrimNetDiaries::BlankJournals::OnDataLoaded();
+                SkyrimNetDiaries::NpcDiaries::OnDataLoaded();
 
                 // Now that GMSTs are loaded, read localized month/day names
                 SkyrimNetDiaries::Localization::GetSingleton()->ReadGMSTs();
@@ -185,6 +187,8 @@ namespace {
             // First, and independent of SkyrimNet: world copies of our books in the
             // loaded cells were built before the load callback filled the books in.
             DynamicForms::RebuildLoadedWorldCopies();
+            // The save restored the dialogue's global: set it from the INI again.
+            SkyrimNetDiaries::NpcDiaries::SyncEnabled();
 
             if (!SkyrimNetDiaries::Database::InitializeAPI()) {
                 SKSE::log::warn("Failed to initialize API (SkyrimNet may not be loaded yet)");

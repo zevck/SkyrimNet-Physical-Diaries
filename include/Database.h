@@ -137,6 +137,10 @@ namespace SkyrimNetDiaries {
         // question on load exactly when this is later than the current game time.
         static double GetPlayerLastEventTime();
 
+        // SkyrimNet's per-actor activity (memory importance, event counts) over two game-second windows, as its
+        // JSON array; "" if unavailable.  docs/NPC_DIARIES.md#who-writes
+        static std::string GetActorEngagement(double shortWindowSeconds, double mediumWindowSeconds);
+
         // Registers a native prompt decorator (SkyrimNet public API v5+).  The callback
         // runs on SkyrimNet's worker threads.  False if unavailable or refused.
         static bool RegisterDecorator(const char* name, const char* description,

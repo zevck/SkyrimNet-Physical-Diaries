@@ -18,6 +18,7 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 | Work on save reverts (SkyrimNet KEEP / CLEAR) | [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#save-reverts-the-keep--clear-fork) | [THEFT.md](THEFT.md#save-reverts) |
 | Change how the text looks or is cleaned up | [BOOK_TEXT.md](BOOK_TEXT.md) | [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md) |
 | Work on the player editing their diary in the book menu | [EDITING.md](EDITING.md) | [DEVELOPMENT.md](DEVELOPMENT.md#swf) |
+| Work on NPCs writing diaries on their own | [NPC_DIARIES.md](NPC_DIARIES.md) | [PLUGIN.md](PLUGIN.md), [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md) |
 | Fix something VR-specific | [BOOK_TEXT.md](BOOK_TEXT.md#delivery-the-getdescription-hook) | [BOOK_FORMS.md](BOOK_FORMS.md#the-engine-behaviour-this-rests-on), [DEVELOPMENT.md](DEVELOPMENT.md#engine-touchpoints) |
 | Work on theft, return or the SkyrimNet decorator | [THEFT.md](THEFT.md) | [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md) |
 | Add a language or fix a translation | [LOCALIZATION.md](LOCALIZATION.md) | |
@@ -39,6 +40,7 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 | [BOOK_TEXT.md](BOOK_TEXT.md) | Rendering, dates, cleaning LLM output, the `GetDescription` hook (the book menu and other readers), UTF-8 → Win-1251 |
 | [THEFT.md](THEFT.md) | Theft, return and handover; the decorator; clearing; save reverts |
 | [EDITING.md](EDITING.md) | The player writing in their own journal in the book menu: writing mode, diaries and journals, the SWF's edit mode, input, saving to SkyrimNet, back to reading, tearing out an entry, the close hook |
+| [NPC_DIARIES.md](NPC_DIARIES.md) | Optional: NPCs writing diary entries on their own once a day through SkyrimNet's generation: when, who, the whitelist dialogue |
 | [LOCALIZATION.md](LOCALIZATION.md) | Language choice, locale files, GMST names, MCM translations |
 
 ### Data, settings and interfaces
@@ -57,7 +59,7 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 
 ## Ground rules for changing SNPD
 
-- **SNPD presents SkyrimNet's data; the one thing it writes is the player's own journal, when the player writes in it.** Diary content always comes from SkyrimNet, and edits go back to SkyrimNet (never into DiaryDB). NPC diaries are never written: their entries are the NPCs' memories. DiaryDB holds only SNPD's own bookkeeping and a render cache. See [EDITING.md](EDITING.md).
+- **SNPD presents SkyrimNet's data; the one thing it writes is the player's own journal, when the player writes in it.** Diary content always comes from SkyrimNet, and edits go back to SkyrimNet (never into DiaryDB). NPC diaries are never written or edited by SNPD: their entries are the NPCs' memories. (With [NPC diaries](NPC_DIARIES.md) on, SNPD asks SkyrimNet to write one; SkyrimNet writes it.) DiaryDB holds only SNPD's own bookkeeping and a render cache. See [EDITING.md](EDITING.md).
 - **Identify books by FormID and NPCs by SkyrimNet UUID.** Never by name (localized, and shared by same-named NPCs), and never by a stored FormID without a UUID check.
 - **Every persistence change must survive** save → reload, reload without saving, loading an older save with SkyrimNet KEEP **and** CLEAR, and a second character. See [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#save-reverts-the-keep--clear-fork).
 - **Retire book forms, never delete them.** A volume that goes away for certain (Reset, a Clear) is retired (`BookManager::RetireBook`): its form stays in the save, flagged, because a world copy of a removed form crashes the game on load. Never pick FormIDs yourself or reuse a retired one. See [BOOK_FORMS.md](BOOK_FORMS.md#retirement).

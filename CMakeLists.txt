@@ -48,6 +48,7 @@ set(sources
     src/DynamicForms.cpp
     src/InterPluginAPI.cpp
     src/Localization.cpp
+    src/NpcDiaries.cpp
     src/PapyrusAPI.cpp
     src/SaveFolder.cpp
     src/Serialization.cpp

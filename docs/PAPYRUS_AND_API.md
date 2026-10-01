@@ -11,7 +11,8 @@ Code: `Source/Scripts/*.psc` → `Scripts/*.pex`, `src/PapyrusAPI.cpp`, `include
 | Script | Attached to | Role |
 |---|---|---|
 | `SkyrimNetDiaries_EventListener` | Quest in the ESP (`extends Quest`) | `OnInit`: registers for ModEvent `SkyrimNet_DiaryCreated` (the `snpd_diary_stolen` decorator is native, registered by the DLL; see [THEFT.md](THEFT.md)). `OnDiaryCreated`: passes the JSON payload to `SkyrimNetDiaries_Native.UpdateDiaryFromEvent`. Don't parse `actorFormId` in Papyrus: `as int` clamps FormIDs of `0x80000000` and up (ESL and high load-order NPCs) to `0x7FFFFFFF`. |
-| `SkyrimNetDiaries_Native` | — (native declarations) | `UpdateDiaryFromEvent(string json)`; legacy `UpdateDiaryForActor(int formId)` |
+| `SkyrimNetDiaries_Native` | — (native declarations) | `UpdateDiaryFromEvent(string json)`; legacy `UpdateDiaryForActor(int formId)`; `DailyDiaryChanged(Actor, bool)` |
+| `SNPD_TIF_DailyDiaryStart`, `SNPD_TIF_DailyDiaryStop` | The whitelist dialogue's responses (`extends TopicInfo`) | Add the speaker to `SNPD_DailyDiaryFaction` or remove them, then `DailyDiaryChanged` for the notice ([NPC_DIARIES.md](NPC_DIARIES.md#the-whitelist)) |
 | `SkyrimNetDiaries_MCM` | MCM quest (`SKI_ConfigBase`) | Settings and Maintenance pages. See [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md). |
 
 ## Native functions
@@ -22,7 +23,10 @@ All registered in `PapyrusAPI::RegisterFunctions`.
 |---|---|---|
 | `SkyrimNetDiaries_Native.UpdateDiaryFromEvent(String)` | `UpdateDiaryFromEventWrapper`: parses `actorFormId` from the event JSON, then `UpdateDiaryForFormID` (clears stolen volumes, then `UpdateDiaryForActorInternal`) | EventListener |
 | `SkyrimNetDiaries_Native.UpdateDiaryForActor(int)` | `UpdateDiaryForActorWrapper` → `UpdateDiaryForFormID`. Legacy, kept for older listener scripts; wrong for FormIDs ≥ `0x80000000` | Nothing in SNPD |
-| `SkyrimNetDiaries_MCM.*` (getters and setters for each setting, `RegenerateTextsOnly`, `ResetAllDiaries`) | `MCM_*` | MCM |
+| `SkyrimNetDiaries_Native.DailyDiaryChanged(Actor, bool)` | `DailyDiaryChangedWrapper` → `NpcDiaries::DailyDiaryChanged`: the localized notice | The whitelist dialogue's fragments |
+| `SkyrimNetDiaries_MCM.*` (getters and setters for each setting, `RegenerateTextsOnly`, `ResetAllDiaries`; `GetNpcSetting`/`SetNpcSetting(key)` for `[NpcDiaries]`) | `MCM_*` | MCM |
+
+SNPD also calls SkyrimNet's Papyrus native `SkyrimNetApi.GenerateDiaryEntry(Actor)` from C++ (`DispatchStaticCall`) for [NPC diaries](NPC_DIARIES.md).
 
 The `SkyrimNetDiaries_API` script (`IsDiaryStolen`, `GetDiaryTheftStatus`, `SetTheftCleared`) was removed on 2026-09-27: nothing in SNPD called it once the decorator went native, and its `.pex` never shipped in a release up to v1.1.0, so no other mod could have relied on it. Other mods see theft state through SkyrimNet's `snpd_diary_stolen` decorator.
 

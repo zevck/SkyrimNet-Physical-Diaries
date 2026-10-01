@@ -1,0 +1,7 @@
+FormKey: 00081F:SkyrimNet Physical Diaries.esp
+EditorID: SNPD_DailyDiaryStopBranch
+Quest: 00081B:SkyrimNet Physical Diaries.esp
+Category: Player
+Flags:
+- TopLevel
+StartingTopic: 000820:SkyrimNet Physical Diaries.esp

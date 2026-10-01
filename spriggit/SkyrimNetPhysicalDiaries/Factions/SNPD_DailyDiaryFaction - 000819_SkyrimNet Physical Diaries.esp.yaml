@@ -1,0 +1,8 @@
+FormKey: 000819:SkyrimNet Physical Diaries.esp
+EditorID: SNPD_DailyDiaryFaction
+Name:
+  TargetLanguage: English
+  Value: Writes Daily
+Flags:
+- HiddenFromPC
+VendorValues: {}

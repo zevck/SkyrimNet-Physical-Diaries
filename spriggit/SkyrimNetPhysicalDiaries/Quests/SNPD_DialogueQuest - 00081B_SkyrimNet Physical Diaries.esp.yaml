@@ -1,0 +1,10 @@
+FormKey: 00081B:SkyrimNet Physical Diaries.esp
+EditorID: SNPD_DialogueQuest
+Name:
+  TargetLanguage: English
+  Value: Physical Diaries dialogue
+Flags:
+- StartGameEnabled
+- 0x10
+QuestFormVersion: 0
+NextAliasID: 0

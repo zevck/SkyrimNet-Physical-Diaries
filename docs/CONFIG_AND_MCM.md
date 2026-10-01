@@ -18,6 +18,10 @@ Code: `include/Config.h` (header-only singleton `SkyrimNetDiaries::Config`), `So
 | `[Diary] EditKey` | 61 (F3) | 1–255 | DirectX scan code of the key that starts editing while the player reads their own journal, and saves and returns to reading while they write. It must not be a key that types (Enter types line breaks). SkyrimNet's own F3 does nothing in menus, so the default is free there. The MCM's key-map option (SkyUI key codes are the same scan codes) ignores conflicts with game controls: the key only acts in the book menu. See [EDITING.md](EDITING.md#opening). |
 | `[Diary] NewEntryKey` | 0 (unbound) | 0–255 | DirectX scan code of the key that starts a new entry at the end of a journal of the player's that has room: the open one, or during play the one they last wrote in if they carry it, else the newest one they carry. It never makes a journal: reading a blank journal does. Not a key that types. See [EDITING.md](EDITING.md#new-entries). |
 | `[Diary] DeleteKey` | 68 (F10) | 1–255 | DirectX scan code of the key that tears out the entry under the caret while the player writes, after a confirmation. Not a key that types. See [EDITING.md](EDITING.md#tearing-out-an-entry). |
+| `[NpcDiaries] Enabled` | 0 | 0–1 | NPCs write diary entries on their own once a game day ([NPC_DIARIES.md](NPC_DIARIES.md)). Also sets the global the whitelist dialogue checks |
+| `[NpcDiaries] DailyRandom` | 3 | 0–20 | Weighted random picks a day, from actors with recent activity |
+| `[NpcDiaries] RunHour` | 22 | 12–23 | The game hour the day's diaries run; sleeping, waiting or the map 4 hours earlier run them first |
+| `[NpcDiaries] CloseBoost` | 1 | 0–1 | Followers and the spouse weigh double in the random picks |
 | `[Fonts] TitleSize` / `DateSize` / `ContentSize` / `SmallSize` | 18 / 16 / 14 / 12 | 8–24 | Sizes in the rendered markup |
 | `[Fonts] FontFace` | `$HandwrittenFont` | font name | `face=` in the rendered markup |
 
