@@ -46,9 +46,6 @@ class BookMenu extends MovieClip
    var EditMask;         // shows one page of EditField
    var iSuppressTurnUntil;   // getTimer() before which engine page turns are refused (key presses)
    var iEditShownFrom;   // books: offset of the engine's current spread in its 4 page slots (0 or 2)
-   var iShowCalls;       // DIAGNOSTIC: ShowPageAtOffset calls in edit mode
-   var iLastShowOffset;  // DIAGNOSTIC
-   var sTurnLog;         // DIAGNOSTIC: engine page turns in edit mode (delta, and whether it turned)
    var aSegs;            // the text as segments: {locked, body, editable} lengths, in order (see EditBuildContent)
    var oEditContent;     // what the plugin sent (SetEditContent) for the next edit mode, or undefined: blank page
    var oContentFmt;      // entry text's format (config font, content size)
@@ -184,8 +181,6 @@ class BookMenu extends MovieClip
 
       this.iEditPage = 0;
       this.iEditShownFrom = 0;
-      this.iShowCalls = 0;
-      this.sTurnLog = "";
       this.EditBuildContent(fmt);
       var start = this.EditSnap(0, 1);
       this.EditSetCaretOrNone(start);
@@ -1180,7 +1175,6 @@ class BookMenu extends MovieClip
    {
       if(getTimer() < this.iSuppressTurnUntil)
       {
-         this.sTurnLog = (this.sTurnLog == undefined ? "" : this.sTurnLog + ",") + aiDelta + "blocked";
          return false;
       }
       var from = this.bNote ? this.iEditPage : this.EditSpreadLeft();
@@ -1191,7 +1185,6 @@ class BookMenu extends MovieClip
          // slots 2-3 (the turned leaf's far side), after a backward turn in slots 0-1.
          this.iEditShownFrom = aiDelta > 0 ? Math.abs(aiDelta) : 0;
       }
-      this.sTurnLog = (this.sTurnLog == undefined ? "" : this.sTurnLog + ",") + aiDelta + (ok ? "ok" : "no");
       return ok;
    }
 
@@ -1206,116 +1199,6 @@ class BookMenu extends MovieClip
    function EditSpreadLeft()
    {
       return this.iEditPage - this.iEditPage % 2;
-   }
-
-   // ---- DIAGNOSTIC: the edit mode's display state, for the plugin log ----
-   static function DescribeClip(label, mc)
-   {
-      if(mc == undefined)
-      {
-         return label + "=undefined";
-      }
-      return label + "{" + mc._target + " depth=" + mc.getDepth() + " x=" + mc._x + " y=" + mc._y + " w=" + mc._width + " h=" + mc._height + " xs=" + mc._xscale + " ys=" + mc._yscale + " vis=" + mc._visible + " a=" + mc._alpha + " frame=" + mc._currentframe + "/" + mc._totalframes + " blend=" + mc.blendMode + " filters=" + (mc.filters == undefined ? "none" : mc.filters.length) + " bmp=" + mc.cacheAsBitmap + "}";
-   }
-
-   static function DescribeField(label, tf)
-   {
-      if(tf == undefined)
-      {
-         return label + "=undefined";
-      }
-      var fmt = tf.getTextFormat();
-      var nfmt = tf.getNewTextFormat();
-      return label + "{x=" + tf._x + " y=" + tf._y + " w=" + tf._width + " h=" + tf._height + " vis=" + tf._visible + " a=" + tf._alpha + " len=" + tf.text.length + " html=" + tf.htmlText.length + " tw=" + tf.textWidth + " th=" + tf.textHeight + " scroll=" + tf.scroll + "/" + tf.maxscroll + " bottom=" + tf.bottomScroll + " lines=" + tf.numLines + " type=" + tf.type + " embed=" + tf.embedFonts + " color=" + tf.textColor.toString(16) + " wrap=" + tf.wordWrap + " multi=" + tf.multiline + " auto=" + tf.autoSize + " fmt=" + fmt.font + "/" + fmt.size + "/" + (fmt.color == undefined ? "?" : fmt.color.toString(16)) + " newfmt=" + nfmt.font + "/" + nfmt.size + " text='" + tf.text.substring(0, 40) + "'}";
-   }
-
-   // DIAGNOSTIC: a field's paragraph format and its first lines' geometry, to compare the
-   // reading pages with the editor.
-   static function DescribeLayout(tf)
-   {
-      if(tf == undefined)
-      {
-         return "layout=undefined";
-      }
-      var f = tf.getTextFormat(0);
-      var out = "layout{fmt0=" + f.font + "/" + f.size + " align=" + f.align + " lm=" + f.leftMargin + " rm=" + f.rightMargin + " indent=" + f.indent + " lead=" + f.leading + " block=" + f.blockIndent + " kern=" + f.kerning + " ls=" + f.letterSpacing + " lines:";
-      var i = 0;
-      var y = 0;
-      while(i < tf.numLines && i < 6)
-      {
-         var m = tf.getLineMetrics(i);
-         var off = tf.getLineOffset(i);
-         var lf = tf.getTextFormat(off < tf.length ? off : 0);
-         out += " [" + i + " y=" + y + " x=" + m.x + " w=" + Math.round(m.width) + " h=" + m.height + " asc=" + m.ascent + " desc=" + m.descent + " lead=" + m.leading + " size=" + lf.size + " '" + tf.text.substr(off, 12) + "']";
-         y += m.height;
-         i++;
-      }
-      return out + "}";
-   }
-
-   static function DescribeSegs(segs)
-   {
-      if(segs == undefined)
-      {
-         return "none";
-      }
-      var out = [];
-      var k = 0;
-      while(k < segs.length)
-      {
-         out.push((segs[k].editable ? "E" : "L") + segs[k].locked + "+" + segs[k].body);
-         k++;
-      }
-      return segs.length + "[" + out.join(",") + "]";
-   }
-
-   static function DescribeRuns(tf)
-   {
-      if(tf == undefined || tf.length == 0)
-      {
-         return "";
-      }
-      var out = "";
-      var key = "";
-      var i = 0;
-      while(i < tf.length)
-      {
-         var f = tf.getTextFormat(i);
-         var k = f.font + "/" + f.size + "/lead" + f.leading;
-         if(k != key)
-         {
-            out += (out.length ? " " : "") + i + ":" + k;
-            key = k;
-         }
-         i++;
-      }
-      return out;
-   }
-
-   function DebugState()
-   {
-      var s = "note=" + this.bNote + " edit=" + this.bEditMode + " sizes=" + BookMenu.FONT_SIZE_B + "/" + BookMenu.FONT_SIZE_N + " editPage=" + this.iEditPage + " maxPageH=" + this.iMaxPageHeight + " left=" + this.iLeftPageNumber + " set=" + this.iPageSetIndex + " pageInfo=" + this.PageInfoA.length + " pagination=" + this.iPaginationIndex;
-      s += " | editPages=" + this.EditPageCount() + " tops=" + this.aEditPageTops.join(",") + " firstLines=" + this.aEditPageLines.join(",") + " shows=" + this.iShowCalls + " segs=" + BookMenu.DescribeSegs(this.aSegs) + " lastShow=" + this.iLastShowOffset + " shownFrom=" + this.iEditShownFrom + " editPage=" + this.iEditPage + " turns=" + this.sTurnLog + (this.EditField == undefined ? "" : " fieldY=" + this.EditField._y + " maskY=" + this.EditMask._y + " maskH=" + this.EditMask._height + " clipVis=" + this.EditClip._visible);
-      s += " | stage{w=" + Stage.width + " h=" + Stage.height + " mode=" + Stage.scaleMode + " rect=" + Stage.visibleRect.x + "," + Stage.visibleRect.y + "," + Stage.visibleRect.width + "," + Stage.visibleRect.height + "}";
-      s += " | focus=" + Selection.getFocus() + " caret=" + Selection.getBeginIndex();
-      s += " | " + BookMenu.DescribeClip("menu", this);
-      s += " | " + BookMenu.DescribeClip("ref", this.ReferenceText_mc) + " " + BookMenu.DescribeField("refField", this.ReferenceTextField);
-      s += " | refRuns{" + BookMenu.DescribeRuns(this.ReferenceTextField) + "} refHtml{" + String(this.ReferenceTextField.htmlText).substr(0,2000) + "}";
-      s += " | " + BookMenu.DescribeClip("edit", this.EditClip) + " " + BookMenu.DescribeField("editField", this.EditField) + " " + BookMenu.DescribeLayout(this.EditField);
-      var i = 0;
-      while(i < this.BookPages.length)
-      {
-         s += " | page" + this.BookPages[i].pageNum + ":" + BookMenu.DescribeClip("", this.BookPages[i]) + " " + BookMenu.DescribeField("field", this.BookPages[i].PageTextField) + " " + BookMenu.DescribeLayout(this.BookPages[i].PageTextField);
-         i++;
-      }
-      for(var name in this)
-      {
-         if(typeof this[name] == "movieclip")
-         {
-            s += " | child " + name + " depth=" + this[name].getDepth() + " vis=" + this[name]._visible;
-         }
-      }
-      return s;
    }
 
    // Override PrepForClose to handle edit mode cleanup
@@ -1488,8 +1371,6 @@ class BookMenu extends MovieClip
       if(this.bEditMode && this.EditField != undefined)
       {
          // The engine draws each side of the open book by calling this with 0, then 1.
-         this.iShowCalls++;
-         this.iLastShowOffset = aiPageOffset;
          // Books: the engine's slots 0-3 are a window of pages; the current spread sits at
          // slots iEditShownFrom and +1, the other two are the far side of a turning leaf.
          var p = this.bNote ? this.iEditPage : this.EditSpreadLeft() - this.iEditShownFrom + aiPageOffset;

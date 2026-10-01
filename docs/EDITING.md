@@ -144,7 +144,7 @@ Every edit goes through the SWF's own functions (`AppendEditChar`, `EditBackspac
 The input sink is **prepended** to `BSInputDeviceManager`, so it runs before the menu's own input handling. While writing, the game is paused and input arrives on the main thread (checked when writing starts).
 
 - **Keys** are turned into text with the active keyboard layout (`ToUnicode`; a dead key that doesn't combine gives both characters), with held-key repeat, and sent to the SWF. Arrows, Home and End move the caret; Backspace, Delete and Enter edit.
-- **Every keyboard event's user event is blanked**, so no key acts as a game or menu control while typing (E types an "e" instead of taking the book).
+- **Every keyboard event's user event is blanked**, so no key acts as a game or menu control while typing (E types an "e" instead of taking the book). **Other mods' hotkeys can still fire while typing**: many read raw key codes or poll the keyboard themselves. SkyrimNet polls with `GetAsyncKeyState`, and its dashboard and book capture keys work in the book menu (the capture then gets the unsaved editor's text). Zeroing the key events for the sinks after ours was tried and made no measurable difference, so it was dropped (2026-09-30); SkyrimNet could skip its capture while `ControlMap` text input is on, which SNPD turns on while editing. Until then players bind such keys to keys that don't type ([KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
 - **The book menu turns pages on the arrow keys, A and D by key code, not by user event** (found in game: the arrows reached our sink already without a user event), so blanking can't stop it. Instead every key event (press, held repeat, release) calls `EditSuppressTurn`, and the SWF refuses turns for 200 ms after it. A click never comes with a key event.
 - **The mouse** keeps the book's own page turns: left click previous, right click next (the `Book` context of `controlmap.txt`). Clicking doesn't place the caret.
 - **The edit key** saves and goes back to reading (see [Saving](#saving)); **the delete key** asks to tear out the entry under the caret (see [Tearing out an entry](#tearing-out-an-entry)); **the new-entry key** adds an entry at the end (see [New entries](#new-entries)). None is typed.
@@ -234,17 +234,9 @@ The editor gets the text the reading view shows, as plain text: `EditableEntryTe
 
 ---
 
-## Diagnostics (to remove)
-
-- **F4** (while writing): the SWF's `DebugState` (layout, pages, segments, turns, clips) in the log.
-- **F5** (while writing): what a save would write, without writing.
-- The state after entering edit mode and after the first three keys; every book-menu message while editing (except updates and Scaleform events); where a body differs from what was loaded, with the bytes around it.
-
----
-
 ## Not done yet
 
 - **Shipping the SWF.** `Interface/book.swf` replaces the book menu for every book and note. It needs a FOMOD (vanilla, Convenient Reading, none). The interface version check and the warning when writing is off but the save has journals are done ([Writing mode](#writing-mode), [Diaries and journals](#diaries-and-journals)). The planned Physical Letters mod will ship the same SWF, so its interface must stay mod-neutral (no `SNPD_` events).
 - **SE, VR and the Convenient Reading variant** are untested, including plain reading through SNPD's `book.swf` on VR. VR also needs a keyboard story, and `SetBookMenuBook`'s VR extra-list address (`0x30111F8`) was found in the binary, not in VR's address library, and hasn't run.
 - **Cyrillic.** Reading needs Win-1251 because Scaleform's pagination mixes byte and character offsets; the editor gets UTF-8. Untested with Cyrillic text.
-- **Translations** of the thirteen older `[Messages]` strings (the save and tear-out prompts, `EditSaveFailed`, `EditDeleteFailed`, `EditNeedsSkyrimNet`, `EditNeedsPause`, `EditEmptiedHint`, `EditStartedVolume`): only English has them; other languages show the English defaults. The newer ones (journals, quill and ink, blood) are in all nine languages, as first drafts, like `JournalTitle`. The MCM's older Writing strings in the other eight languages still say "diary".
+- **Translations**: every writing string, in the locale files and the MCM, is in all nine languages, as first drafts written without native speakers (like `JournalTitle`); they stay until native feedback.

@@ -108,7 +108,7 @@ Levels: `debug` for routine tracing, `info` for state changes worth seeing in a 
 | `[BlankJournals]` | At `kDataLoaded`: added to merchants' stock, or the recipes hidden (writing off) |
 | `[WritingTools]` | Ink used (the uses an inkwell has left) and inkwells running dry |
 | `[WritingMode]` | At `kDataLoaded`: whether player writing is on, and why not |
-| `[BookEditor]` | The diary editor: entering and leaving edit mode, saves and tear-outs (and SkyrimNet's answers), held-back closes; plus the diagnostics listed in [EDITING.md](EDITING.md#diagnostics-to-remove) |
+| `[BookEditor]` | The diary editor: entering and leaving edit mode, saves and tear-outs (and SkyrimNet's answers), new entries, ink and blood, blank journals becoming journals |
 | `[Physical Diaries]`, `[Theft Reconciliation]` | Theft |
 | `[DiaryDB]`, `[BookManager]`, `[Localization]`, `[PapyrusAPI]` | As named |
 
