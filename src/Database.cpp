@@ -30,6 +30,7 @@ namespace SkyrimNetDiaries {
         if (api_initialized_) {
             return true;
         }
+        if (api_too_old_) return false;  // logged once
 
         SKSE::log::info("Initializing SkyrimNet Public API...");
 
@@ -47,12 +48,10 @@ namespace SkyrimNetDiaries {
         if (api_version_ != version) SKSE::log::info("SkyrimNet API version: {}", version);
         api_version_ = version;
 
-        if (version < kRequiredApiVersion || !PublicQueryDiaryEntries) {
-            static bool reported = false;
-            if (!std::exchange(reported, true)) {
-                SKSE::log::error("SkyrimNet public API v{}+ required (found v{}): diary books are off", kRequiredApiVersion,
-                                 version);
-            }
+        if (version < kRequiredApiVersion || !PublicQueryDiaryEntries || !PublicGetTimelineState) {
+            SKSE::log::error("SkyrimNet public API v{}+ required (found v{}): diary books are off", kRequiredApiVersion,
+                             version);
+            api_too_old_ = true;
             return false;
         }
 
@@ -232,22 +231,6 @@ namespace SkyrimNetDiaries {
             return false;
         }
         return true;
-    }
-
-    double Database::GetPlayerLastEventTime() {
-        try {
-            if (!api_initialized_ && !InitializeAPI()) return 0.0;
-            if (!PublicGetRecentEvents) return 0.0;
-            // Same query as SkyrimNet's own continuity check: the player's latest event.
-            const auto events = json::parse(PublicGetRecentEvents(0x14, 1, ""), nullptr, false);
-            if (!events.is_array() || events.empty()) return 0.0;
-            const auto& latest = events.front();
-            if (!latest.contains("gameTime") || !latest["gameTime"].is_number()) return 0.0;
-            return latest["gameTime"].get<double>();
-        } catch (const std::exception& e) {
-            SKSE::log::error("GetPlayerLastEventTime exception: {}", e.what());
-            return 0.0;
-        }
     }
 
     std::string Database::GetActorEngagement(double shortWindowSeconds, double mediumWindowSeconds) {

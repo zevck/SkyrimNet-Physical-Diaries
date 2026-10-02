@@ -102,16 +102,9 @@ This is why DiaryDB is keyed to the SkyrimNet save folder rather than stored in 
 
 SkyrimNet asks the question from its own `kPostLoadGame` work, and its database reports ready well before the player answers. Syncing at that point builds books from "future" entries that a CLEAR then deletes, and the book left behind opens blank. So the post-load sync also waits for the timeline to settle.
 
-**SkyrimNet public API v11 and later:** `TimelineGate::IsSettled` polls `PublicGetTimelineState` (`Database::GetTimelineState`). SkyrimNet marks its check pending at `kPreLoadGame` and keeps it pending while the prompt is open and while a Clear is still deleting, so the sync starts as soon as it reads none (0), kept (2) or cleared (3). There is no time limit while it's pending. The state also gives the outcome logged by `ReconcileWithTimeline`. SNPD doesn't listen for the `SkyrimNet_TimelineResolved` ModEvent: the post-load sync already polls every 100 ms.
+`TimelineGate::IsSettled` polls `PublicGetTimelineState` (`Database::GetTimelineState`). SkyrimNet marks its check pending at `kPreLoadGame` and keeps it pending while the prompt is open and while a Clear is still deleting, so the sync starts as soon as it reads none (0), kept (2) or cleared (3). There is no time limit while it's pending. The state also gives the outcome logged by `ReconcileWithTimeline`. SNPD doesn't listen for the `SkyrimNet_TimelineResolved` ModEvent: the post-load sync already polls every 100 ms.
 
-**Older SkyrimNet** (no `PublicGetTimelineState`): SNPD watches the prompt itself.
-
-1. Once SkyrimNet's database is ready, `TimelineGate::IsSettled` asks SkyrimNet's own question: is the player's latest event (`PublicGetRecentEvents(player, 1)`, `Database::GetPlayerLastEventTime`) later than the current game time? SkyrimNet prompts exactly then. If not, there is nothing to decide and the sync starts at once. That is every normal load, and also a load where only some *diary entries* lie in the future: SkyrimNet doesn't ask then, so its history stays as it is.
-2. Otherwise it waits for SkyrimNet's prompt. A MinHook detour on `MessageBoxData::QueueMessage` (`RELOCATION_ID(51422, 52271)`) compares each queued box with the text of `skynet_DeleteHistoryMessage` (looked up by EditorID at `kDataLoaded`), and wraps that box's callback to see the button. Button 0 is Keep; anything else is Clear.
-3. **Keep** → sync at once. **Clear** → sync once SkyrimNet has deleted the future entries (a few ms; 10 s cap). While the prompt is on screen there is no time limit.
-4. A prompt is expected but not seen within 30 s (for example its text didn't match) → sync anyway and log a warning. If the player's future events disappear first, SkyrimNet has cleared them and the sync starts.
-
-The hook stays installed with API v11 too (it only compares text and wraps a callback); its result is used only without `PublicGetTimelineState`.
+If the prompt never appears, SkyrimNet gives up after 120 s and keeps its history (Keep), and the sync starts then. Until 2.1 SNPD watched the prompt itself, through a hook on `MessageBoxData::QueueMessage`.
 
 ### KEEP and CLEAR
 

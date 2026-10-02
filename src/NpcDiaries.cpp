@@ -75,10 +75,34 @@ namespace SkyrimNetDiaries::NpcDiaries {
         std::atomic<bool> g_skyrimNetDiaries{ true };
         std::atomic<bool> g_dayBoundary{ true };  // shown in the MCM; SkyrimNet applies it
 
-        // A Papyrus call answers later: `then` runs once every read in the batch has answered.
+        // The SkyrimNet settings read; `key` names the MCM ones (GetNpcSetting / SetNpcSetting).
+        struct SkyrimNetSetting {
+            std::string_view key;
+            const char* config;
+            const char* path;
+            std::atomic<bool>* value;
+        };
+        const SkyrimNetSetting kSkyrimNetSettings[] = {
+            { {}, "game", "general.globalAIEnabled", &g_globalAI },
+            { "SkyrimNetDiaries", "Diary", "enabled", &g_skyrimNetDiaries },
+            { "SkyrimNetDayBoundary", "Diary", "respect_day_boundary", &g_dayBoundary },
+        };
+
+        const SkyrimNetSetting* FindSkyrimNetSetting(std::string_view a_key) {
+            if (a_key.empty()) return nullptr;
+            for (const auto& s : kSkyrimNetSettings) {
+                if (s.key == a_key) return &s;
+            }
+            return nullptr;
+        }
+
+        // A Papyrus call answers later, on a VM thread: `then` runs once every read in the batch has answered.
         struct PendingReads {
-            int left = 0;
+            std::atomic<int> left{ 0 };
             std::function<void()> then;
+            void Answer() {
+                if (left.fetch_sub(1) == 1 && then) then();
+            }
         };
 
         class StoreBool : public RE::BSScript::IStackCallbackFunctor {
@@ -87,7 +111,7 @@ namespace SkyrimNetDiaries::NpcDiaries {
                 target_(a_target), pending_(std::move(a_pending)) {}
             void operator()(RE::BSScript::Variable a_result) override {
                 if (a_result.IsBool()) target_ = a_result.GetBool();
-                if (pending_ && --pending_->left == 0 && pending_->then) pending_->then();
+                pending_->Answer();
             }
             void SetObject(const RE::BSTSmartPointer<RE::BSScript::Object>&) override {}
 
@@ -96,20 +120,23 @@ namespace SkyrimNetDiaries::NpcDiaries {
             std::shared_ptr<PendingReads> pending_;
         };
 
-        void ReadSkyrimNetBool(const char* config, const char* path, std::atomic<bool>& target,
-                               const std::shared_ptr<PendingReads>& pending) {
+        // A call that can't be sent counts as answered (the value stays as last read), so the batch still ends.
+        void ReadSkyrimNetBool(const SkyrimNetSetting& setting, const std::shared_ptr<PendingReads>& pending) {
             auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-            if (!vm) return;
-            auto* args = RE::MakeFunctionArguments(RE::BSFixedString(config), RE::BSFixedString(path), true);
-            RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback(new StoreBool(target, pending));
-            vm->DispatchStaticCall("SkyrimNetApi", "GetConfigBool", args, callback);
+            auto* args = RE::MakeFunctionArguments(RE::BSFixedString(setting.config), RE::BSFixedString(setting.path), true);
+            RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback(new StoreBool(*setting.value, pending));
+            if (!vm || !vm->DispatchStaticCall("SkyrimNetApi", "GetConfigBool", args, callback)) {
+                SKSE::log::warn("[NpcDiaries] Couldn't ask SkyrimNet for {} {} (SkyrimNetApi.GetConfigBool)", setting.config,
+                                setting.path);
+                pending->Answer();
+            }
         }
 
         void ReadSkyrimNetSettings(std::function<void()> then = {}) {
-            auto pending = std::make_shared<PendingReads>(PendingReads{ 3, std::move(then) });
-            ReadSkyrimNetBool("game", "general.globalAIEnabled", g_globalAI, pending);
-            ReadSkyrimNetBool("Diary", "enabled", g_skyrimNetDiaries, pending);
-            ReadSkyrimNetBool("Diary", "respect_day_boundary", g_dayBoundary, pending);
+            auto pending = std::make_shared<PendingReads>();
+            pending->left = static_cast<int>(std::size(kSkyrimNetSettings));
+            pending->then = std::move(then);
+            for (const auto& setting : kSkyrimNetSettings) ReadSkyrimNetBool(setting, pending);
         }
 
         // Part of SkyrimNet's actor filter: its black/whitelist factions and speaking races.  SkyrimNet applies
@@ -275,7 +302,7 @@ namespace SkyrimNetDiaries::NpcDiaries {
         }
 
         void Run(std::int32_t day, bool now) {
-            g_lastRunDay = day;
+            g_lastRunDay = std::max(g_lastRunDay, day);  // a skip's start day can run after a later day
             try {
                 RunPicks(day, now);
             } catch (const std::exception& e) {
@@ -306,7 +333,7 @@ namespace SkyrimNetDiaries::NpcDiaries {
                 SKSE::GetTaskInterface()->AddTask([day, now, session]() {
                     if (session != g_session) return;  // a load in between (Revert reset the flag)
                     g_checking = false;
-                    if (day == g_lastRunDay || !Ready()) return;
+                    if (day <= g_lastRunDay || !Ready()) return;
                     if (!g_globalAI || !g_skyrimNetDiaries) {
                         g_nextCheck = std::chrono::steady_clock::now() + kWaitingRecheck;
                         static std::int32_t loggedDay = -1;
@@ -324,7 +351,7 @@ namespace SkyrimNetDiaries::NpcDiaries {
         // Today has reached the writing hour and hasn't run.
         bool Due() {
             const auto today = Today();
-            return today >= 0 && today != g_lastRunDay && Hour() >= RunHour() && Ready();
+            return today >= 0 && today > g_lastRunDay && Hour() >= RunHour() && Ready();
         }
 
         // A time skip (sleep, wait, fast travel, a carriage): where it started.  When it ends in a later day,
@@ -332,11 +359,16 @@ namespace SkyrimNetDiaries::NpcDiaries {
         std::int32_t g_skipStartDay = -1;
         std::atomic<bool> g_waiting{ false };
 
-        void SkipStarts() { g_skipStartDay = Today(); }
+        // Menu events: the day is read at once (a fast travel's clock jumps during the load), the rest on the game
+        // thread with the other run state.
+        void SkipStarts() {
+            const auto day = Today();
+            SKSE::GetTaskInterface()->AddTask([day]() { g_skipStartDay = day; });
+        }
 
         void SkipEnds() {
             const auto day = std::exchange(g_skipStartDay, -1);
-            if (day < 0 || day == g_lastRunDay || Today() <= day || !Ready()) return;
+            if (day < 0 || day <= g_lastRunDay || Today() <= day || !Ready()) return;
             SKSE::log::info("[NpcDiaries] Day {}: a time skip passed the writing hour", day);
             RunWhenAllowed(day, true);
         }
@@ -365,7 +397,7 @@ namespace SkyrimNetDiaries::NpcDiaries {
                         WatchWait();
                     } else {
                         g_waiting = false;
-                        SkipEnds();
+                        SKSE::GetTaskInterface()->AddTask([]() { SkipEnds(); });
                     }
                 } else if (a_event->menuName == RE::LoadingMenu::MENU_NAME) {
                     // Fast travel and carriages skip time during the load: the flag is set when the screen
@@ -374,7 +406,7 @@ namespace SkyrimNetDiaries::NpcDiaries {
                     if (a_event->opening && player && player->GetPlayerFlags().fastTraveling) {
                         SkipStarts();
                     } else if (!a_event->opening) {
-                        SkipEnds();
+                        SKSE::GetTaskInterface()->AddTask([]() { SkipEnds(); });
                     }
                 }
                 return RE::BSEventNotifyControl::kContinue;
@@ -457,21 +489,24 @@ namespace SkyrimNetDiaries::NpcDiaries {
     void RefreshSkyrimNetSettings() { ReadSkyrimNetSettings(); }
 
     std::optional<bool> GetSkyrimNetDiarySetting(std::string_view a_key) {
-        if (a_key == "SkyrimNetDiaries") return g_skyrimNetDiaries.load();
-        if (a_key == "SkyrimNetDayBoundary") return g_dayBoundary.load();
-        return std::nullopt;
+        const auto* setting = FindSkyrimNetSetting(a_key);
+        return setting ? std::optional<bool>(setting->value->load()) : std::nullopt;
     }
 
     bool SetSkyrimNetDiarySetting(std::string_view a_key, bool a_value) {
-        const char* path = a_key == "SkyrimNetDiaries" ? "enabled" : a_key == "SkyrimNetDayBoundary" ? "respect_day_boundary" : nullptr;
+        const auto* setting = FindSkyrimNetSetting(a_key);
         auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-        if (!path || !vm) return false;
-        (a_key == "SkyrimNetDiaries" ? g_skyrimNetDiaries : g_dayBoundary) = a_value;
-        const auto patch = nlohmann::json{ { path, a_value } }.dump();
-        auto* args = RE::MakeFunctionArguments(RE::BSFixedString("Diary"), RE::BSFixedString(patch.c_str()));
+        if (!setting || !vm) return false;
+        const auto patch = nlohmann::json{ { setting->path, a_value } }.dump();
+        auto* args = RE::MakeFunctionArguments(RE::BSFixedString(setting->config), RE::BSFixedString(patch.c_str()));
         RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
-        SKSE::log::info("[NpcDiaries] SkyrimNet's Diary config: {}", patch);
-        return vm->DispatchStaticCall("SkyrimNetApi", "PatchConfig", args, callback);
+        if (!vm->DispatchStaticCall("SkyrimNetApi", "PatchConfig", args, callback)) {
+            SKSE::log::warn("[NpcDiaries] Couldn't change SkyrimNet's {} config (SkyrimNetApi.PatchConfig)", setting->config);
+            return false;
+        }
+        *setting->value = a_value;
+        SKSE::log::info("[NpcDiaries] SkyrimNet's {} config: {}", setting->config, patch);
+        return true;
     }
 
     void DailyDiaryChanged(RE::Actor* a_actor, bool a_daily) {

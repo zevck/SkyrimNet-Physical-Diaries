@@ -129,10 +129,6 @@ namespace SkyrimNetDiaries {
         // SkyrimNet's public API version, once InitializeAPI has run (0: SkyrimNet not loaded).
         static int ApiVersion() { return api_version_; }
 
-        // The player's latest SkyrimNet event, in entry_date units (0: none).  SkyrimNet asks its keep/clear
-        // question on load exactly when this is later than the current game time.
-        static double GetPlayerLastEventTime();
-
         // SkyrimNet's keep/clear check (TimelineState values), or nullopt before public API v11.
         static std::optional<int> GetTimelineState();
 
@@ -184,6 +180,7 @@ namespace SkyrimNetDiaries {
         // Track if API has been initialized
         static inline bool api_initialized_ = false;
         static inline int api_version_ = 0;
+        static inline bool api_too_old_ = false;
     };
 
 } // namespace SkyrimNetDiaries

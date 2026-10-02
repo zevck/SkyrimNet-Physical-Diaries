@@ -75,7 +75,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 | Actor lookup | `src/ActorLookup.cpp`, `include/ActorLookup.h` | `FindActorForBook`: volume → owning NPC by UUID, with a per-session cache |
 | Text rendering | `src/BookText.cpp`, `include/BookText.h` | `FormatDiaryEntries`, text sanitizing, game-date formatting. See [BOOK_TEXT.md](BOOK_TEXT.md). |
 | Save folder, co-save | `src/SaveFolder.cpp`, `src/Serialization.cpp` (+ headers) | Detecting the SkyrimNet save folder from `SkyrimNet.log`; the co-save callbacks and the book-forms record. See [DATABASE.md](DATABASE.md). |
-| Timeline gate | `src/TimelineGate.cpp`, `include/TimelineGate.h` | Holds the post-load sync until SkyrimNet's keep/clear timeline check has resolved: `PublicGetTimelineState` on API v11, else a MinHook detour on `MessageBoxData::QueueMessage` that watches the prompt. See [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#waiting-for-the-decision-timelinegate). |
+| Timeline gate | `src/TimelineGate.cpp`, `include/TimelineGate.h` | Holds the post-load sync until SkyrimNet's keep/clear timeline check has resolved (`PublicGetTimelineState`). See [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#waiting-for-the-decision-timelinegate). |
 | Inter-plugin API | `src/InterPluginAPI.cpp`, `include/InterPluginAPI.h` | Answers `SNPD_QUERY_*` SKSE messages. See [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md#inter-plugin-api-skse-messaging). |
 | Persistence | `src/DiaryDB.cpp`, `include/DiaryDB.h` | Per-save SQLite: volumes, actor templates, stolen volumes, the ranges of journal text written in blood. See [DATABASE.md](DATABASE.md). |
 | SkyrimNet client | `src/Database.cpp`, `include/Database.h`, `include/SkyrimNetPublicAPI.h` | Loads SkyrimNet's exported functions, parses diary JSON, UUID ↔ FormID, names, bio template names |
@@ -98,9 +98,9 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 1. `InitializeLog()`, then `SKSE::Init`.
 2. `Config::Load()` followed at once by `Config::Save()`, so MO2 copies the INI into `overwrite/` and user settings survive mod updates. Debug level is applied from `[General] DebugLog`.
 3. Register `OnMessage`; `Serialization::Register()` registers the co-save callbacks under the unique ID `'SNDB'`.
-4. `DiaryTheftHandler::Register()` (event sinks), `RegisterRetiredBookSweeper()` (cell-attach sink), `Localization::Initialize()`, `BookTextHook::Install()`, `TimelineGate::Install()`, `PapyrusAPI::Register()`.
+4. `DiaryTheftHandler::Register()` (event sinks), `RegisterRetiredBookSweeper()` (cell-attach sink), `Localization::Initialize()`, `BookTextHook::Install()`, `PapyrusAPI::Register()`.
 
-**`kDataLoaded`**: `Database::InitializeAPI()` and `DiaryTheftHandler::RegisterStolenDecorator()` (the native `snpd_diary_stolen` decorator, once); verify all four templates resolve by EditorID and show a message box naming the likely causes if not; `TimelineGate::OnDataLoaded()` (finds SkyrimNet's prompt text); `WritingMode::Detect()` and, only if writing is on, `BookEditor::Register()` and `WritingTools::OnDataLoaded()`; `BlankJournals::OnDataLoaded()`; `NpcDiaries::OnDataLoaded()` (its records, the topics' localized text, the menu sink and the clock thread; [NPC_DIARIES.md](NPC_DIARIES.md)); `Localization::ReadGMSTs()`.
+**`kDataLoaded`**: `Database::InitializeAPI()` and `DiaryTheftHandler::RegisterStolenDecorator()` (the native `snpd_diary_stolen` decorator, once); verify all four templates resolve by EditorID and show a message box naming the likely causes if not;  `WritingMode::Detect()` and, only if writing is on, `BookEditor::Register()` and `WritingTools::OnDataLoaded()`; `BlankJournals::OnDataLoaded()`; `NpcDiaries::OnDataLoaded()` (its records, the topics' localized text, the menu sink and the clock thread; [NPC_DIARIES.md](NPC_DIARIES.md)); `Localization::ReadGMSTs()`.
 
 **`kPreLoadGame`** and **`kNewGame`** both end the session (`EndSession` in `main.cpp`): bump the load generation (an older setup still waiting gives up), `TimelineGate::Reset()`, `BookManager::ClearActorCache()`, close DiaryDB, clear the save folder and the in-memory stolen set, and `SetPostLoadSyncReady(false)` so diary events wait for this load's sync and those deferred from the last session are dropped. `kNewGame` then sets it back to true, since no `kPostLoadGame` follows. A new game gets no `kPreLoadGame`, so before 2026-09-27 a New Game after loading a save kept writing into the previous character's DiaryDB.
 
@@ -112,7 +112,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 3. The post-load sync polls every 100 ms (a sleeper thread re-queues a game-thread task) until `Database::IsMemorySystemReady()` (up to 60 s) **and** `TimelineGate::IsSettled()` (no limit while SkyrimNet's keep/clear check is pending). Then:
    - Detect the save folder from `SkyrimNet.log` and `DiaryDB::Open()` it.
    - **If the DB didn't open or the memory system never became ready**, `PauseDiaryBooks()` and stop: with this save's volumes not loaded, every NPC would look new and get a second set of books. Diary events are ignored (logged at debug) until the next load or new game, and the error names the cause.
-   - `LoadFromDB()` (rows matched against the save's books; volumes without a book are queued for recreation, books without a volume kept unclaimed), `WarnIfWritingOff()` (writing off but the save has journals: a message box once per game run), then `ReconcileWithTimeline()` (volumes reaching past the loaded save are matched against the history SkyrimNet kept).
+   - `LoadFromDB()` (rows matched against the save's books; volumes without a book are queued for recreation, books without a volume kept unclaimed), `WarnIfWritingOff()` (writing off but the save has journals: a message box once per game run), `MigrateVolumesToIds()` (once per DiaryDB: volumes from before 2.1 re-cut by entry id, see [DATABASE.md](DATABASE.md#schema-changes)), then `ReconcileWithTimeline()` (volumes reaching past the loaded save are matched against the history SkyrimNet kept).
    - `DiaryTheftHandler::ReconcileAfterLoad()`: drop theft records made after the loaded save's game time (`stolen_at > now`), then reload the in-memory stolen set the decorator reads.
    - `SetPostLoadSyncReady(true)`, then queue immediate recreation for actors whose volumes had no book in this save, then `QueueNewEntryRecovery()` and `QueueBatchCatchUpScan()`.
 
@@ -137,10 +137,9 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 
 | Context | What runs there |
 |---|---|
-| Main thread | SKSE messages, event sinks, the `TimelineGate` prompt callback, and **Papyrus natives**: they are registered with `callableFromTasklets = false` (CommonLib's default), so the VM defers each call to the game thread. While the game is paused (a menu is open), also every `AddTask` body and input, so opening a book from an inventory runs here. |
+| Main thread | SKSE messages, event sinks, and **Papyrus natives**: they are registered with `callableFromTasklets = false` (CommonLib's default), so the VM defers each call to the game thread. While the game is paused (a menu is open), also every `AddTask` body and input, so opening a book from an inventory runs here. |
 | Any thread | The text hook: it reads `BookManager`'s text snapshot and description index, which are under their own mutex, never `books_`. The book-open refresh runs inline only on the main thread while paused; otherwise it is queued as a task. |
 | The "Poll controls" job (during play) | Every `AddTask` body, then input polling, one after the other. Player activation happens here, so a book read from the world asks the text hook from this job. |
-| Whichever thread queues a message box | The `QueueMessage` hook (`TimelineGate`): it only compares text and wraps a callback |
 | Detached `std::thread` | Sleepers that wait, then queue a game-thread task: the post-load readiness poll, `DeferUntilSyncReady`, the NPC diaries clock (a check every 10 s, for the process's life) its spaced-out requests (one every 3 s; each checks a session counter `Revert` bumps, and drops itself after a load), and a check every 100 ms while the Sleep/Wait menu is open. The NPC diaries' `MenuOpenCloseEvent` sink runs on the main thread: it notes where a sleep, wait or fast travel starts and runs a skipped day when it ends ([NPC_DIARIES.md](NPC_DIARIES.md#when)). |
 | The editor's write queue | One detached worker, started on the first write, that runs the book editor's saves and deletions in order (SkyrimNet blocks while it re-embeds an entry's memory). Each finished job queues a game-thread task; a job from before a load (`BookEditor::Reset` bumps a generation) is ignored there. |
 
@@ -155,7 +154,7 @@ Rules: anything touching forms, inventories or references must run on the game t
 | SkyrimNet | The source of all diary content. SNPD resolves its exports from SkyrimNet's DLL at runtime (`SkyrimNetPublicAPI.h`), and requires public API v11 (`kRequiredApiVersion`): volumes are read with `PublicQueryDiaryEntries` in entry-id order, journals are written with `PublicAddDiaryEntry`, `PublicUpdateDiaryEntry` and `PublicDeleteDiaryEntry`. With an older SkyrimNet, `InitializeAPI` fails, so nothing runs, and a message box at the main menu says so (`[Messages] SkyrimNetTooOld`). |
 | powerofthree's Tweaks **or** Native EditorID Fix | Templates are found with `LookupByEditorID`, which needs one of these. Don't read a form's own ID with `GetFormEditorID()`: it returns "" for books without Native EditorID Fix. |
 | SkyUI | MCM |
-| Address Library (SE/AE) or VR Address Library | The `GetDescription` and `QueueMessage` hooks, and the `BookMenu` vtable the editor's hooks patch. See [DEVELOPMENT.md](DEVELOPMENT.md#engine-touchpoints). |
+| Address Library (SE/AE) or VR Address Library | The `GetDescription` hook and the `BookMenu` vtable the editor's hooks patch. See [DEVELOPMENT.md](DEVELOPMENT.md#engine-touchpoints). |
 | Build: CommonLibSSE-NG v9.1.0 (submodule), vcpkg `sqlite3`, `nlohmann-json`, `spdlog`, `fmt`, `minhook` | |
 
 ---

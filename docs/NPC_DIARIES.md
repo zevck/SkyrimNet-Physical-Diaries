@@ -58,12 +58,12 @@ The player asks an NPC in dialogue: **"Would you keep a diary? Write in it every
 - The topics are top-level player dialogue in `SNPD_DialogueQuest` (start-game enabled, listed in `Seq/SkyrimNet Physical Diaries.seq`, the same setup as Physical Letters' mailing dialogue). The ask needs the feature on (the global `SNPD_NpcDiaries`, set from the INI at load and on MCM changes; a save keeps a global's value, so it's set again after every load) and the NPC outside the faction; the stop only that they're in it, so it always works.
 - **The NPC says nothing**: one response with no text and no voice. Followers, spouses and children can have any voice type, and no vanilla line is recorded for all of them. (Not yet confirmed in game that an empty response ends cleanly; the fallback is a short unvoiced text line.)
 - The fragments add or remove the faction and call `SkyrimNetDiaries_Native.DailyDiaryChanged`, which shows `[Messages] DailyDiaryOn` / `DailyDiaryOff` with the NPC's name. The topic text comes from the locale file (`[Format] DailyDiaryAsk` / `DailyDiaryStop`, set on the topics at load; the ESP's is English).
-- Membership lives on the actor, in the save: no bookkeeping in DiaryDB or the co-save, and Keep/Clear can't confuse it. Other mods or the console can use the faction too.
+- Membership lives on the actor, in the save, so Keep/Clear can't confuse it. SNPD also keeps its own list of the daily writers by FormID (`g_writers`, in the `SNND` co-save record, restored with the save), because SkyrimNet's activity rows are keyed by name ([Who writes](#who-writes)). Other mods or the console can use the faction too: such members are found through the activity rows.
 - SkyrimNet's dialogue actions should pick the topics up like any vanilla topic.
 
 ---
 
 ## Not done yet
 
-- Run in game: a day's run (log), the early run on sleep/wait/map, the dialogue (silent response, faction, notice), the MCM, a reload not running twice, the global after a load.
+- Run in game: the Sleep/Wait run when the clock passes the writing hour, the fast-travel and carriage run, the wait while SkyrimNet's AI or diaries are off (the one-minute recheck), the dialogue (silent response, faction, notice), the MCM's SkyrimNet options (`GetConfigBool` / `PatchConfig`), a reload not running twice, the global after a load.
 - Adopted children for the close-NPC weight.

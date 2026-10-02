@@ -151,9 +151,6 @@ namespace {
                     }
                 }
 
-                // Needs the forms loaded: find SkyrimNet's keep/clear prompt text.
-                SkyrimNetDiaries::TimelineGate::OnDataLoaded();
-
                 // The player's diary editor, only with SNPD's book.swf installed (docs/EDITING.md).
                 SkyrimNetDiaries::WritingMode::Detect();
                 if (SkyrimNetDiaries::WritingMode::IsOn()) {
@@ -193,7 +190,10 @@ namespace {
             SkyrimNetDiaries::NpcDiaries::SyncEnabled();
 
             if (!SkyrimNetDiaries::Database::InitializeAPI()) {
-                SKSE::log::warn("Failed to initialize API (SkyrimNet may not be loaded yet)");
+                // Too old was logged (and shown) once at startup.
+                if (SkyrimNetDiaries::Database::ApiVersion() == 0) {
+                    SKSE::log::warn("Failed to initialize API (SkyrimNet may not be loaded yet)");
+                }
                 SkyrimNetDiaries::SetPostLoadSyncReady(true);
                 break;
             }
@@ -383,9 +383,6 @@ SKSE_PLUGIN_LOAD(const SKSE::LoadInterface* a_skse)
     // Install book text injection hook (replaces Dynamic Book Framework text delivery,
     // covers SE, AE and VR — see BookTextHook.cpp).
     SkyrimNetDiaries::BookTextHook::Install();
-
-    // Watch for SkyrimNet's keep/clear timeline prompt (see TimelineGate.h).
-    SkyrimNetDiaries::TimelineGate::Install();
 
     // Register Papyrus native functions
     SKSE::log::debug("Registering Papyrus native functions...");

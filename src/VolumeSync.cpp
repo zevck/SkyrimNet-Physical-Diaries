@@ -354,7 +354,9 @@ namespace SkyrimNetDiaries {
             bool ok = false;
             const auto entries = formId ? Database::GetEntriesById(formId, 0, 0, kFetchAllEntries, &ok)
                                         : std::vector<DiaryEntry>{};
-            if (!ok) {
+            // SkyrimNet also answers [] on some failures: never write empty bounds over volumes that had entries.
+            const bool hadEntries = std::ranges::any_of(volumes, [](const DiaryBookData& v) { return v.lastKnownEntryCount > 0; });
+            if (!ok || (entries.empty() && hadEntries)) {
                 SKSE::log::warn("[Migrate] {}: couldn't read entries from SkyrimNet — tried again next load",
                                 volumes.front().actorName);
                 continue;
@@ -367,7 +369,7 @@ namespace SkyrimNetDiaries {
                                            entries.size() - next);
                 vol.afterId = afterId;
                 vol.lastId = take > 0 ? entries[next + take - 1].id : afterId;
-                vol.latestDate = 0.0;
+                // Keep the old end date too: after a Clear on this load, ReconcileWithTimeline must still check it.
                 for (std::size_t i = next; i < next + take; ++i) vol.latestDate = std::max(vol.latestDate, entries[i].entry_date);
                 next += take;
                 afterId = vol.lastId;
@@ -398,15 +400,9 @@ namespace SkyrimNetDiaries {
 
             if (latest->lastId < 0) continue;  // not migrated to entry ids
             // Any entry after the latest volume's last update: written while SNPD wasn't listening.
-            bool ok = false;
-            const bool needsUpdate =
-                !SkyrimNetDiaries::Database::GetEntriesById(actorFormId, latest->lastId, 0, 1, &ok).empty();
-            if (needsUpdate) {
+            if (!SkyrimNetDiaries::Database::GetEntriesById(actorFormId, latest->lastId, 0, 1).empty()) {
                 SKSE::log::info("[Recovery] {} vol {}: entries after id {} — queuing update", latest->actorName,
                                 latest->volumeNumber, latest->lastId);
-            }
-
-            if (needsUpdate) {
                 const RE::FormID fid = static_cast<RE::FormID>(actorFormId);
                 SKSE::GetTaskInterface()->AddTask([fid]() { UpdateDiaryForActorInternal(fid); });
                 ++recoveryCount;
