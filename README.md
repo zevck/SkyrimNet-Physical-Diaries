@@ -49,7 +49,7 @@ Found under **Physical Diaries** in the Mod Configuration Menu.
 
 ## 📋 Requirements
 
-- [SkyrimNet](https://github.com/MinLL/SkyrimNet-GamePlugin)
+- [SkyrimNet](https://github.com/MinLL/SkyrimNet-GamePlugin), a version with public API v11 or later
 - [SkyUI](https://www.nexusmods.com/skyrimspecialedition/mods/12604) (for MCM)
 - [SKSE](https://skse.silverlock.org/)
 - [Address Library](https://www.nexusmods.com/skyrimspecialedition/mods/32444) or [VR Address Library](https://www.nexusmods.com/skyrimspecialedition/mods/58101)

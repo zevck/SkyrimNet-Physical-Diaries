@@ -101,7 +101,7 @@ Levels: `debug` for routine tracing, `info` for state changes worth seeing in a 
 | `[BookTextHook]` | `Opening diary` at `info` on every diary open; the per-call entry line only with `DebugLog` on |
 | `[DynamicForms]` | Book-form records saved and loaded, forms the engine renumbered, world copies rebuilt after a load |
 | `[BookForms]` | Books filled in at load, retired books swept (per-copy lines at debug) |
-| `[TimelineGate]`, `[Timeline]` | Waiting for SkyrimNet's keep/clear prompt, and reconciling volumes with the history it kept or cleared |
+| `[TimelineGate]`, `[Timeline]` | Waiting for SkyrimNet's keep/clear check, and reconciling volumes with the history it kept or cleared |
 | `[LoadFromDB]`, `[FindActorForBook]` | Matching DiaryDB's volumes against the save's books, and NPC lookup |
 | `[Recovery]`, `QueueBatchCatchUpScan`, `DiscoveryBatch`, `CatchUp` | Load-time sync (see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md)) |
 | `[SNPD]` | `RefreshVolumeOnOpen` re-renders |

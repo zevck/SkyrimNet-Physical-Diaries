@@ -31,4 +31,7 @@ namespace SkyrimNetDiaries::BookEditor {
     // finish without touching the new session.
     void Reset();
 
+    // Game thread: the player's edits to this book are still being written to SkyrimNet, which has the old text.
+    bool HasPendingWrites(RE::FormID a_bookFormId);
+
 } // namespace SkyrimNetDiaries::BookEditor

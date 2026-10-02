@@ -73,6 +73,8 @@ namespace SkyrimNetDiaries {
         const std::string& GetTemplatesMissingText() const { return templatesMissingText_; }
         // After a load: writing is off, but the save has journals.
         const std::string& GetWritingOffText() const { return writingOffText_; }
+        // Startup: SkyrimNet is older than the public API SNPD needs.
+        const std::string& GetSkyrimNetTooOldText() const { return skyrimNetTooOldText_; }
         // The book editor's prompt on closing with unsaved changes, and its buttons.
         const std::string& GetEditSavePrompt() const { return editSavePrompt_; }
         const std::string& GetEditSave() const { return editSave_; }
@@ -150,6 +152,7 @@ namespace SkyrimNetDiaries {
         std::string emptyVolumeText_;
         std::string templatesMissingText_;
         std::string writingOffText_;
+        std::string skyrimNetTooOldText_;
         std::string editSavePrompt_;
         std::string editSave_;
         std::string editDiscard_;

@@ -20,6 +20,7 @@
 #include "BookManager.h"
 #include "ActorLookup.h"
 #include "BookCreation.h"
+#include "BookEditor.h"
 #include "BookText.h"
 #include "Database.h"
 #include "DiaryDB.h"
@@ -49,13 +50,12 @@ namespace SkyrimNetDiaries {
             r.bookFormId                 = static_cast<std::uint32_t>(d.bookFormId);
             r.volumeNumber               = d.volumeNumber;
             r.kind                       = d.kind;
-            r.startTime                  = d.startTime;
-            r.endTime                    = d.endTime;
+            r.afterId                    = d.afterId;
+            r.lastId                     = d.lastId;
+            r.latestDate                 = d.latestDate;
             r.journalTemplate            = d.journalTemplate;
             r.bioTemplateName            = d.bioTemplateName;
             r.lastKnownEntryCount        = d.lastKnownEntryCount;
-            r.prevVolumeLastCreationTime = d.prevVolumeLastCreationTime;
-            r.prevVolumeCountAtBoundary  = d.prevVolumeCountAtBoundary;
             r.bookText                   = d.cachedBookText;  // "" keeps the stored text
             return r;
         }
@@ -68,13 +68,12 @@ namespace SkyrimNetDiaries {
             d.bookFormId                 = static_cast<RE::FormID>(r.bookFormId);
             d.volumeNumber               = r.volumeNumber;
             d.kind                       = r.kind;
-            d.startTime                  = r.startTime;
-            d.endTime                    = r.endTime;
+            d.afterId                    = r.afterId;
+            d.lastId                     = r.lastId;
+            d.latestDate                 = r.latestDate;
             d.journalTemplate            = r.journalTemplate;
             d.bioTemplateName            = r.bioTemplateName;
             d.lastKnownEntryCount        = r.lastKnownEntryCount;
-            d.prevVolumeLastCreationTime = r.prevVolumeLastCreationTime;
-            d.prevVolumeCountAtBoundary  = r.prevVolumeCountAtBoundary;
             d.cachedBookText             = r.bookText;
             return d;
         }
@@ -244,20 +243,22 @@ namespace SkyrimNetDiaries {
         return registered;
     }
 
-    void BookManager::UpdateBookEndTime(DiaryBookData& vol, double endTime) {
-        vol.endTime = endTime;
-        SKSE::log::debug("Updated book endTime for {} volume {} (FormID 0x{:X}) to {}",
-                         vol.actorUuid, vol.volumeNumber, vol.bookFormId, endTime);
-        DiaryDB::GetSingleton()->UpdateEndTime(vol.actorUuid, vol.kind, vol.volumeNumber, endTime);
+    void BookManager::SetLastEntry(DiaryBookData& vol, int id) {
+        vol.lastId = id;
+        SKSE::log::debug("{} volume {}: last entry id {}", vol.actorName, vol.volumeNumber, id);
+        DiaryDB::GetSingleton()->UpdateLastEntry(vol.actorUuid, vol.kind, vol.volumeNumber, vol.lastId, vol.latestDate);
     }
 
-    std::vector<DiaryEntry> BookManager::GetLiveEntries(const DiaryBookData& vol, RE::FormID actorFormId,
-                                                        double endTime, bool* ok) {
+    void BookManager::SaveVolume(const DiaryBookData& vol) {
+        DiaryDB::GetSingleton()->UpsertVolume(ToRow(vol));
+    }
+
+    std::vector<DiaryEntry> BookManager::GetLiveEntries(const DiaryBookData& vol, RE::FormID actorFormId, bool* ok) {
         if (vol.kind == VolumeKind::Written) {
-            // A journal holds the entries tagged for it, whatever their dates; untagged ones are
-            // journal 1's.
-            auto entries = Database::GetDiaryEntries(actorFormId, kFetchAllEntries, 0.0, 0.0, ok, vol.kind);
+            // A journal holds the entries tagged for it; untagged ones are journal 1's.  In date order.
+            auto entries = Database::GetEntriesById(actorFormId, 0, 0, kFetchAllEntries, ok, vol.kind);
             std::erase_if(entries, [&vol](const DiaryEntry& e) { return std::max(JournalOf(e), 1) != vol.volumeNumber; });
+            std::stable_sort(entries.begin(), entries.end(), EntryOlder);
             auto* db = DiaryDB::GetSingleton();
             for (auto& entry : entries) {
                 auto blood = db->GetBlood(entry.id, entry.content);
@@ -266,29 +267,35 @@ namespace SkyrimNetDiaries {
             }
             return entries;
         }
-        VolumeBounds bounds{
-            .startTime = vol.volumeNumber == 1 ? 0.0 : vol.startTime,
-            .endTime = endTime,
-            .prevLastCreationTime = vol.prevVolumeLastCreationTime,
-            .prevCountAtBoundary = vol.prevVolumeCountAtBoundary,
-        };
-        if (const auto* volumes = GetAllVolumesForActor(vol.actorUuid, vol.kind)) {
-            for (const auto& next : *volumes) {
-                if (next.volumeNumber == vol.volumeNumber + 1) {
-                    bounds.nextStartTime = next.startTime;
-                    bounds.nextPrevLastCreationTime = next.prevVolumeLastCreationTime;
-                    bounds.nextPrevCountAtBoundary = next.prevVolumeCountAtBoundary;
-                    break;
-                }
-            }
+        if (vol.lastId < 0) {  // not migrated yet (SkyrimNet couldn't be read): keep the cached text
+            if (ok) *ok = false;
+            return {};
         }
-        return Database::GetVolumeEntries(actorFormId, bounds, ok, vol.kind);
+        // An earlier volume, or a frozen player diary, ends at lastId; the latest one is open.
+        const auto* volumes = GetAllVolumesForActor(vol.actorUuid, vol.kind);
+        const bool closed = (volumes && !volumes->empty() && volumes->back().volumeNumber != vol.volumeNumber) ||
+                            PlayerDiaryFrozen(actorFormId);
+        if (closed && vol.lastId <= vol.afterId) {
+            if (ok) *ok = true;
+            return {};
+        }
+        return Database::GetEntriesById(actorFormId, vol.afterId, closed ? vol.lastId : 0, kFetchAllEntries, ok,
+                                        vol.kind);
     }
 
     void BookManager::SetVolumeText(DiaryBookData& vol, const std::vector<DiaryEntry>& entries) {
         std::string text = FormatDiaryEntries(entries, vol.actorName, vol.kind);
         const int count = static_cast<int>(entries.size());
-        DiaryDB::GetSingleton()->UpdateBookText(vol.actorUuid, vol.kind, vol.volumeNumber, text, count);
+        auto* db = DiaryDB::GetSingleton();
+        db->UpdateBookText(vol.actorUuid, vol.kind, vol.volumeNumber, text, count);
+        if (vol.kind == VolumeKind::Generated) {
+            double latest = 0.0;
+            for (const auto& e : entries) latest = std::max(latest, e.entry_date);
+            if (latest != vol.latestDate) {
+                vol.latestDate = latest;
+                db->UpdateLastEntry(vol.actorUuid, vol.kind, vol.volumeNumber, vol.lastId, vol.latestDate);
+            }
+        }
         SKSE::log::debug("{} volume {}: text set from {} entries (was {})",
                          vol.actorName, vol.volumeNumber, count, vol.lastKnownEntryCount);
         vol.cachedBookText = std::move(text);
@@ -333,11 +340,11 @@ namespace SkyrimNetDiaries {
                     std::string bookTitle = Localization::GetSingleton()->FormatBookName(bookData.actorName, bookData.volumeNumber,
                                                                                          bookData.kind);
 
-                    SKSE::log::debug("[Regen] '{}' vol={} startTime={:.2f} endTime={:.2f}",
-                                    bookTitle, bookData.volumeNumber, bookData.startTime, bookData.endTime);
+                    SKSE::log::debug("[Regen] '{}' vol={} ids ({}, {}]", bookTitle, bookData.volumeNumber,
+                                     bookData.afterId, bookData.lastId);
 
                     bool queryOk = false;
-                    auto volumeEntries = GetLiveEntries(bookData, actorFormId, bookData.endTime, &queryOk);
+                    auto volumeEntries = GetLiveEntries(bookData, actorFormId, &queryOk);
                     if (!queryOk) {
                         SKSE::log::warn("[Regen] '{}': couldn't read entries from SkyrimNet — keeping its text", bookTitle);
                         continue;
@@ -504,7 +511,6 @@ namespace SkyrimNetDiaries {
                     data.actorName = name;
                     data.actorFormId = 0x14;
                     data.bookFormId = record.formId;
-                    data.startTime = data.endTime = 0.0;
                     data.volumeNumber = number;
                     data.kind = kind;
                     data.journalTemplate = record.templateEditorId;
@@ -556,20 +562,11 @@ namespace SkyrimNetDiaries {
         }
         if (vol.cachedActorFormId == 0) return {};
 
-        // The latest volume has no end (0.0), so entries since the last update show before it runs.
-        // An earlier volume, or a frozen player diary, ends at vol.endTime.
-        double queryEnd = 0.0;
-        {
-            auto* allVols = GetAllVolumesForActor(vol.actorUuid, vol.kind);
-            const bool newerExists = allVols && !allVols->empty() && allVols->back().volumeNumber != vol.volumeNumber;
-            const bool frozen = vol.kind == VolumeKind::Generated && PlayerDiaryFrozen(vol.cachedActorFormId);
-            if (newerExists || frozen) queryEnd = vol.endTime;
-        }
-        return GetLiveEntries(vol, vol.cachedActorFormId, queryEnd, ok);
+        return GetLiveEntries(vol, vol.cachedActorFormId, ok);
     }
 
     void BookManager::RefreshVolumeOnOpen(DiaryBookData* vol) {
-        if (!vol) return;
+        if (!vol || BookEditor::HasPendingWrites(vol->bookFormId)) return;  // the last write re-renders it
 
         // Backfill bioTemplateName (may be missing on old co-save sessions).
         if (vol->bioTemplateName.empty()) {
@@ -589,39 +586,19 @@ namespace SkyrimNetDiaries {
         }
         int liveCount = static_cast<int>(liveEntries.size());
 
-        // Nothing changed and the cached text is current: done (pre-font-tag text re-renders once).  Zero live
-        // entries is real: a volume whose entries were all deleted gets the "all entries removed" page.
-        bool textIsCurrentFormat = vol->cachedBookText.find("<font face='") != std::string::npos;
-        if (liveCount == vol->lastKnownEntryCount && !vol->cachedBookText.empty() && textIsCurrentFormat) {
-            return;
+        // Rendering is cheap next to the query: compare the text, so an edit made outside SNPD (SkyrimNet's
+        // dashboard, another mod) shows too.  Zero entries is real: the "all entries removed" page.
+        if (FormatDiaryEntries(liveEntries, vol->actorName, vol->kind) == vol->cachedBookText) return;
+        if (liveCount == vol->lastKnownEntryCount) {
+            SKSE::log::info("[SNPD] {} vol {}: text changed — re-rendered", vol->actorName, vol->volumeNumber);
         }
 
-        if (!textIsCurrentFormat && !vol->cachedBookText.empty()) {
-            SKSE::log::info("[SNPD] {} vol {} has old-format text (no font tags) — regenerating from {} live entries",
-                vol->actorName, vol->volumeNumber, liveCount);
-        }
-
-        // Entries were deleted — move endTime back so QueueNewEntryRecovery
-        // doesn't probe beyond the now-missing entry's timestamp and spawn a duplicate volume.
         if (liveCount < vol->lastKnownEntryCount) {
             SKSE::log::info("[SNPD] {} vol {} shrank {} → {} entries on open",
                 vol->actorName, vol->volumeNumber, vol->lastKnownEntryCount, liveCount);
-            MoveEndTimeBack(*vol, liveEntries);
         }
 
         SetVolumeText(*vol, liveEntries);
-    }
-
-    void BookManager::MoveEndTimeBack(DiaryBookData& vol, const std::vector<DiaryEntry>& liveEntries) {
-        if (vol.kind != VolumeKind::Generated) return;  // a journal's entries aren't bounded by time
-        if (vol.endTime > 0.0 && !liveEntries.empty()) {
-            double newEnd = liveEntries.back().entry_date;
-            if (newEnd != vol.endTime) {
-                SKSE::log::debug("[SNPD]   endTime updated {:.2f} → {:.2f}", vol.endTime, newEnd);
-                DiaryDB::GetSingleton()->UpdateEndTime(vol.actorUuid, vol.kind, vol.volumeNumber, newEnd);
-                vol.endTime = newEnd;
-            }
-        }
     }
 
     void BookManager::ReconcileAfterWrite(DiaryBookData& vol) {
@@ -631,7 +608,6 @@ namespace SkyrimNetDiaries {
             SKSE::log::warn("[SNPD] {} vol {}: couldn't read entries after an edit", vol.actorName, vol.volumeNumber);
             return;
         }
-        MoveEndTimeBack(vol, liveEntries);
         SetVolumeText(vol, liveEntries);
     }
 

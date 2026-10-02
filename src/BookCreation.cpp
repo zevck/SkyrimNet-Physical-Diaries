@@ -195,30 +195,25 @@ namespace SkyrimNetDiaries {
         }
     }
 
-    void BookManager::CreateDiaryBook(const std::string& actorUuid, const std::string& actorName,
-                                      double startTime, int volumeNumber, RE::FormID targetActorFormID,
-                                      const std::vector<DiaryEntry>& entries, const std::string& bioTemplateName,
-                                      double prevVolumeLastCreationTime, int prevVolumeCountAtBoundary) {
+    void BookManager::CreateDiaryBook(const std::string& actorUuid, const std::string& actorName, int afterId,
+                                      int volumeNumber, RE::FormID targetActorFormID,
+                                      const std::vector<DiaryEntry>& entries, const std::string& bioTemplateName) {
         if (entries.empty()) return;
-        CreateVolumeBook(actorUuid, actorName, VolumeKind::Generated, startTime, entries.back().entry_date, volumeNumber,
-                         targetActorFormID, entries, bioTemplateName, prevVolumeLastCreationTime,
-                         prevVolumeCountAtBoundary);
+        CreateVolumeBook(actorUuid, actorName, VolumeKind::Generated, afterId, volumeNumber, targetActorFormID,
+                         entries, bioTemplateName);
     }
 
     RE::FormID BookManager::CreateEmptyVolume(const std::string& actorUuid, const std::string& actorName,
-                                              double startTime, int volumeNumber, RE::FormID targetActorFormID,
-                                              const std::string& bioTemplateName, double prevVolumeLastCreationTime,
-                                              int prevVolumeCountAtBoundary, const std::string& look) {
-        return CreateVolumeBook(actorUuid, actorName, VolumeKind::Written, startTime, startTime, volumeNumber,
-                                targetActorFormID, {}, bioTemplateName, prevVolumeLastCreationTime,
-                                prevVolumeCountAtBoundary, look);
+                                              int volumeNumber, RE::FormID targetActorFormID,
+                                              const std::string& bioTemplateName, const std::string& look) {
+        return CreateVolumeBook(actorUuid, actorName, VolumeKind::Written, 0, volumeNumber, targetActorFormID, {},
+                                bioTemplateName, look);
     }
 
     RE::FormID BookManager::CreateVolumeBook(const std::string& actorUuid, const std::string& actorName,
-                                             VolumeKind kind, double startTime, double endTime, int volumeNumber,
+                                             VolumeKind kind, int afterId, int volumeNumber,
                                              RE::FormID targetActorFormID, const std::vector<DiaryEntry>& entries,
-                                             const std::string& bioTemplateName, double prevVolumeLastCreationTime,
-                                             int prevVolumeCountAtBoundary, const std::string& look) {
+                                             const std::string& bioTemplateName, const std::string& look) {
         const std::string templateToUse = look.empty() ? SelectJournalTemplate(actorUuid, actorName, targetActorFormID)
                                                        : look;
 
@@ -257,14 +252,12 @@ namespace SkyrimNetDiaries {
         data.actorUuid = actorUuid;
         data.actorName = actorName;
         data.bookFormId = bookId;
-        data.startTime = startTime;
-        data.endTime = endTime;
+        data.afterId = afterId;
+        data.lastId = entries.empty() ? afterId : entries.back().id;
         data.volumeNumber = volumeNumber;
         data.kind = kind;
         data.journalTemplate = templateToUse;
         data.bioTemplateName = bioTemplateName;
-        data.prevVolumeLastCreationTime = prevVolumeLastCreationTime;
-        data.prevVolumeCountAtBoundary = prevVolumeCountAtBoundary;
         data.actorFormId = targetActorFormID;
         auto& registered = RegisterBook(std::move(data));
         SetVolumeText(registered, entries);

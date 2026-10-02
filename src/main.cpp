@@ -121,6 +121,8 @@ namespace {
                 // The stolen-diary decorator for SkyrimNet's prompts (native, registered once).
                 if (SkyrimNetDiaries::Database::InitializeAPI()) {
                     SkyrimNetDiaries::DiaryTheftHandler::RegisterStolenDecorator();
+                } else if (SkyrimNetDiaries::Database::ApiVersion() > 0) {
+                    ShowWarning(SkyrimNetDiaries::Localization::GetSingleton()->GetSkyrimNetTooOldText());
                 }
 
                 // Verify the template books resolve, or every creation fails: usually the ESP isn't enabled or
@@ -260,6 +262,8 @@ namespace {
                     auto invalidActors = SkyrimNetDiaries::BookManager::GetSingleton()->LoadFromDB();
                     volumesLoaded = true;
                     WarnIfWritingOff();
+                    // Once per DiaryDB: volumes from before 2.1 are re-cut by SkyrimNet entry id.
+                    SkyrimNetDiaries::MigrateVolumesToIds();
 
                     // Match SkyrimNet's history: volumes reaching past this save lose the
                     // entries a Clear deleted.

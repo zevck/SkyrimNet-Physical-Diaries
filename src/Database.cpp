@@ -43,11 +43,16 @@ namespace SkyrimNetDiaries {
             return false;
         }
 
-        int version = PublicGetVersion();
-        SKSE::log::info("SkyrimNet API version: {}", version);
+        const int version = PublicGetVersion();
+        if (api_version_ != version) SKSE::log::info("SkyrimNet API version: {}", version);
+        api_version_ = version;
 
-        if (version < 4) {
-            SKSE::log::error("SkyrimNet API v4+ required for diary support (found v{})", version);
+        if (version < kRequiredApiVersion || !PublicQueryDiaryEntries) {
+            static bool reported = false;
+            if (!std::exchange(reported, true)) {
+                SKSE::log::error("SkyrimNet public API v{}+ required (found v{}): diary books are off", kRequiredApiVersion,
+                                 version);
+            }
             return false;
         }
 
@@ -189,43 +194,30 @@ namespace SkyrimNetDiaries {
         return {};
     }
 
-    std::vector<DiaryEntry> Database::GetVolumeEntries(uint32_t formId, const VolumeBounds& bounds, bool* ok,
-                                                       VolumeKind kind) {
-        // Fetch the whole range: SkyrimNet's limit keeps the newest entries, which would
-        // drop the volume's oldest ones.
-        auto entries = GetDiaryEntries(formId, kFetchAllEntries, bounds.startTime, bounds.endTime, ok, kind);
-
-        // Drop exactly prevCountAtBoundary of the previous volume's entries on the shared date, in sorted
-        // order, so two identical entries are never both removed.
-        if (bounds.prevLastCreationTime > 0.0 && bounds.prevCountAtBoundary > 0) {
-            int toRemove = bounds.prevCountAtBoundary;
-            auto it = entries.begin();
-            while (it != entries.end() && toRemove > 0) {
-                if (it->entry_date <= bounds.startTime && it->creation_time <= bounds.prevLastCreationTime) {
-                    it = entries.erase(it);
-                    --toRemove;
-                } else {
-                    ++it;
-                }
+    std::vector<DiaryEntry> Database::GetEntriesById(uint32_t formId, int afterId, int upToId, int limit, bool* ok,
+                                                     VolumeKind kind) {
+        if (ok) *ok = false;  // until the query has succeeded
+        try {
+            if (!api_initialized_ && !InitializeAPI()) return {};
+            // SkyrimNet's id bounds are inclusive; its limit keeps the lowest ids.
+            json query = { { "orderBy", "IdAsc" }, { "maxCount", limit } };
+            if (afterId > 0) query["minId"] = afterId + 1;
+            if (upToId > 0) query["maxId"] = upToId;
+            // The player's diary and journals share SkyrimNet's entries: filtered by tag, before the limit.
+            if (formId == 0x14) {
+                query[kind == VolumeKind::Written ? "includeTags" : "excludeTags"] =
+                    json::array({ std::string(kPlayerWrittenTag) });
             }
+            bool parsed = true;
+            auto entries = ParseDiaryJSON(PublicQueryDiaryEntries(formId, query.dump().c_str()), &parsed);
+            if (ok) *ok = parsed;
+            return entries;
+        } catch (const std::exception& e) {
+            SKSE::log::error("GetEntriesById exception: {}", e.what());
+        } catch (...) {
+            SKSE::log::error("GetEntriesById: unknown exception");
         }
-
-        // The mirror: on the next volume's start date, keep only the nextPrevCountAtBoundary entries it
-        // recorded as belonging here.
-        if (bounds.endTime > 0.0 && bounds.nextPrevCountAtBoundary > 0) {
-            int keep = bounds.nextPrevCountAtBoundary;
-            for (auto it = entries.begin(); it != entries.end();) {
-                if (it->entry_date < bounds.nextStartTime) {
-                    ++it;
-                } else if (keep > 0 && it->creation_time <= bounds.nextPrevLastCreationTime) {
-                    --keep;
-                    ++it;
-                } else {
-                    it = entries.erase(it);
-                }
-            }
-        }
-        return entries;
+        return {};
     }
 
     bool Database::RegisterDecorator(const char* name, const char* description,
@@ -266,6 +258,16 @@ namespace SkyrimNetDiaries {
         } catch (const std::exception& e) {
             SKSE::log::error("GetActorEngagement exception: {}", e.what());
             return {};
+        }
+    }
+
+    std::optional<int> Database::GetTimelineState() {
+        if ((!api_initialized_ && !InitializeAPI()) || !PublicGetTimelineState) return std::nullopt;
+        try {
+            return PublicGetTimelineState();
+        } catch (...) {
+            SKSE::log::error("GetTimelineState exception");
+            return std::nullopt;
         }
     }
 

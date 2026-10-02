@@ -75,7 +75,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 | Actor lookup | `src/ActorLookup.cpp`, `include/ActorLookup.h` | `FindActorForBook`: volume → owning NPC by UUID, with a per-session cache |
 | Text rendering | `src/BookText.cpp`, `include/BookText.h` | `FormatDiaryEntries`, text sanitizing, game-date formatting. See [BOOK_TEXT.md](BOOK_TEXT.md). |
 | Save folder, co-save | `src/SaveFolder.cpp`, `src/Serialization.cpp` (+ headers) | Detecting the SkyrimNet save folder from `SkyrimNet.log`; the co-save callbacks and the book-forms record. See [DATABASE.md](DATABASE.md). |
-| Timeline gate | `src/TimelineGate.cpp`, `include/TimelineGate.h` | Holds the post-load sync until SkyrimNet's keep/clear timeline prompt is answered (MinHook detour on `MessageBoxData::QueueMessage`). See [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#waiting-for-the-decision-timelinegate). |
+| Timeline gate | `src/TimelineGate.cpp`, `include/TimelineGate.h` | Holds the post-load sync until SkyrimNet's keep/clear timeline check has resolved: `PublicGetTimelineState` on API v11, else a MinHook detour on `MessageBoxData::QueueMessage` that watches the prompt. See [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#waiting-for-the-decision-timelinegate). |
 | Inter-plugin API | `src/InterPluginAPI.cpp`, `include/InterPluginAPI.h` | Answers `SNPD_QUERY_*` SKSE messages. See [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md#inter-plugin-api-skse-messaging). |
 | Persistence | `src/DiaryDB.cpp`, `include/DiaryDB.h` | Per-save SQLite: volumes, actor templates, stolen volumes, the ranges of journal text written in blood. See [DATABASE.md](DATABASE.md). |
 | SkyrimNet client | `src/Database.cpp`, `include/Database.h`, `include/SkyrimNetPublicAPI.h` | Loads SkyrimNet's exported functions, parses diary JSON, UUID ↔ FormID, names, bio template names |
@@ -109,7 +109,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 **`kPostLoadGame`**:
 1. `DynamicForms::RebuildLoadedWorldCopies()`: world copies of our books in the loaded cells were built before the load callback filled the books in. Runs first and does not depend on SkyrimNet. Then `NpcDiaries::SyncEnabled()`: the save restored the dialogue's global, so it is set from the INI again.
 2. `Database::InitializeAPI()`. If SkyrimNet is not loaded, stop here.
-3. The post-load sync polls every 100 ms (a sleeper thread re-queues a game-thread task) until `Database::IsMemorySystemReady()` (up to 60 s) **and** `TimelineGate::IsSettled()` (no limit while SkyrimNet's keep/clear prompt is open). Then:
+3. The post-load sync polls every 100 ms (a sleeper thread re-queues a game-thread task) until `Database::IsMemorySystemReady()` (up to 60 s) **and** `TimelineGate::IsSettled()` (no limit while SkyrimNet's keep/clear check is pending). Then:
    - Detect the save folder from `SkyrimNet.log` and `DiaryDB::Open()` it.
    - **If the DB didn't open or the memory system never became ready**, `PauseDiaryBooks()` and stop: with this save's volumes not loaded, every NPC would look new and get a second set of books. Diary events are ignored (logged at debug) until the next load or new game, and the error names the cause.
    - `LoadFromDB()` (rows matched against the save's books; volumes without a book are queued for recreation, books without a volume kept unclaimed), `WarnIfWritingOff()` (writing off but the save has journals: a message box once per game run), then `ReconcileWithTimeline()` (volumes reaching past the loaded save are matched against the history SkyrimNet kept).
@@ -152,7 +152,7 @@ Rules: anything touching forms, inventories or references must run on the game t
 
 | Dependency | Why |
 |---|---|
-| SkyrimNet | The source of all diary content. SNPD resolves its exports from SkyrimNet's DLL at runtime (`SkyrimNetPublicAPI.h`), checks `PublicGetVersion`, and does nothing if they are missing. Writing in the player's diary needs public API v11 (`PublicAddDiaryEntry`, `PublicUpdateDiaryEntry`, `PublicDeleteDiaryEntry`); without it the editor doesn't start. |
+| SkyrimNet | The source of all diary content. SNPD resolves its exports from SkyrimNet's DLL at runtime (`SkyrimNetPublicAPI.h`), and requires public API v11 (`kRequiredApiVersion`): volumes are read with `PublicQueryDiaryEntries` in entry-id order, journals are written with `PublicAddDiaryEntry`, `PublicUpdateDiaryEntry` and `PublicDeleteDiaryEntry`. With an older SkyrimNet, `InitializeAPI` fails, so nothing runs, and a message box at the main menu says so (`[Messages] SkyrimNetTooOld`). |
 | powerofthree's Tweaks **or** Native EditorID Fix | Templates are found with `LookupByEditorID`, which needs one of these. Don't read a form's own ID with `GetFormEditorID()`: it returns "" for books without Native EditorID Fix. |
 | SkyUI | MCM |
 | Address Library (SE/AE) or VR Address Library | The `GetDescription` and `QueueMessage` hooks, and the `BookMenu` vtable the editor's hooks patch. See [DEVELOPMENT.md](DEVELOPMENT.md#engine-touchpoints). |

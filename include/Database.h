@@ -21,6 +21,7 @@
 
 #include "PCH.h"
 #include <charconv>
+#include <optional>
 #include <nlohmann/json.hpp>
 
 namespace SkyrimNetDiaries {
@@ -74,18 +75,6 @@ namespace SkyrimNetDiaries {
     // docs/EDITING.md#diaries-and-journals
     enum class VolumeKind : int { Generated = 0, Written = 1 };
 
-    // A volume's entry range (docs/VOLUMES_AND_SYNC.md#volume-boundaries).  prev*: the volume's own
-    // boundary data; next*: the next volume's, when there is one.
-    struct VolumeBounds {
-        double startTime = 0.0;
-        double endTime = 0.0;                  // 0 = open-ended
-        double prevLastCreationTime = 0.0;
-        int    prevCountAtBoundary = 0;
-        double nextStartTime = 0.0;
-        double nextPrevLastCreationTime = 0.0;
-        int    nextPrevCountAtBoundary = 0;
-    };
-
     // Chronological order: entry_date, then creation_time (real-world write time)
     // to break ties between entries dated the same in-game moment.
     inline bool EntryOlder(const DiaryEntry& a, const DiaryEntry& b) {
@@ -111,6 +100,9 @@ namespace SkyrimNetDiaries {
     // Limit that means "every entry" for GetDiaryEntries.
     inline constexpr int kFetchAllEntries = 10000;
 
+    // SkyrimNet public API version SNPD needs: PublicQueryDiaryEntries, the diary edits, the timeline state.
+    inline constexpr int kRequiredApiVersion = 11;
+
     class Database {
     public:
         Database() = default;
@@ -122,20 +114,27 @@ namespace SkyrimNetDiaries {
         // Check if SkyrimNet memory system is ready
         static bool IsMemorySystemReady();
 
-        // Entries for a FormID (0 = all) in [startTime, endTime], oldest first.  `limit` keeps the NEWEST (use
-        // GetVolumeEntries for "the first N"); `ok` tells empty from failed.  docs/VOLUMES_AND_SYNC.md
+        // Entries for a FormID (0 = all) dated in [startTime, endTime], in date order.  `limit` keeps the NEWEST;
+        // `ok` tells empty from failed.  Volumes use GetEntriesById.  docs/VOLUMES_AND_SYNC.md
         static std::vector<DiaryEntry> GetDiaryEntries(uint32_t formId, int limit = kFetchAllEntries,
                                                         double startTime = 0.0, double endTime = 0.0,
                                                         bool* ok = nullptr, VolumeKind kind = VolumeKind::Generated);
 
-        // A volume's entries, oldest first, minus those its neighbours own on shared dates.  Sizes come
-        // only from the stored boundaries, never from the current EntriesPerVolume.
-        static std::vector<DiaryEntry> GetVolumeEntries(uint32_t formId, const VolumeBounds& bounds,
-                                                         bool* ok = nullptr, VolumeKind kind = VolumeKind::Generated);
+        // Entries in write order (SkyrimNet id), ids in (afterId, upToId] (upToId 0 = no end), the lowest `limit`.
+        // The player's are one kind only.  `ok` tells empty from failed.  docs/VOLUMES_AND_SYNC.md#entries
+        static std::vector<DiaryEntry> GetEntriesById(uint32_t formId, int afterId, int upToId = 0,
+                                                      int limit = kFetchAllEntries, bool* ok = nullptr,
+                                                      VolumeKind kind = VolumeKind::Generated);
+
+        // SkyrimNet's public API version, once InitializeAPI has run (0: SkyrimNet not loaded).
+        static int ApiVersion() { return api_version_; }
 
         // The player's latest SkyrimNet event, in entry_date units (0: none).  SkyrimNet asks its keep/clear
         // question on load exactly when this is later than the current game time.
         static double GetPlayerLastEventTime();
+
+        // SkyrimNet's keep/clear check (TimelineState values), or nullopt before public API v11.
+        static std::optional<int> GetTimelineState();
 
         // SkyrimNet's per-actor activity (memory importance, event counts) over two game-second windows, as its
         // JSON array; "" if unavailable.  docs/NPC_DIARIES.md#who-writes
@@ -184,6 +183,7 @@ namespace SkyrimNetDiaries {
 
         // Track if API has been initialized
         static inline bool api_initialized_ = false;
+        static inline int api_version_ = 0;
     };
 
 } // namespace SkyrimNetDiaries

@@ -389,8 +389,10 @@ namespace SkyrimNetDiaries {
 
     std::string TitlePageDates(const std::vector<DiaryEntry>& entries) {
         if (entries.empty()) return {};
-        std::string first = FormatGameDateShort(entries.front().entry_date);
-        std::string last = FormatGameDateShort(entries.back().entry_date);
+        // Earliest and latest: entries are in write order, and dates run back once after a Keep.
+        const auto [earliest, latest] = std::ranges::minmax_element(entries, {}, &DiaryEntry::entry_date);
+        std::string first = FormatGameDateShort(earliest->entry_date);
+        std::string last = FormatGameDateShort(latest->entry_date);
         return first == last ? first : first + " - " + last;
     }
 

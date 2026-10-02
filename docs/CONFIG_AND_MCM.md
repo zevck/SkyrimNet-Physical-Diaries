@@ -41,7 +41,7 @@ Listed as **Physical Diaries** ("SkyrimNet Physical Diaries" before 2.0.0). SkyU
 Rebuilding the book text:
 - Toggling date headers → `RegenerateTextsOnly()` at once.
 - Font face or size changes → one `RegenerateTextsOnly()` when the MCM closes (`OnConfigClose`), and only if something changed.
-- `RegenerateTextsOnly` → `BookManager::RegenerateAllDiaryTexts`, which re-renders every tracked volume from SkyrimNet. Forms and boundaries are untouched; a volume whose query fails keeps its text.
+- `RegenerateTextsOnly` → `BookManager::RegenerateAllDiaryTexts`, which re-renders every tracked volume from SkyrimNet. Forms and volume bounds are untouched; a volume whose query fails keeps its text.
 
 Reset: see [DATABASE.md](DATABASE.md#mcm-reset-resetalldiariesinternal).
 

@@ -59,57 +59,27 @@ namespace SkyrimNetDiaries {
             return known;
         }
 
-        // Sorts the entries and creates volumes of EntriesPerVolume from startingVolumeNumber.  firstPrev* are the
-        // boundary data with the existing previous volume (see docs/VOLUMES_AND_SYNC.md#volume-boundaries).
-
+        // Creates volumes of EntriesPerVolume from startingVolumeNumber.  `entries` are in id order and follow
+        // afterId (docs/VOLUMES_AND_SYNC.md#volumes).
         void CreateAllVolumesForActor(
             const std::string& uuid,
             const std::string& actorName,
             RE::FormID formId,
             const std::string& bioTemplateName,
-            std::vector<SkyrimNetDiaries::DiaryEntry> allEntries,
+            const std::vector<SkyrimNetDiaries::DiaryEntry>& entries,
             int startingVolumeNumber,
-            double firstPrevLastCreationTime = 0.0,
-            int firstPrevCountAtBoundary = 0)
+            int afterId)
         {
-            if (allEntries.empty()) return;
-
-            std::sort(allEntries.begin(), allEntries.end(), EntryOlder);
-
-            const int chunkSize = SkyrimNetDiaries::Config::GetSingleton()->GetEntriesPerVolume();
-            auto bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
+            const auto chunkSize = static_cast<std::size_t>(SkyrimNetDiaries::Config::GetSingleton()->GetEntriesPerVolume());
+            auto* bookManager = SkyrimNetDiaries::BookManager::GetSingleton();
             int volumeNumber = startingVolumeNumber;
-
-            for (size_t offset = 0; offset < allEntries.size(); offset += chunkSize, ++volumeNumber) {
-                size_t end = std::min(offset + static_cast<size_t>(chunkSize), allEntries.size());
-                std::vector<SkyrimNetDiaries::DiaryEntry> chunk(allEntries.begin() + offset,
-                                                                allEntries.begin() + end);
-
-                // The creation_time of the last entry in the previous chunk is used by GetDiaryEntries
-                // to exclude it from this volume when both volumes share the same entry_date boundary.
-                double prevChunkLastCreationTime = (offset == 0) ? firstPrevLastCreationTime
-                                                                 : allEntries[offset - 1].creation_time;
-
-                // How many previous-chunk entries share this chunk's first date: an exact count, so identical
-                // entries aren't over-removed (see docs/VOLUMES_AND_SYNC.md#volume-boundaries).
-                int prevChunkCountAtBoundary = (offset == 0) ? firstPrevCountAtBoundary : 0;
-                if (offset > 0) {
-                    double boundaryDate = chunk.front().entry_date;
-                    for (int i = static_cast<int>(offset) - 1; i >= 0 && allEntries[i].entry_date == boundaryDate; --i) {
-                        ++prevChunkCountAtBoundary;
-                    }
-                }
-
-                // volume 1 uses 0.0 (no lower bound); later volumes start at their first entry's date,
-                // which under normal circumstances is strictly greater than the previous chunk's last date.
-                double volStart = (volumeNumber == 1) ? 0.0 : chunk.front().entry_date;
-                double volEnd   = chunk.back().entry_date;
-
-                SKSE::log::debug("Creating volume {} for {} ({} entries, {:.2f}\u2013{:.2f})",
-                               volumeNumber, actorName, chunk.size(), volStart, volEnd);
-
-                bookManager->CreateDiaryBook(uuid, actorName, volStart, volumeNumber, formId, chunk,
-                                             bioTemplateName, prevChunkLastCreationTime, prevChunkCountAtBoundary);
+            for (std::size_t offset = 0; offset < entries.size(); offset += chunkSize, ++volumeNumber) {
+                const auto end = std::min(offset + chunkSize, entries.size());
+                const std::vector<SkyrimNetDiaries::DiaryEntry> chunk(entries.begin() + offset, entries.begin() + end);
+                SKSE::log::debug("Creating volume {} for {} ({} entries, ids {}-{})", volumeNumber, actorName,
+                                 chunk.size(), chunk.front().id, chunk.back().id);
+                bookManager->CreateDiaryBook(uuid, actorName, afterId, volumeNumber, formId, chunk, bioTemplateName);
+                afterId = chunk.back().id;
             }
         }
 
@@ -197,18 +167,19 @@ namespace SkyrimNetDiaries {
 
             if (!latestVolume) {
                 // No volumes at all: build every volume from all entries ever written.
-                auto allEntries = SkyrimNetDiaries::Database::GetDiaryEntries(formId, kFetchAllEntries, 0.0, 0.0);
-
+                const auto allEntries = SkyrimNetDiaries::Database::GetEntriesById(formId, 0);
                 if (allEntries.empty()) {
                     SKSE::log::debug("No diary entries for {} (UUID: {})", actorName, uuid);
                     return;
                 }
-
                 SKSE::log::info("First-time init for {}: {} total entries → creating all volumes from 1",
                                actorName, allEntries.size());
-
-                std::string bioTemplateName = SkyrimNetDiaries::Database::GetTemplateNameByUUID(uuid);
-                CreateAllVolumesForActor(uuid, actorName, formId, bioTemplateName, std::move(allEntries), 1);
+                const std::string bioTemplateName = SkyrimNetDiaries::Database::GetTemplateNameByUUID(uuid);
+                CreateAllVolumesForActor(uuid, actorName, formId, bioTemplateName, allEntries, 1, 0);
+                return;
+            }
+            if (latestVolume->lastId < 0) {
+                SKSE::log::warn("{}: volumes not migrated to entry ids yet — update skipped", actorName);
                 return;
             }
 
@@ -216,116 +187,59 @@ namespace SkyrimNetDiaries {
             // pointer into the stored vector: safe to mutate on the game thread.
             if (latestVolume->bioTemplateName.empty()) {
                 latestVolume->bioTemplateName = SkyrimNetDiaries::Database::GetTemplateNameByUUID(uuid);
-                if (!latestVolume->bioTemplateName.empty()) {
-                    SKSE::log::debug("Backfilled bioTemplateName '{}' for {} (migrated save)",
-                                   latestVolume->bioTemplateName, actorName);
-                }
             }
 
-            // GetDiaryEntries startTime is inclusive, so we fetch from endTime and then strip
-            // any entries whose timestamp is <= endTime (they belong to the previous volume).
-            auto newEntries = SkyrimNetDiaries::Database::GetDiaryEntries(formId, kFetchAllEntries, latestVolume->endTime, 0.0);
-            newEntries.erase(
-                std::remove_if(newEntries.begin(), newEntries.end(),
-                    [&](const SkyrimNetDiaries::DiaryEntry& e) { return e.entry_date <= latestVolume->endTime; }),
-                newEntries.end());
-
-            // A new entry can be dated at or before the volume's end (same game moment, or a Keep revert), which the
-            // date test misses: count the entries from the volume's start instead.
-            bool datedInsideVolume = false;
+            // Written since the latest volume's last update, whatever their in-game dates.
+            const auto newEntries = SkyrimNetDiaries::Database::GetEntriesById(formId, latestVolume->lastId);
             if (newEntries.empty()) {
-                const auto sinceStart = SkyrimNetDiaries::Database::GetVolumeEntries(formId, {
-                    .startTime = latestVolume->startTime,
-                    .prevLastCreationTime = latestVolume->prevVolumeLastCreationTime,
-                    .prevCountAtBoundary = latestVolume->prevVolumeCountAtBoundary });
-                if (static_cast<int>(sinceStart.size()) <= latestVolume->lastKnownEntryCount) {
-                    SKSE::log::debug("No new entries for {} since {:.2f}", actorName, latestVolume->endTime);
-                    return;
-                }
-                datedInsideVolume = true;
-                SKSE::log::info("{}: {} new entries dated at or before the end of volume {}",
-                                actorName, sinceStart.size() - latestVolume->lastKnownEntryCount, latestVolume->volumeNumber);
+                SKSE::log::debug("No new entries for {} after id {}", actorName, latestVolume->lastId);
+                return;
             }
-
-            SKSE::log::debug("Found {} new entries for {} since {:.2f}", newEntries.size(), actorName, latestVolume->endTime);
 
             auto npcActor = RE::TESForm::LookupByID<RE::Actor>(formId);
             if (!npcActor) {
                 SKSE::log::warn("Actor 0x{:X} not found - cannot update diary", formId);
                 return;
             }
-
-            // Check if NPC still has the latest volume
             const bool npcHasBook = CountInInventory(
                 npcActor, RE::TESForm::LookupByID<RE::TESBoundObject>(latestVolume->bookFormId)) > 0;
+            const std::string bioTemplateName = latestVolume->bioTemplateName;
 
-            if (!npcHasBook && datedInsideVolume) {
-                SKSE::log::warn("{} no longer has volume {} and the new entries are dated inside it — not added to a book",
-                                actorName, latestVolume->volumeNumber);
-                return;
-            }
             if (!npcHasBook) {
-                // Player took it or it was stolen — start a fresh volume.
+                // Taken or stolen: it ends at its last entry, and new ones start the next volume.
                 SKSE::log::info("{} no longer has volume {} — creating new volumes from {} ({} new entries)",
                                actorName, latestVolume->volumeNumber, latestVolume->volumeNumber + 1, newEntries.size());
-                std::string bioTemplateName = SkyrimNetDiaries::Database::GetTemplateNameByUUID(uuid);
-                CreateAllVolumesForActor(uuid, actorName, formId, bioTemplateName, std::move(newEntries),
-                                         latestVolume->volumeNumber + 1);
+                CreateAllVolumesForActor(uuid, actorName, formId, bioTemplateName, newEntries,
+                                         latestVolume->volumeNumber + 1, latestVolume->lastId);
                 return;
             }
 
-            // NPC has the book: fetch the whole range, not maxEntries + 1, since SkyrimNet's limit keeps the
-            // newest entries and would drop this volume's oldest ones.
-            const int maxEntries = SkyrimNetDiaries::Config::GetSingleton()->GetEntriesPerVolume();
-            auto currentVolumeEntries = SkyrimNetDiaries::Database::GetVolumeEntries(formId, {
-                .startTime = latestVolume->startTime,
-                .prevLastCreationTime = latestVolume->prevVolumeLastCreationTime,
-                .prevCountAtBoundary = latestVolume->prevVolumeCountAtBoundary });
-            if (currentVolumeEntries.empty()) {
-                SKSE::log::warn("{} volume {}: no entries from its start time — skipping update",
-                                actorName, latestVolume->volumeNumber);
+            const auto maxEntries = static_cast<std::size_t>(SkyrimNetDiaries::Config::GetSingleton()->GetEntriesPerVolume());
+            auto current = SkyrimNetDiaries::Database::GetEntriesById(formId, latestVolume->afterId);
+            if (current.empty()) {
+                SKSE::log::warn("{} volume {}: no entries after id {} — skipping update", actorName,
+                                latestVolume->volumeNumber, latestVolume->afterId);
+                return;
+            }
+            if (current.size() <= maxEntries) {
+                bookManager->SetVolumeText(*latestVolume, current);
+                bookManager->SetLastEntry(*latestVolume, current.back().id);
+                SKSE::log::info("Updated {} volume {} with {} entries", actorName, latestVolume->volumeNumber,
+                                current.size());
                 return;
             }
 
-            if (static_cast<int>(currentVolumeEntries.size()) >= maxEntries) {
-                // Volume is full — seal it with exactly maxEntries entries, writing the final text,
-                // then route everything after the cut into new overflow volumes.
-                std::vector<SkyrimNetDiaries::DiaryEntry> finalizedEntries(
-                    currentVolumeEntries.begin(),
-                    currentVolumeEntries.begin() + maxEntries);
-                std::vector<SkyrimNetDiaries::DiaryEntry> overflowEntries(
-                    currentVolumeEntries.begin() + maxEntries,
-                    currentVolumeEntries.end());
-                const double cutTime = finalizedEntries.back().entry_date;
-
-                bookManager->UpdateBookEndTime(*latestVolume, cutTime);
-                bookManager->SetVolumeText(*latestVolume, finalizedEntries);
-
-                SKSE::log::info("{} volume {} sealed at {} entries (cutTime {:.2f}), {} overflow entries → creating new volumes",
-                               actorName, latestVolume->volumeNumber, maxEntries, cutTime, overflowEntries.size());
-
-                if (!overflowEntries.empty()) {
-                    // Boundary data for the first overflow volume: how many sealed entries
-                    // share its first entry_date, and the last sealed entry's creation_time.
-                    const double boundaryDate = overflowEntries.front().entry_date;
-                    const int countAtBoundary = static_cast<int>(std::count_if(
-                        finalizedEntries.begin(), finalizedEntries.end(),
-                        [boundaryDate](const SkyrimNetDiaries::DiaryEntry& e) { return e.entry_date == boundaryDate; }));
-                    const double lastSealedCreationTime = finalizedEntries.back().creation_time;
-
-                    const int nextVolume = latestVolume->volumeNumber + 1;
-                    std::string bioTemplateName = SkyrimNetDiaries::Database::GetTemplateNameByUUID(uuid);
-                    CreateAllVolumesForActor(uuid, actorName, formId, bioTemplateName, std::move(overflowEntries),
-                                             nextVolume, lastSealedCreationTime, countAtBoundary);
-                }
-            } else {
-                // Update the current volume in place.
-                bookManager->UpdateBookEndTime(*latestVolume, currentVolumeEntries.back().entry_date);
-                bookManager->SetVolumeText(*latestVolume, currentVolumeEntries);
-
-                SKSE::log::info("Updated {} volume {} with {} entries",
-                               actorName, latestVolume->volumeNumber, currentVolumeEntries.size());
-            }
+            // Full: keep the first EntriesPerVolume, the rest start new volumes.
+            const std::vector<SkyrimNetDiaries::DiaryEntry> overflow(current.begin() + maxEntries, current.end());
+            current.resize(maxEntries);
+            const int volumeNumber = latestVolume->volumeNumber;
+            bookManager->SetVolumeText(*latestVolume, current);
+            bookManager->SetLastEntry(*latestVolume, current.back().id);
+            SKSE::log::info("{} volume {} sealed at {} entries (id {}), {} overflow entries → creating new volumes",
+                            actorName, volumeNumber, maxEntries, current.back().id, overflow.size());
+            // latestVolume may move: CreateDiaryBook adds to the same vector.
+            CreateAllVolumesForActor(uuid, actorName, formId, bioTemplateName, overflow, volumeNumber + 1,
+                                     current.back().id);
 
         } catch (const std::exception& e) {
             SKSE::log::error("Exception in UpdateDiaryForActor: {}", e.what());
@@ -359,7 +273,7 @@ namespace SkyrimNetDiaries {
                 if (formId == 0) continue;
                 for (auto& vol : volumes) {
                     bool ok = false;
-                    const auto live = bookManager->GetLiveEntries(vol, formId, 0.0, &ok);
+                    const auto live = bookManager->GetLiveEntries(vol, formId, &ok);
                     if (!ok) break;
                     if (static_cast<int>(live.size()) == vol.lastKnownEntryCount) continue;
                     SKSE::log::info("[Timeline] {} journal {}: {} → {} entries", vol.actorName, vol.volumeNumber,
@@ -369,7 +283,10 @@ namespace SkyrimNetDiaries {
                 }
                 continue;
             }
-            if (!DatedAfter(volumes.back().endTime, now)) continue;
+            // A Clear deletes entries dated after the save: only volumes showing such entries can change.
+            if (std::ranges::none_of(volumes, [now](const DiaryBookData& v) { return DatedAfter(v.latestDate, now); })) {
+                continue;
+            }
             const std::string uuid = volumes.front().actorUuid;
             const RE::FormID formId = Database::GetFormIDForUUID(uuid);
             if (formId == 0) continue;
@@ -378,9 +295,13 @@ namespace SkyrimNetDiaries {
             Removal tail{ uuid, volumes.front().kind, volumes.back().actorName, 0, {} };
             bool queryFailed = false;
             for (auto& vol : volumes) {
-                if (!DatedAfter(vol.endTime, now)) continue;
+                if (!DatedAfter(vol.latestDate, now)) {
+                    tail.fromVolume = 0;  // only a trailing run of empty volumes is dropped
+                    tail.books.clear();
+                    continue;
+                }
                 bool ok = false;
-                const auto live = bookManager->GetLiveEntries(vol, formId, vol.endTime, &ok);
+                const auto live = bookManager->GetLiveEntries(vol, formId, &ok);
                 if (!ok) {
                     // A failed read is not "SkyrimNet cleared these entries": leave this
                     // actor's volumes alone rather than delete them.
@@ -394,16 +315,13 @@ namespace SkyrimNetDiaries {
                     tail.books.push_back(vol.bookFormId);
                     continue;
                 }
-                tail.fromVolume = 0;  // only a trailing run of empty volumes is dropped
+                tail.fromVolume = 0;
                 tail.books.clear();
-                if (static_cast<int>(live.size()) == vol.lastKnownEntryCount &&
-                    live.back().entry_date == vol.endTime) {
+                if (static_cast<int>(live.size()) == vol.lastKnownEntryCount) {
                     continue;  // SkyrimNet kept this history: the volume is unchanged
                 }
-                SKSE::log::info("[Timeline] {} vol {}: {} → {} entries, end {:.2f} → {:.2f}",
-                                vol.actorName, vol.volumeNumber, vol.lastKnownEntryCount, live.size(),
-                                vol.endTime, live.back().entry_date);
-                bookManager->UpdateBookEndTime(vol, live.back().entry_date);
+                SKSE::log::info("[Timeline] {} vol {}: {} → {} entries", vol.actorName, vol.volumeNumber,
+                                vol.lastKnownEntryCount, live.size());
                 bookManager->SetVolumeText(vol, live);
                 ++reRendered;
             }
@@ -427,6 +345,39 @@ namespace SkyrimNetDiaries {
         }
     }
 
+    void MigrateVolumesToIds() {
+        auto* bookManager = BookManager::GetSingleton();
+        for (auto& [chain, volumes] : bookManager->GetAllBooksRef()) {
+            if (volumes.empty() || volumes.front().kind != VolumeKind::Generated) continue;
+            if (std::ranges::none_of(volumes, [](const DiaryBookData& v) { return v.lastId < 0; })) continue;
+            const RE::FormID formId = Database::GetFormIDForUUID(volumes.front().actorUuid);
+            bool ok = false;
+            const auto entries = formId ? Database::GetEntriesById(formId, 0, 0, kFetchAllEntries, &ok)
+                                        : std::vector<DiaryEntry>{};
+            if (!ok) {
+                SKSE::log::warn("[Migrate] {}: couldn't read entries from SkyrimNet — tried again next load",
+                                volumes.front().actorName);
+                continue;
+            }
+            // Each volume keeps its size, now in write order; the latest one's rest arrive as new entries.
+            std::size_t next = 0;
+            int afterId = 0;
+            for (auto& vol : volumes) {
+                const auto take = std::min(static_cast<std::size_t>(std::max(vol.lastKnownEntryCount, 0)),
+                                           entries.size() - next);
+                vol.afterId = afterId;
+                vol.lastId = take > 0 ? entries[next + take - 1].id : afterId;
+                vol.latestDate = 0.0;
+                for (std::size_t i = next; i < next + take; ++i) vol.latestDate = std::max(vol.latestDate, entries[i].entry_date);
+                next += take;
+                afterId = vol.lastId;
+                bookManager->SaveVolume(vol);
+            }
+            SKSE::log::info("[Migrate] {}: {} volume(s) now split by entry id ({} of {} entries placed)",
+                            volumes.front().actorName, volumes.size(), next, entries.size());
+        }
+    }
+
     // At load, queues an update for actors whose latest volume misses entries SkyrimNet has (written while SNPD
     // wasn't listening: KEEP on a revert, dashboard edits).
     void QueueNewEntryRecovery(std::unordered_set<std::string>& skipUuids) {
@@ -445,26 +396,14 @@ namespace SkyrimNetDiaries {
             if (actorFormId == 0) continue;
             if (PlayerDiaryFrozen(actorFormId)) continue;
 
-            bool needsUpdate = false;
-            if (latest->endTime > 0.0) {
-                // Probe for any entry strictly after the latest volume's end: entries SNPD never saw.
-                const auto checkEntries = SkyrimNetDiaries::Database::GetDiaryEntries(
-                    actorFormId, 1, latest->endTime + 0.001, 0.0);
-                if (!checkEntries.empty()) {
-                    SKSE::log::info("[Recovery] {} vol {} ends at {:.2f} but newer entries exist — queuing update",
-                                   latest->actorName, latest->volumeNumber, latest->endTime);
-                    needsUpdate = true;
-                }
-            } else {
-                // Only rows from early versions lack an endTime: compare the entry count from the volume's start
-                // with the count it was last rendered with.
-                const int liveCount = static_cast<int>(SkyrimNetDiaries::Database::GetDiaryEntries(
-                    actorFormId, kFetchAllEntries, latest->startTime, 0.0).size());
-                if (liveCount > latest->lastKnownEntryCount) {
-                    SKSE::log::info("[Recovery] {} vol {} (open) has {} live entries vs {} known — queuing update",
-                                   latest->actorName, latest->volumeNumber, liveCount, latest->lastKnownEntryCount);
-                    needsUpdate = true;
-                }
+            if (latest->lastId < 0) continue;  // not migrated to entry ids
+            // Any entry after the latest volume's last update: written while SNPD wasn't listening.
+            bool ok = false;
+            const bool needsUpdate =
+                !SkyrimNetDiaries::Database::GetEntriesById(actorFormId, latest->lastId, 0, 1, &ok).empty();
+            if (needsUpdate) {
+                SKSE::log::info("[Recovery] {} vol {}: entries after id {} — queuing update", latest->actorName,
+                                latest->volumeNumber, latest->lastId);
             }
 
             if (needsUpdate) {
@@ -585,7 +524,7 @@ namespace SkyrimNetDiaries {
                                 }
                                 if (PlayerDiaryFrozen(formId)) return;
 
-                                auto entries = SkyrimNetDiaries::Database::GetDiaryEntries(formId);
+                                const auto entries = SkyrimNetDiaries::Database::GetEntriesById(formId, 0);
                                 if (entries.empty()) return;
 
                                 const std::string actorName = ResolveActorName(uuid, formId, name);
@@ -597,7 +536,7 @@ namespace SkyrimNetDiaries {
                                 // formId already in hand — skip the redundant UUID→FormID call inside GetTemplateNameByUUID.
                                 std::string bioTemplate = SkyrimNetDiaries::Database::GetBioTemplateName(formId);
                                 SKSE::log::info("CatchUp: creating books for {} ({} entries)", actorName, entries.size());
-                                CreateAllVolumesForActor(uuid, actorName, formId, bioTemplate, std::move(entries), 1);
+                                CreateAllVolumesForActor(uuid, actorName, formId, bioTemplate, entries, 1, 0);
 
                             } catch (const std::exception& e) {
                                 SKSE::log::error("CatchUp task exception for {}: {}", name, e.what());

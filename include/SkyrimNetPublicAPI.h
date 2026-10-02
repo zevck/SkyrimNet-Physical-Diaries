@@ -87,6 +87,15 @@ int (*PublicAddDiaryEntry)(uint32_t formId, const char* content, double entryDat
  *  timeline check is pending), the entry is gone, or it failed. */
 bool (*PublicDeleteDiaryEntry)(int entryId) = nullptr;
 
+/** SkyrimNet's keep/clear check after a load: 0 none, 1 pending (check running, prompt open, or a
+ *  Clear still deleting), 2 kept, 3 cleared.  Pending from kPreLoadGame until it resolves. */
+int (*PublicGetTimelineState)() = nullptr;
+
+/** One actor's diary entries filtered by a JSON query (co-identities merged), same shape as
+ *  PublicGetDiaryEntries.  SNPD uses {"orderBy":"IdAsc","minId","maxId","maxCount"}: ids are
+ *  AUTOINCREMENT, so id order is write order; ranges are inclusive.  "[]" on error. */
+std::string (*PublicQueryDiaryEntries)(uint32_t formId, const char* queryJSON) = nullptr;
+
 // ---- v5+: Decorator registration ----
 
 /** Register a native decorator for prompt templates ({{ name(actor_uuid) }}).  The callback
@@ -184,6 +193,9 @@ inline bool FindFunctions() {
                     GetProcAddress(hDLL, "PublicDeleteDiaryEntry"));
                 PublicAddDiaryEntry = reinterpret_cast<int(*)(uint32_t, const char*, double, const char*,
                     const char*, float, const char*)>(GetProcAddress(hDLL, "PublicAddDiaryEntry"));
+                PublicGetTimelineState = reinterpret_cast<int(*)()>(GetProcAddress(hDLL, "PublicGetTimelineState"));
+                PublicQueryDiaryEntries = reinterpret_cast<std::string(*)(uint32_t, const char*)>(
+                    GetProcAddress(hDLL, "PublicQueryDiaryEntries"));
             }
         }
         return true;

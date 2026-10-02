@@ -18,6 +18,7 @@
  */
 
 #include "EditorInternal.h"
+#include "BookEditor.h"
 #include "DiaryDB.h"
 #include "Localization.h"
 
@@ -171,6 +172,11 @@ namespace SkyrimNetDiaries::BookEditor {
             job.bookFormId = g_bookFormId;
             g_writes.Push(std::move(job));
         }
+    }
+
+    bool HasPendingWrites(RE::FormID a_bookFormId) {
+        const auto it = g_pending.find(a_bookFormId);
+        return it != g_pending.end() && it->second.count > 0;
     }
 
 } // namespace SkyrimNetDiaries::BookEditor

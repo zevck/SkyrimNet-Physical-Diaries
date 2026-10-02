@@ -21,8 +21,8 @@
 
 #include "PCH.h"
 
-// Holds the post-load sync back until SkyrimNet's keep/clear decision is made, watching its prompt through a
-// QueueMessage hook.  See docs/VOLUMES_AND_SYNC.md#waiting-for-the-decision-timelinegate.
+// Holds the post-load sync back until SkyrimNet's keep/clear check resolves: its API v11 state, or on older
+// SkyrimNet its prompt watched through a QueueMessage hook.  docs/VOLUMES_AND_SYNC.md#waiting-for-the-decision-timelinegate
 namespace SkyrimNetDiaries::TimelineGate {
 
     // SKSEPlugin_Load: install the QueueMessage hook.
@@ -35,7 +35,7 @@ namespace SkyrimNetDiaries::TimelineGate {
     void Reset();
 
     // Polled on the game thread once SkyrimNet's database is ready.  True once there is nothing from the future,
-    // the player chose Keep, or the player chose Clear and SkyrimNet has finished deleting.
+    // the player chose Keep, or chose Clear and SkyrimNet has finished deleting.
     bool IsSettled();
 
     // What happened to SkyrimNet's history on this load, for logging:

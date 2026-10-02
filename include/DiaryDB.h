@@ -49,13 +49,12 @@ namespace SkyrimNetDiaries {
             std::uint32_t bookFormId                   = 0;
             int           volumeNumber                 = 1;
             VolumeKind    kind                         = VolumeKind::Generated;
-            double        startTime                    = 0.0;
-            double        endTime                      = 0.0;
+            int           afterId                      = 0;    // entries with a higher SkyrimNet id
+            int           lastId                       = -1;   // the last one it holds; -1 = not migrated to ids
+            double        latestDate                   = 0.0;  // its latest entry_date (column end_time)
             std::string  journalTemplate;
             std::string  bioTemplateName;
             int           lastKnownEntryCount          = 0;
-            double        prevVolumeLastCreationTime   = 0.0;
-            int           prevVolumeCountAtBoundary    = 0;
             std::string  bookText;   // rendered font-tagged text ready for injection
         };
 
@@ -67,9 +66,9 @@ namespace SkyrimNetDiaries {
         bool UpdateBookText(const std::string& actorUuid, VolumeKind kind, int volumeNumber,
                             const std::string& text, int entryCount);
 
-        // Update only end_time (a volume's last entry moved: update, seal or deletion).
-        bool UpdateEndTime(const std::string& actorUuid, VolumeKind kind, int volumeNumber,
-                           double endTime);
+        // Update only the last entry id and latest entry date (an update or a seal).
+        bool UpdateLastEntry(const std::string& actorUuid, VolumeKind kind, int volumeNumber,
+                             int lastId, double latestDate);
 
         // Delete a single volume row.
         bool DeleteVolume(const std::string& actorUuid, VolumeKind kind, int volumeNumber);
@@ -119,6 +118,8 @@ namespace SkyrimNetDiaries {
         bool EnsureSchema();
         bool Exec(const char* sql);
         bool HasColumn(const char* table, const char* column);
+        // VACUUM INTO "<db file><suffix>" once, before a migration older SNPD can't read.
+        void Backup(const char* suffix);
 
         sqlite3*    db_          = nullptr;
         std::string openFolder_;  // folder name the DB was opened for

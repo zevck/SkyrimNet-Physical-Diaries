@@ -49,6 +49,10 @@ namespace SkyrimNetDiaries::TimelineGate {
         std::mutex g_textMutex;
         std::string g_promptText;  // skynet_DeleteHistoryMessage text; "" = unknown
 
+        // PublicGetTimelineState values.
+        enum class Timeline : int { kNone = 0, kPending = 1, kKept = 2, kCleared = 3 };
+        std::atomic<int> g_apiState{ -1 };  // last value read; -1 = no API, the prompt watch decides
+
         // Poll state (game thread only).
         bool g_checked = false;
         bool g_promptExpected = false;
@@ -152,9 +156,17 @@ namespace SkyrimNetDiaries::TimelineGate {
         g_checked = false;
         g_promptExpected = false;
         g_loggedWaiting = false;
+        g_apiState.store(-1);
     }
 
     std::string_view Outcome() {
+        switch (static_cast<Timeline>(g_apiState.load())) {
+        case Timeline::kNone:    return "no prompt";
+        case Timeline::kPending: return "unanswered";
+        case Timeline::kKept:    return "Keep";
+        case Timeline::kCleared: return "Clear";
+        default: break;
+        }
         switch (g_prompt.load()) {
         case Prompt::kShown:   return "unanswered";
         case Prompt::kKept:    return "Keep";
@@ -164,6 +176,14 @@ namespace SkyrimNetDiaries::TimelineGate {
     }
 
     bool IsSettled() {
+        // SkyrimNet API v11 reports the check itself, pending until a Clear has finished deleting.
+        if (const auto state = Database::GetTimelineState()) {
+            if (g_apiState.exchange(*state) != *state && *state == static_cast<int>(Timeline::kPending)) {
+                SKSE::log::info("[TimelineGate] Waiting for SkyrimNet's keep/clear check");
+            }
+            return *state != static_cast<int>(Timeline::kPending);
+        }
+
         const auto now = Clock::now();
         if (!g_checked) {
             g_checked = true;

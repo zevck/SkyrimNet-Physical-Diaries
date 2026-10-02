@@ -32,6 +32,7 @@ The folder is located from **the DLL's own path** (`GetModuleHandleExA` on a fun
 | `[Format] VolumeSuffix` | Appended from volume 2 on (default `, v{n}`) | `{n}` number, `{cn}` Chinese numeral |
 | `[Format] EmptyVolumeText` | Page shown when all of a volume's entries were deleted (not in a journal, which is left blank) | |
 | `[Messages] TemplatesMissing` | The startup warning shown when the template books are missing. One line; `\n` is a line break. The button uses the game's own `sOk` string. | |
+| `[Messages] SkyrimNetTooOld` | The startup warning shown when SkyrimNet is older than public API v11 (`kDataLoaded`). Same format and button. | |
 | `[Messages] WritingOff` | Shown once per game run after loading a save with journals while writing is off (`book.swf` missing, outdated or overridden). Same format and button. | |
 | `[Messages] EditSavePrompt`, `EditSave`, `EditDiscard`, `EditKeepWriting` | The book editor's prompt when the player closes their journal with unsaved changes, and its three buttons ([EDITING.md](EDITING.md#closing)). Every locale file has them; a missing one gets the English default from `Localization.cpp`. | |
 | `[Messages] EditSaveFailed` | Notification when SkyrimNet doesn't save an edit. Same fallback. | |

@@ -27,7 +27,9 @@ Created in `EnsureSchema()`.
 | `actor_form_id` | Actor FormID when the volume was made. Used only as a fallback, and only after a UUID back-check (see [BOOK_FORMS.md](BOOK_FORMS.md#finding-the-npc-findactorforbook)). |
 | `book_form_id` | The volume's book form (an `0xFF` runtime FormID). On every load it is matched against the save's co-save record: updated if the save has another form for the volume, the row deleted and recreated if the save has none (see [BOOK_FORMS.md](BOOK_FORMS.md#load)). |
 | `kind` | 0: a diary (SkyrimNet's entries; every NPC volume). 1: the player's journal (what they wrote in the book editor). Each kind numbers its volumes from 1. See [EDITING.md](EDITING.md#diaries-and-journals). |
-| `volume_number`, `start_time`, `end_time`, `prev_volume_last_creation_time`, `prev_volume_count_at_boundary` | Boundaries (see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#volume-boundaries)) |
+| `volume_number`, `after_id`, `last_id` | The volume's SkyrimNet entry ids, `(after_id, last_id]`; `last_id` -1: not migrated yet (see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#volumes)) |
+| `end_time` | The latest `entry_date` the volume shows (`latestDate`) |
+| `start_time`, `prev_volume_last_creation_time`, `prev_volume_count_at_boundary` | Unused since 2.1 (the date boundaries); left in place |
 | `journal_template`, `bio_template_name` | Template EditorID; SkyrimNet bio template name (`player_special` for the player) |
 | `last_known_entry_count` | Entry count at the last render |
 | `book_text` | Rendered text. A cache: it can always be rebuilt from SkyrimNet. `UpsertVolume` with empty text keeps the stored text. |
@@ -44,7 +46,9 @@ Databases from before 2.0.0 also had a `persisted_in_save` column in `volumes` (
 
 There is no version table. New columns are added in `EnsureSchema()` with `ALTER TABLE … ADD COLUMN … DEFAULT …`, and the "duplicate column" error on databases that already have them is ignored (`actor_form_id` was added this way). Existing rows are not rewritten. Code must cope with the default value (for example `actor_form_id = 0` → resolve from the UUID). Follow the same pattern for new columns.
 
-The one exception so far: `kind` joined the primary key (2026-09-29), and SQLite can't change a key. When `volumes` has no `kind` column (`HasColumn`), `EnsureSchema` rebuilds it once in a transaction: a new table, the rows copied (every one kind 0, a diary), the old table dropped, the new one renamed. If that fails it rolls back and the DB doesn't open. It is one-way (an older SNPD fails every volume write on the new key), so the DB is first copied to `diary.db.pre-kind` (`VACUUM INTO`); to go back to 2.0.x, restore that copy.
+The one exception so far: `kind` joined the primary key (2026-09-29), and SQLite can't change a key. When `volumes` has no `kind` column (`HasColumn`), `EnsureSchema` rebuilds it once in a transaction: a new table, the rows copied (every one kind 0, a diary), the old table dropped, the new one renamed. If that fails it rolls back and the DB doesn't open. It is one-way (an older SNPD fails every volume write on the new key), so the DB is first copied to `diary.db.pre-kind` (`VACUUM INTO`, `DiaryDB::Backup`); to go back to 2.0.x, restore that copy.
+
+**Entry ids (2.1):** diary volumes became runs of SkyrimNet entry ids instead of date ranges. `EnsureSchema` adds `after_id` and `last_id` (default -1) after copying the DB to `diary.db.pre-ids`. The rows are re-cut in the post-load sync, which can read SkyrimNet (`MigrateVolumesToIds`, right after `LoadFromDB`): per actor, every entry in id order, each volume taking its `last_known_entry_count` in turn; the latest volume's rest arrives through the load-time recovery as new entries. On a playthrough without a Keep every volume keeps the same entries; after a Keep some move to a neighbouring volume, once. An actor SkyrimNet can't be read for stays at -1 (its volumes keep their cached text and get no updates) and is tried again next load. Older SNPD versions write no `last_id`; restore `diary.db.pre-ids` to go back.
 
 ## Co-save records
 
@@ -76,7 +80,7 @@ With the game closed, or read-only while it runs:
 sqlite3 "<MO2>\overwrite\SKSE\Plugins\SkyrimNetPhysicalDiaries\SkyrimNet-<id>\diary.db"
 ```
 ```sql
-SELECT actor_name, kind, volume_number, book_form_id, start_time, end_time,
+SELECT actor_name, kind, volume_number, book_form_id, after_id, last_id, end_time,
        last_known_entry_count
 FROM volumes ORDER BY actor_name, kind, volume_number;
 

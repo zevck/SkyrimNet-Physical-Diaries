@@ -56,8 +56,8 @@ namespace SkyrimNetDiaries::BookEditor {
             ++number;
             std::string name = Database::GetActorName(uuid);
             if (name.empty()) name = player->GetName();
-            const RE::FormID journal = manager->CreateEmptyVolume(uuid, name, CurrentGameTimeSeconds(), number, 0x14,
-                                                                  Database::GetTemplateNameByUUID(uuid), 0.0, 0, look);
+            const RE::FormID journal = manager->CreateEmptyVolume(uuid, name, number, 0x14,
+                                                                  Database::GetTemplateNameByUUID(uuid), look);
             if (journal != 0) SKSE::log::info("[BookEditor] Made journal {} (0x{:X})", number, journal);
             return journal;
         }

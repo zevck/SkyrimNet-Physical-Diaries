@@ -47,8 +47,12 @@ namespace SkyrimNetDiaries {
     // first (that load's recovery and catch-up scans pick the entry up).
     void DeferUntilSyncReady(RE::FormID formId, void (*handler)(RE::FormID));
 
-    // Post-load, after TimelineGate and LoadFromDB: re-renders or drops volumes ending after the save's game time
-    // whose entries SkyrimNet cleared (docs/VOLUMES_AND_SYNC.md#reconciling-reconcilewithtimeline).
+    // Post-load, right after LoadFromDB: diary volumes still split by date (last_id -1) are re-cut by entry id,
+    // each keeping its size (docs/DATABASE.md#schema-changes).
+    void MigrateVolumesToIds();
+
+    // Post-load, after TimelineGate and LoadFromDB: re-renders or drops volumes showing entries dated after the
+    // save that SkyrimNet cleared (docs/VOLUMES_AND_SYNC.md#reconciling-reconcilewithtimeline).
     void ReconcileWithTimeline();
 
     // kPostLoadGame (revert + KEEP): queues an update for actors whose latest volume misses entries SkyrimNet has.

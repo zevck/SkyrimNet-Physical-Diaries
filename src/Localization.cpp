@@ -230,6 +230,7 @@ namespace SkyrimNetDiaries {
                 }
                 if (key == "TemplatesMissing") templatesMissingText_ = text;
                 else if (key == "WritingOff") writingOffText_ = text;
+                else if (key == "SkyrimNetTooOld") skyrimNetTooOldText_ = text;
                 else if (key == "EditSavePrompt") editSavePrompt_ = text;
                 else if (key == "EditSave") editSave_ = text;
                 else if (key == "EditDiscard") editDiscard_ = text;
@@ -382,6 +383,9 @@ namespace SkyrimNetDiaries {
         writingOffText_ =
             "Physical Diaries' book menu (interface\\book.swf) is missing and writing is disabled. Journals are now read-only. "
             "Please check your installation if this was not intentional.";
+        skyrimNetTooOldText_ =
+            "Physical Diaries needs a newer version of SkyrimNet. Diaries and journals are disabled until SkyrimNet "
+            "is updated.";
         editSavePrompt_ = "Keep the changes to your journal?";
         editSave_ = "Save";
         editDiscard_ = "Discard";
