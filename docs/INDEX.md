@@ -18,7 +18,7 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 | Work on save reverts (SkyrimNet KEEP / CLEAR) | [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#save-reverts-the-keep--clear-fork) | [THEFT.md](THEFT.md#save-reverts) |
 | Change how the text looks or is cleaned up | [BOOK_TEXT.md](BOOK_TEXT.md) | [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md) |
 | Work on the player editing their diary in the book menu | [EDITING.md](EDITING.md) | [DEVELOPMENT.md](DEVELOPMENT.md#swf) |
-| Work on NPCs writing diaries on their own | [NPC_DIARIES.md](NPC_DIARIES.md) | [PLUGIN.md](PLUGIN.md), [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md) |
+| Work on NPCs writing diaries on their own | [NPC_DIARIES.md](NPC_DIARIES.md) | [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md), [DATABASE.md](DATABASE.md#co-save-records) |
 | Fix something VR-specific | [BOOK_TEXT.md](BOOK_TEXT.md#delivery-the-getdescription-hook) | [BOOK_FORMS.md](BOOK_FORMS.md#the-engine-behaviour-this-rests-on), [DEVELOPMENT.md](DEVELOPMENT.md#engine-touchpoints) |
 | Work on theft, return or the SkyrimNet decorator | [THEFT.md](THEFT.md) | [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md) |
 | Add a language or fix a translation | [LOCALIZATION.md](LOCALIZATION.md) | |
@@ -66,4 +66,4 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 - **One DLL for SE, AE and VR.** Test the hook, form creation and the co-save record on VR when you touch them.
 - **A Papyrus change isn't done until the `.pex` is built and shipped.**
 - **There is no automated test suite.** Changes are checked in game through the logs.
-- **These docs describe the code as of 2026-09-28** (v2.0.0, with the new book forms not yet run in game on VR). Line numbers drift; function names are the stable anchor. When the code and a doc disagree, the code wins. Fix the doc in the same change.
+- **These docs describe the code as of 2026-10-01** (v2.0.0, unreleased; the new book forms not yet run in game on VR). Line numbers drift; function names are the stable anchor. When the code and a doc disagree, the code wins. Fix the doc in the same change.

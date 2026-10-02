@@ -2,7 +2,7 @@
 
 How SkyrimNet's diary entries become volumes, how volumes stay in step with SkyrimNet when entries are added or deleted, and how save reverts are handled.
 
-Code: `src/VolumeSync.cpp` (`CreateAllVolumesForActor`, `UpdateDiaryForActorInternal`, `QueueNewEntryRecovery`, `QueueBatchCatchUpScan` / `RunDiscoveryBatch`), `src/Database.cpp` (`GetDiaryEntries`), `src/BookManager.cpp` (`RefreshVolumeOnOpen`), `src/TimelineGate.cpp` (waiting for SkyrimNet's keep/clear decision).
+Code: `src/VolumeSync.cpp` (`CreateAllVolumesForActor`, `UpdateDiaryForActorInternal`, `QueueNewEntryRecovery`, `QueueBatchCatchUpScan` / `RunDiscoveryBatch`, `ReconcileWithTimeline`, `MigrateVolumesToIds`), `src/Database.cpp` (`GetEntriesById`, `GetDiaryEntries`), `src/BookManager.cpp` (`RefreshVolumeOnOpen`), `src/TimelineGate.cpp` (waiting for SkyrimNet's keep/clear decision).
 
 ---
 
@@ -19,7 +19,7 @@ Volumes read SkyrimNet's entries with `Database::GetEntriesById(formId, afterId,
 | `id` | SkyrimNet's entry id: the order of the entries and the bounds of a volume, and what the book editor saves and deletes by. |
 | `tags` | SkyrimNet's tags. `snpd_player_written` marks an entry the player wrote in their journal (and `snpd_written_in_blood` one with text written in blood, see [EDITING.md](EDITING.md#writing-in-blood)); its first line is then kept as written (see [BOOK_TEXT.md](BOOK_TEXT.md#cleaning-llm-output-sanitizebooktext)). SkyrimNet's other fields, such as `location`, aren't read. |
 
-`Database::GetDiaryEntries(formId, limit, startTime, endTime, &ok, kind)` (SkyrimNet's `PublicGetDiaryEntries`: an `entry_date` range, its limit keeping the newest, the result sorted oldest first by `EntryOlder`) is kept for the questions that are about dates: the catch-up scan's discovery across all actors, the editor's journal numbering, NPC diaries' "already written up" test and `TimelineGate`'s fallback.
+`Database::GetDiaryEntries(formId, limit, startTime, endTime, &ok, kind)` (SkyrimNet's `PublicGetDiaryEntries`: an `entry_date` range, its limit keeping the newest, the result sorted oldest first by `EntryOlder`) is kept for the questions that are about dates: the catch-up scan's discovery across all actors, the editor's journal numbering, and NPC diaries' "wrote today" and "already written up" tests.
 
 SkyrimNet merges an actor's **co-identities** into every diary read: former selves after a rename and identity links ([KNOWN_ISSUES.md](KNOWN_ISSUES.md) #8 and #9). If that set grows, entries with ids inside a finished volume's range can appear; the volume shows them the next time it's opened.
 
@@ -34,7 +34,7 @@ A diary volume holds one actor's entries with ids in `(afterId, lastId]` (`Diary
 | Field | Meaning |
 |---|---|
 | `afterId` | The previous volume's `lastId` (0 for volume 1) |
-| `lastId` | Its last entry at its last update or seal. -1: a row from before 2.1, not migrated yet ([DATABASE.md](DATABASE.md#schema-changes)) |
+| `lastId` | Its last entry at its last update or seal. -1: a row from before 2026-10-01, not migrated yet ([DATABASE.md](DATABASE.md#schema-changes)) |
 | `latestDate` | The latest `entry_date` it shows (DiaryDB column `end_time`), for `ReconcileWithTimeline` |
 | `lastKnownEntryCount` | Entry count at the last render |
 
@@ -44,7 +44,7 @@ Entries are shown in write order, so after a Keep the dates run backwards once, 
 
 `CreateAllVolumesForActor(uuid, name, formId, bioTemplate, entries, startingVolume, afterId)` cuts the entries (in id order) into chunks of `EntriesPerVolume` and calls `CreateDiaryBook` for each; a chunk's `afterId` is the previous chunk's last id.
 
-**Empty volumes** (`BookManager::CreateEmptyVolume`) are only the player's journals, made when the player reads a blank journal. Journals aren't split by time: each holds the entries tagged for it (`snpd_journal_<n>`), side by side, so their start and end times mean nothing, and they grow only in the book editor ([EDITING.md](EDITING.md#diaries-and-journals)). Nothing on this page seals, extends or creates them; `ReconcileWithTimeline` only re-renders a journal whose entry count changed.
+**Empty volumes** (`BookManager::CreateEmptyVolume`) are only the player's journals, made when the player reads a blank journal. Journals aren't split by time: each holds the entries tagged for it (`snpd_journal_<n>`), side by side, so their entry-id bounds (`afterId`, `lastId`) mean nothing, and they grow only in the book editor ([EDITING.md](EDITING.md#diaries-and-journals)). Nothing on this page seals, extends or creates them; `ReconcileWithTimeline` only re-renders a journal whose entry count changed.
 
 ---
 
@@ -55,7 +55,7 @@ Called from the `UpdateDiaryFromEvent` native (event listener), from load-time r
 It waits rather than runs **from `kPreLoadGame` until the post-load sync has run**, re-running itself 500 ms later on the game thread (`DeferUntilSyncReady`) (`SetPostLoadSyncReady`). DiaryDB isn't loaded yet, so every actor would look new and get a duplicate volume 1. The event native waits too, so the theft clear doesn't land in the previous save's DB. A wait from an earlier load is dropped when a new load starts; that load's recovery and catch-up scans pick the entry up. Book creation is synchronous, so a volume is in `books_` as soon as it is created and there is nothing else to wait for.
 
 1. **No volumes yet** → fetch every entry and create all volumes from 1.
-2. **Volumes exist** → fetch the entries after the latest volume's `lastId`: written since its last update, whatever their dates. None → nothing to do.
+2. **Volumes exist** (and migrated: a `lastId` of -1 gets no update until the migration has run) → fetch the entries after the latest volume's `lastId`: written since its last update, whatever their dates. None → nothing to do.
    - **The NPC no longer holds the latest volume** (pickpocketed, traded, lost): it keeps `(afterId, lastId]`, and the new entries start volumes at latest + 1.
    - **The NPC holds it:** fetch every entry after its `afterId`.
      - Over the limit → **seal**: re-render with the first `EntriesPerVolume`, set `lastId` to the last of them, and create volumes from the rest after it.
@@ -65,7 +65,7 @@ Rendering writes the text to DiaryDB (`UpdateBookText`) and to `cachedBookText`,
 
 **Sealed** means only this: the volume hit the entry limit and later entries went into a new volume. Elsewhere the code says what it checks: an **earlier volume** is any volume with a newer one after it (`GetLiveEntries` ends it at `lastId`), and the **latest volume** is the one new entries go into.
 
-Until 2.1 volumes were split by `entry_date`, with tie-break data for entries sharing a date (`prev_volume_count_at_boundary`, the "entry #10 missing" bug) and an `endTime` that had to move back on deletions. After a Keep a new entry could be dated inside a finished volume: it was added in the middle of that book, or dropped if the NPC no longer held the latest volume.
+Until 2026-10-01 volumes were split by `entry_date`, with tie-break data for entries sharing a date (`prev_volume_count_at_boundary`, the "entry #10 missing" bug) and an `endTime` that had to move back on deletions. After a Keep a new entry could be dated inside a finished volume: it was added in the middle of that book, or dropped if the NPC no longer held the latest volume.
 
 ---
 
@@ -104,9 +104,7 @@ SkyrimNet asks the question from its own `kPostLoadGame` work, and its database 
 
 `TimelineGate::IsSettled` polls `PublicGetTimelineState` (`Database::GetTimelineState`). SkyrimNet marks its check pending at `kPreLoadGame` and keeps it pending while the prompt is open and while a Clear is still deleting, so the sync starts as soon as it reads none (0), kept (2) or cleared (3). There is no time limit while it's pending. The state also gives the outcome logged by `ReconcileWithTimeline`. SNPD doesn't listen for the `SkyrimNet_TimelineResolved` ModEvent: the post-load sync already polls every 100 ms.
 
-If the prompt never appears, SkyrimNet gives up after 120 s and keeps its history (Keep), and the sync starts then. Until 2.1 SNPD watched the prompt itself, through a hook on `MessageBoxData::QueueMessage`.
-
-### KEEP and CLEAR
+If the prompt never appears, SkyrimNet gives up after 120 s and keeps its history (Keep), and the sync starts then. Until 2026-10-01 SNPD watched the prompt itself, through a hook on `MessageBoxData::QueueMessage`.
 
 ### Reconciling: `ReconcileWithTimeline`
 

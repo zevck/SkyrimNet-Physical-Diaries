@@ -33,7 +33,7 @@ namespace SkyrimNetDiaries::Serialization {
         // (docs/DATABASE.md#co-save-records).
         constexpr std::uint32_t kSerializationId = 'SNDB';
         constexpr std::uint32_t kBookFormsRecord = 'SNBF';
-        constexpr std::uint32_t kNpcDiariesRecord = 'SNND';  // the game day NPC diaries last ran
+        constexpr std::uint32_t kNpcDiariesRecord = 'SNND';  // NPC diaries: the day last run, the daily writers
 
         void SaveCallback(SKSE::SerializationInterface* a_intfc) {
             try {

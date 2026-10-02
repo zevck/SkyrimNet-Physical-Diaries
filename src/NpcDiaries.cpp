@@ -41,8 +41,6 @@ namespace SkyrimNetDiaries::NpcDiaries {
         constexpr auto kStagger = std::chrono::seconds(3);
         // While the Sleep/Wait menu is open: a wait passes the writing hour in well under a second.
         constexpr auto kWaitPoll = std::chrono::milliseconds(100);
-        // While SkyrimNet's AI or diaries are off and a day is due: how often to ask again.
-        constexpr auto kWaitingRecheck = std::chrono::minutes(1);
         constexpr double kDaySeconds = 86400.0, kWeekSeconds = 604800.0;
         constexpr std::string_view kNamePlaceholder = "{Name}";
 
@@ -214,6 +212,13 @@ namespace SkyrimNetDiaries::NpcDiaries {
             return picked;
         }
 
+        // Has an entry dated this game day (the player's diary hotkey, SkyrimNet's own generation, a run before a
+        // reload): not asked again, whatever events are left.
+        bool WroteOn(RE::FormID formId, std::int32_t day) {
+            const double start = day * kDaySeconds;
+            return !Database::GetDiaryEntries(formId, 1, start, start + kDaySeconds - 0.001).empty();
+        }
+
         // Every daily writer of this save (uncapped: the player's choice), unless switched off in the MCM.
         std::vector<Candidate> DailyWriters() {
             std::vector<Candidate> writers;
@@ -234,9 +239,9 @@ namespace SkyrimNetDiaries::NpcDiaries {
             }
             auto* config = Config::GetSingleton();
             const bool closeBoost = config->Get(Config::kNpcCloseBoost) != 0;
-            const auto writers = DailyWriters();
+            auto writers = DailyWriters();
             std::vector<Candidate> pool;
-            int quiet = 0, unknown = 0, filtered = 0, writtenUp = 0;
+            int quiet = 0, unknown = 0, filtered = 0, wroteToday = 0, writtenUp = 0;
             const double gameNow = CurrentGameTimeSeconds();
             for (const auto& a : list) {
                 if (!a.is_object()) continue;
@@ -261,6 +266,10 @@ namespace SkyrimNetDiaries::NpcDiaries {
                     ++filtered;
                     continue;
                 }
+                if (WroteOn(formId, day)) {
+                    ++wroteToday;
+                    continue;
+                }
                 // Their newest entry is after their last event: everything is written up, SkyrimNet would decline.
                 const auto newest = Database::GetDiaryEntries(formId, 1);
                 if (!newest.empty() && newest.back().entry_date >= lastEvent) {
@@ -273,9 +282,11 @@ namespace SkyrimNetDiaries::NpcDiaries {
                 if (closeBoost && IsClose(actor)) c.score *= 2.0;
                 pool.push_back(std::move(c));
             }
+            const auto writersWrote = std::erase_if(writers, [day](const Candidate& w) { return WroteOn(w.formId, day); });
             SKSE::log::info("[NpcDiaries] Day {}: {} actor(s) from SkyrimNet: {} quiet in the last day, {} not loaded as "
-                            "actors, {} filtered out, {} written up, {} candidate(s); {} daily writer(s)",
-                            day, list.size(), quiet, unknown, filtered, writtenUp, pool.size(), writers.size());
+                            "actors, {} filtered out, {} wrote today, {} written up, {} candidate(s); {} daily writer(s), "
+                            "{} more wrote today", day, list.size(), quiet, unknown, filtered, wroteToday, writtenUp,
+                            pool.size(), writers.size(), writersWrote);
             std::mt19937 rng{ std::random_device{}() };
             const auto random = PickWeighted(std::move(pool), config->Get(Config::kNpcDailyRandom), rng);
 
@@ -292,8 +303,12 @@ namespace SkyrimNetDiaries::NpcDiaries {
             Dispatch(std::move(picks), now);
         }
 
+        // A time skip's days already covered by its one run (see SkipEnds); 0 or below: none pending.
+        std::int32_t g_skipThrough = -1;
+
         void Run(std::int32_t day, bool now) {
-            g_lastRunDay = std::max(g_lastRunDay, day);  // a skip's start day can run after a later day
+            // Never backwards (a skip's start day can run after a later one); a skip's run covers its days.
+            g_lastRunDay = std::max({ g_lastRunDay, day, std::exchange(g_skipThrough, -1) });
             try {
                 RunPicks(day, now);
             } catch (const std::exception& e) {
@@ -312,13 +327,12 @@ namespace SkyrimNetDiaries::NpcDiaries {
             return player && player->Is3DLoaded();  // not the main menu, or a load in progress
         }
 
-        // Asks SkyrimNet first: with its AI or diaries off every request would fail with an error, so the day
-        // waits (not marked as run) and asks again every kWaitingRecheck.  Game thread.
+        // Asks SkyrimNet first: with its AI or diaries off the player wants none, so the day is skipped (marked as
+        // run; every request would fail with an error anyway).  Game thread.
         bool g_checking = false;
-        std::chrono::steady_clock::time_point g_nextCheck{};
 
         void RunWhenAllowed(std::int32_t day, bool now) {
-            if (g_checking || std::chrono::steady_clock::now() < g_nextCheck) return;
+            if (g_checking) return;
             g_checking = true;
             ReadSkyrimNetSettings([day, now, session = g_session]() {
                 SKSE::GetTaskInterface()->AddTask([day, now, session]() {
@@ -326,12 +340,9 @@ namespace SkyrimNetDiaries::NpcDiaries {
                     g_checking = false;
                     if (day <= g_lastRunDay || !Ready()) return;
                     if (!g_globalAI || !g_skyrimNetDiaries) {
-                        g_nextCheck = std::chrono::steady_clock::now() + kWaitingRecheck;
-                        static std::int32_t loggedDay = -1;
-                        if (std::exchange(loggedDay, day) != day) {
-                            SKSE::log::info("[NpcDiaries] Day {}: waiting, SkyrimNet's {} off", day,
-                                            !g_globalAI ? "AI is" : "diaries are");
-                        }
+                        g_lastRunDay = std::max({ g_lastRunDay, day, std::exchange(g_skipThrough, -1) });
+                        SKSE::log::info("[NpcDiaries] Day {}: skipped, SkyrimNet's {} off", day,
+                                        !g_globalAI ? "AI is" : "diaries are");
                         return;
                     }
                     Run(day, now);
@@ -345,23 +356,43 @@ namespace SkyrimNetDiaries::NpcDiaries {
             return today >= 0 && today > g_lastRunDay && Hour() >= RunHour() && Ready();
         }
 
-        // A time skip (sleep, wait, fast travel, a carriage): where it started.  When it ends in a later day,
-        // the start day passed its writing hour without a run: run it now.  Game thread.
+        // A time skip (sleep, wait, fast travel, a carriage), however many days long, gives one run: during a wait
+        // when the clock passes the writing hour, else when it ends.  Game thread.  docs/NPC_DIARIES.md#when
         std::int32_t g_skipStartDay = -1;
+        bool g_skipActive = false;  // the clock's tick waits until it ends
+        bool g_skipRan = false;
         std::atomic<bool> g_waiting{ false };
 
         // Menu events: the day is read at once (a fast travel's clock jumps during the load), the rest on the game
         // thread with the other run state.
         void SkipStarts() {
             const auto day = Today();
-            SKSE::GetTaskInterface()->AddTask([day]() { g_skipStartDay = day; });
+            SKSE::GetTaskInterface()->AddTask([day]() {
+                g_skipStartDay = day;
+                g_skipActive = true;
+                g_skipRan = false;
+            });
         }
 
+        // Every day the skip passed the writing hour on counts as run: through today if it's past the hour now.
         void SkipEnds() {
-            const auto day = std::exchange(g_skipStartDay, -1);
-            if (day < 0 || day <= g_lastRunDay || Today() <= day || !Ready()) return;
-            SKSE::log::info("[NpcDiaries] Day {}: a time skip passed the writing hour", day);
-            RunWhenAllowed(day, true);
+            const auto start = std::exchange(g_skipStartDay, -1);
+            const bool active = std::exchange(g_skipActive, false);
+            const bool ran = std::exchange(g_skipRan, false);
+            if (!active || start < 0 || !Ready()) return;
+            const auto through = Hour() >= RunHour() ? Today() : Today() - 1;
+            if (through < start || through <= g_lastRunDay) return;  // no writing hour passed, or already run
+            if (ran) {
+                // The wait's run may still be asking SkyrimNet for its settings: let it mark the days.
+                if (g_checking) {
+                    g_skipThrough = through;
+                } else {
+                    g_lastRunDay = through;
+                }
+                return;
+            }
+            SKSE::log::info("[NpcDiaries] Days {}-{}: a time skip passed the writing hour", start, through);
+            RunWhenAllowed(through, true);
         }
 
         // Every kWaitPoll while sleeping or waiting: run the moment the clock passes the writing hour.
@@ -370,7 +401,10 @@ namespace SkyrimNetDiaries::NpcDiaries {
             std::thread([]() {
                 while (g_waiting) {
                     SKSE::GetTaskInterface()->AddTask([]() {
-                        if (g_waiting && Due()) RunWhenAllowed(Today(), true);
+                        if (g_waiting && g_skipActive && !g_skipRan && Due()) {
+                            g_skipRan = true;
+                            RunWhenAllowed(Today(), true);
+                        }
                     });
                     std::this_thread::sleep_for(kWaitPoll);
                 }
@@ -409,7 +443,7 @@ namespace SkyrimNetDiaries::NpcDiaries {
                 for (;;) {
                     std::this_thread::sleep_for(kTickInterval);
                     SKSE::GetTaskInterface()->AddTask([]() {
-                        if (Due()) RunWhenAllowed(Today(), false);
+                        if (!g_skipActive && Due()) RunWhenAllowed(Today(), false);
                     });
                 }
             }).detach();
@@ -455,9 +489,11 @@ namespace SkyrimNetDiaries::NpcDiaries {
         g_lastRunDay = -1;
         g_writers.clear();
         g_skipStartDay = -1;
+        g_skipActive = false;
+        g_skipRan = false;
+        g_skipThrough = -1;
         g_waiting = false;
         g_checking = false;
-        g_nextCheck = {};
         ++g_session;
     }
 

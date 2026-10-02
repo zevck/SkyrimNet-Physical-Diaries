@@ -13,7 +13,7 @@ The rendered text is Skyrim book markup: HTML-like `<font>` / `<p align>` tags a
 | Page | Content |
 |---|---|
 | 0 | Blank |
-| 1 | Title (`Localization::FormatTitle`: `DiaryTitle`, or `JournalTitle` for the player's journal) centred at `TitleSize`, then the date range at `SmallSize` |
+| 1 | Title (`Localization::FormatTitle`: `DiaryTitle`, or `JournalTitle` for the player's journal) centred at `TitleSize`, then the earliest and latest entry dates at `SmallSize` (`TitlePageDates`: entries are in write order, so after a Keep the first page isn't the earliest, see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#volumes)) |
 | 2 … | One entry per page: an optional date header (`DateSize`), then the entry at `ContentSize` |
 
 - **Every paragraph gets its own `<font face size>` tag.** Skyrim resets the font after `\n\n`, so one outer tag does not carry through.

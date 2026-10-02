@@ -15,7 +15,7 @@ Prerequisites: MSVC x64 with C++23, CMake ≥ 3.21 and vcpkg with the `VCPKG_ROO
 v9 changes that SNPD relies on (keep them when updating CommonLib again):
 - The entry point is `SKSE_PLUGIN_LOAD(...)`; v9 removed the `SKSEAPI` macro.
 - `SKSE::Init(a_skse, { .log = false })`. By default v9 installs its own logger on the same `SkyrimNetPhysicalDiaries.log` file, replacing the one `InitializeLog` set up.
-- The engine hook (`GetDescription`) is a MinHook detour installed through `InstallDetour` (`include/Detour.h`). SNPD allocates no SKSE trampoline. (v9's `SKSE::AllocTrampoline` is deprecated and silently allocates nothing without a `TrampolineInterface`, should one ever be needed.)
+- The one MinHook detour (`GetDescription`) is installed through `InstallDetour` (`include/Detour.h`). SNPD allocates no SKSE trampoline. (v9's `SKSE::AllocTrampoline` is deprecated and silently allocates nothing without a `TrampolineInterface`, should one ever be needed.)
 
 **Use `Build_Local.ps1`** (repo root, modeled on SkyrimNet's). It builds only the plugin, incrementally; compiles Papyrus with Pyro; and deploys to every configured test instance. It ends with a PASS/FAIL banner, and the same result is written to `%TEMP%\snpd-build-result.json`.
 
@@ -104,11 +104,15 @@ Levels: `debug` for routine tracing, `info` for state changes worth seeing in a 
 | `[TimelineGate]`, `[Timeline]` | Waiting for SkyrimNet's keep/clear check, and reconciling volumes with the history it kept or cleared |
 | `[LoadFromDB]`, `[FindActorForBook]` | Matching DiaryDB's volumes against the save's books, and NPC lookup |
 | `[Recovery]`, `QueueBatchCatchUpScan`, `DiscoveryBatch`, `CatchUp` | Load-time sync (see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md)) |
+| `[Migrate]` | Once per DiaryDB, at load: diary volumes re-cut by SkyrimNet entry id ([DATABASE.md](DATABASE.md#schema-changes)) |
+| `[Regen]` | MCM Regenerate: each volume re-rendered |
+| `[DiaryTheftHandler]` | Theft and return detection, the stolen-diary decorator |
+| `[InterPluginAPI]` | Requests from other plugins |
 | `[SNPD]` | `RefreshVolumeOnOpen` re-renders |
 | `[BlankJournals]` | At `kDataLoaded`: added to merchants' stock, or the recipes hidden (writing off) |
 | `[WritingTools]` | Ink used (the uses an inkwell has left) and inkwells running dry |
 | `[WritingMode]` | At `kDataLoaded`: whether player writing is on, and why not |
-| `[NpcDiaries]` | At `kDataLoaded`: ready (on/off). Each day's run: a summary (quiet, not loaded, filtered, written up, candidates, daily writers) and each pick with its score; a fast-travel early run; daily writers starting and stopping. Every actor's numbers at debug ([NPC_DIARIES.md](NPC_DIARIES.md)) |
+| `[NpcDiaries]` | At `kDataLoaded`: ready (on/off). Each day's run: a summary (quiet, not loaded, filtered, wrote today, written up, candidates, daily writers and how many of them wrote today) and each pick with its score; `Days A-B: a time skip passed the writing hour` (sleep, wait, fast travel, carriages); `Day N: skipped, SkyrimNet's AI is off` (or diaries); SkyrimNet diary-config changes from the MCM; daily writers starting and stopping. Every actor's numbers at debug ([NPC_DIARIES.md](NPC_DIARIES.md)) |
 | `[BookEditor]` | The diary editor: entering and leaving edit mode, saves and tear-outs (and SkyrimNet's answers), new entries, ink and blood, blank journals becoming journals |
 | `[Physical Diaries]`, `[Theft Reconciliation]` | Theft |
 | `[DiaryDB]`, `[BookManager]`, `[Localization]`, `[PapyrusAPI]` | As named |
@@ -146,8 +150,9 @@ Check these whenever CommonLib or the game runtime changes.
 | Leveled list in memory | `BlankJournals::AddToMerchants` | Appends to `TESLeveledList::entries` of Skyrim.esm `LItemMiscVendorMiscItems75` (`0x09AF0A`) and updates `numEntries`, which is a `uint8`: a list already at 255 entries is left alone. |
 | Recipe workbench | `BlankJournals::OnDataLoaded` | `BGSConstructibleObject::benchKeyword` set to null hides a recipe (writing off). |
 | Health | `BledFor` (`BookEditor.cpp`) | `ActorValueOwner::GetPermanentActorValue` / `GetActorValue` / `DamageActorValue(kHealth)` for writing in blood. |
+| Player flags | `NpcDiaries` (`MenuSink`) | `PlayerCharacter::GetPlayerFlags().fastTraveling`, read as the loading screen opens: set for fast travel and carriages, not doors (logged on AE 2026-10-01) |
 | Inventory items | `WritingTools::UseInk` | `TESObjectREFR::RemoveItem` and `AddObjectToContainer` swap one inkwell for the next; no inventory refresh (each one tried broke the menu: see [EDITING.md](EDITING.md#quill-and-ink)). |
-| Event sinks | `DiaryTheftHandler`, `RetiredBookSweeper` (`BookCreation.cpp`), `BookEditor` | `TESContainerChangedEvent`, `MenuOpenCloseEvent`, `TESCellAttachDetachEvent` |
+| Event sinks | `DiaryTheftHandler`, `RetiredBookSweeper` (`BookCreation.cpp`), `BookEditor`, `NpcDiaries` (`MenuOpenCloseEvent`: Sleep/Wait, loading screens) | `TESContainerChangedEvent`, `MenuOpenCloseEvent`, `TESCellAttachDetachEvent` |
 | Retired-book sweep and world copies | `SweepRetiredBooks`, `RebuildLoadedWorldCopies` | `TES::ForEachReference`, `GetInventory(filter, noInit = true)`, `TESFaction::vendorData.merchantContainer`, `TESObjectREFR::Disable`/`Enable`/`SetDelete`/`RemoveItem` |
 | Avoided on VR | — | `BSPointerHandle::get()` (`RELOCATION_ID(12785, 12922)`) is missing from the VR Address Library and crashes; use `Actor::LookupByHandle` (12204/12332) if a handle ever needs resolving. `MenuTopicManager::speaker` likewise. |
 

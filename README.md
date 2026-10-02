@@ -43,6 +43,11 @@ Found under **Physical Diaries** in the Mod Configuration Menu.
 - **Favor Followers and Spouse** - Followers and your spouse are twice as likely to be picked (default: on).
 - **SkyrimNet: Diary Generation** and **SkyrimNet: Diary Day Boundary** - SkyrimNet's own diary settings, changed here and saved in SkyrimNet's config. With the day boundary off, an NPC's entry covers everything since their last one, so days you skip past midnight (sleeping, fast travel) aren't lost.
 
+**Daily Writers**
+- **Write Every Day** - The NPCs listed on this page write in their diary every day, besides the random picks (default: on). Off keeps the list.
+- **Add Targeted Actor** - Adds the NPC in your crosshair to the list. The list belongs to your save, so another playthrough has its own.
+- Select an NPC in the list to remove them.
+
 **Maintenance**
 - **Reset All Diaries** - Removes all physical diary books from NPCs and clears all tracking. Your SkyrimNet diary entries are untouched; diaries regenerate automatically on next load. Your journals are kept as they are.
 - **Debug Logging** - Toggle verbose logging for troubleshooting.
@@ -132,7 +137,7 @@ This translates the in-game settings menu. Use the English file as a template. I
 
 ## 🗒️ Notes
 
-- Diary books appear in NPC inventories after SkyrimNet generates the NPC's first diary entry. NPCs without any diary entries will have no books. You must generate SkyrimNet's diary entries yourself.
+- Diary books appear in NPC inventories after SkyrimNet generates the NPC's first diary entry. NPCs without any diary entries will have no books. You must generate SkyrimNet's diary entries yourself, unless **NPCs Write Diaries** is on in the MCM.
 - Player character diaries are supported and will appear in the player's inventory.
 - If books are missing after installing on an existing save, use **Reset All Diaries** followed by saving and reloading. Also ensure you have powerofthree's Tweaks or Native EditorID Fix installed so the mod can locate the templates.
 - Generic NPCs that share a name (e.g. multiple "Whiterun Guard") will share a single, pooled diary. SkyrimNet groups memories by actor name, so same-named NPCs are treated as one identity. To give these NPCs distinct diaries, use a mod that assigns unique names such as **Real Names Extended** — with unique names, each NPC gets its own diary.

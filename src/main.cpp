@@ -260,7 +260,7 @@ namespace {
                     auto invalidActors = SkyrimNetDiaries::BookManager::GetSingleton()->LoadFromDB();
                     volumesLoaded = true;
                     WarnIfWritingOff();
-                    // Once per DiaryDB: volumes from before 2.1 are re-cut by SkyrimNet entry id.
+                    // Once per DiaryDB: volumes split by date (before 2026-10-01) are re-cut by entry id.
                     SkyrimNetDiaries::MigrateVolumesToIds();
 
                     // Match SkyrimNet's history: volumes reaching past this save lose the

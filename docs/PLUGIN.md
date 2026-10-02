@@ -56,6 +56,6 @@ If a record is easier to make in the Creation Kit or xEdit, edit the deployed `.
 1. `.\utilities\esp_to_spriggit.ps1` converts the newest copy in the deploy folders back into `spriggit/SkyrimNetPhysicalDiaries` (`-EspPath` for another file), with the pinned package and version.
 2. Review `git diff spriggit`, then build: the build is newer than the deployed copy again, so the deploy goes ahead.
 
-**FormIDs:** the plugin is ESL-flagged, so its records use `0x800` to `0xFFF`. Records written by hand take the next free one from `0x819`; the CK or xEdit assign their own (from `0xD63`).
+**FormIDs:** the plugin is ESL-flagged, so its records use `0x800` to `0xFFF`. Records written by hand take the next free one from `0x822` (`0x819`–`0x821` were the removed daily-diary dialogue, which dev saves may still name: don't reuse them); the CK or xEdit assign their own (from `0xD63`).
 
 There is no SEQ file: the quest has no dialogue.
