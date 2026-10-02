@@ -44,7 +44,6 @@ The folder is located from **the DLL's own path** (`GetModuleHandleExA` on a fun
 | `[Messages] EditNeedsQuill`, `EditInkRanDry`, `EditOk` | Quill and ink: the message box when writing can't start (OK button), and the notice when an inkwell runs dry ([EDITING.md](EDITING.md#quill-and-ink)). Same fallback. | |
 | `[Messages] EditBloodPrompt`, `EditBloodYes`, `EditBloodNo`, `EditTooWeak` | No ink: the prompt to write in blood and its buttons, and the message box when the player is too weak ([EDITING.md](EDITING.md#writing-in-blood)). Same fallback. | |
 | `[Messages] EditStartedVolume`, `BlankJournalFailed` | A blank journal read from the inventory became the player's journal, or couldn't ([EDITING.md](EDITING.md#reading-a-blank-journal)). Same fallback. | |
-| `[Format] DailyDiaryAsk`, `DailyDiaryStop` | The whitelist dialogue's two topics, set on the topics at load (the ESP's text is English) ([NPC_DIARIES.md](NPC_DIARIES.md#the-whitelist)) | |
 | `[Messages] DailyDiaryOn`, `DailyDiaryOff` | Notification when an NPC starts or stops writing every day | `{Name}` the NPC |
 | `[Months]`, `[Days]` | Optional name overrides, keyed by the English name | |
 

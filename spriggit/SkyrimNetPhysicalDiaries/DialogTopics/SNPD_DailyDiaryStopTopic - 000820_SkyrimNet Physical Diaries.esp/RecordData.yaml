@@ -1,8 +1,0 @@
-FormKey: 000820:SkyrimNet Physical Diaries.esp
-EditorID: SNPD_DailyDiaryStopTopic
-Name:
-  TargetLanguage: English
-  Value: You don't need to write in your diary every day anymore.
-Branch: 00081F:SkyrimNet Physical Diaries.esp
-Quest: 00081B:SkyrimNet Physical Diaries.esp
-SubtypeName: CUST

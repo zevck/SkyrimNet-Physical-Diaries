@@ -119,10 +119,6 @@ namespace SkyrimNetDiaries::PapyrusAPI {
         return affected >= 0;
     }
 
-    void DailyDiaryChangedWrapper(RE::StaticFunctionTag*, RE::Actor* actor, bool daily) {
-        SkyrimNetDiaries::NpcDiaries::DailyDiaryChanged(actor, daily);
-    }
-
     // NPC diaries (docs/NPC_DIARIES.md): the [NpcDiaries] setting with this key, or null.
     const SkyrimNetDiaries::Config::IntSetting* FindNpcSetting(const RE::BSFixedString& key) {
         for (const auto& s : SkyrimNetDiaries::Config::kIntSettings) {
@@ -145,8 +141,22 @@ namespace SkyrimNetDiaries::PapyrusAPI {
         auto* config = SkyrimNetDiaries::Config::GetSingleton();
         config->Set(*s, static_cast<int>(v));
         config->Save();
-        SkyrimNetDiaries::NpcDiaries::SyncEnabled();
     }
+
+    // Daily writers (docs/NPC_DIARIES.md#daily-writers), kept in the save.
+    bool MCM_IsDailyWriter(RE::StaticFunctionTag*, RE::Actor* actor) {
+        return SkyrimNetDiaries::NpcDiaries::IsDailyWriter(actor);
+    }
+    std::int32_t MCM_AddDailyWriter(RE::StaticFunctionTag*, RE::Actor* actor) {
+        return SkyrimNetDiaries::NpcDiaries::AddDailyWriter(actor);
+    }
+    std::vector<std::string> MCM_GetDailyWriterNames(RE::StaticFunctionTag*) {
+        return SkyrimNetDiaries::NpcDiaries::DailyWriterNames();
+    }
+    void MCM_RemoveDailyWriter(RE::StaticFunctionTag*, std::int32_t index) {
+        SkyrimNetDiaries::NpcDiaries::RemoveDailyWriter(index);
+    }
+
 
     void MCM_RefreshSkyrimNetSettings(RE::StaticFunctionTag*) { SkyrimNetDiaries::NpcDiaries::RefreshSkyrimNetSettings(); }
 
@@ -256,9 +266,12 @@ namespace SkyrimNetDiaries::PapyrusAPI {
 
         a_vm->RegisterFunction("UpdateDiaryForActor",  "SkyrimNetDiaries_Native", UpdateDiaryForActorWrapper);
         a_vm->RegisterFunction("UpdateDiaryFromEvent", "SkyrimNetDiaries_Native", UpdateDiaryFromEventWrapper);
-        a_vm->RegisterFunction("DailyDiaryChanged",    "SkyrimNetDiaries_Native", DailyDiaryChangedWrapper);
         a_vm->RegisterFunction("GetNpcSetting",        "SkyrimNetDiaries_MCM", MCM_GetNpcSetting);
         a_vm->RegisterFunction("RefreshSkyrimNetSettings", "SkyrimNetDiaries_MCM", MCM_RefreshSkyrimNetSettings);
+        a_vm->RegisterFunction("IsDailyWriter",        "SkyrimNetDiaries_MCM", MCM_IsDailyWriter);
+        a_vm->RegisterFunction("AddDailyWriter",       "SkyrimNetDiaries_MCM", MCM_AddDailyWriter);
+        a_vm->RegisterFunction("GetDailyWriterNames",  "SkyrimNetDiaries_MCM", MCM_GetDailyWriterNames);
+        a_vm->RegisterFunction("RemoveDailyWriter",    "SkyrimNetDiaries_MCM", MCM_RemoveDailyWriter);
         a_vm->RegisterFunction("SetNpcSetting",        "SkyrimNetDiaries_MCM", MCM_SetNpcSetting);
 
         // MCM Debug log

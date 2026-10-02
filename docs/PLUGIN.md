@@ -31,14 +31,7 @@ Converted from the binary ESP on 2026-09-29. A round trip (YAML → ESP) gives t
 | `0x80E` | FormList | `SNPD_Quills` | What counts as a quill for writing: `Quill01`, `FVDQuill` (the Quill of Gemination) ([EDITING.md](EDITING.md#quill-and-ink)) |
 | `0x80F` | FormList | `SNPD_Inkwells` | What counts as a full inkwell: `Inkwell01` |
 | `0x810`–`0x818` | MiscItem | `SNPD_Inkwell1` to `SNPD_Inkwell9` | Partly used inkwells, one per uses left: clones of `Inkwell01` (bounds, model, value 1, weight 0.3), renamed to the game's inkwell name at load. Described by `SkyrimNet Physical Diaries_DESC.ini` when Description Framework is installed (which also calls the vanilla `Inkwell01` "Full.") |
-| `0x819` | Faction | `SNPD_DailyDiaryFaction` | NPCs asked to write every day ([NPC_DIARIES.md](NPC_DIARIES.md#the-whitelist)). Hidden from the player |
-| `0x81A` | Global (short) | `SNPD_NpcDiaries` | 1 while NPC diaries are on: the ask topic's condition. The DLL sets it from the INI at load and on MCM changes |
-| `0x81B` | Quest | `SNPD_DialogueQuest` | Holds the dialogue; starts with the game, listed in `Seq/SkyrimNet Physical Diaries.seq` |
-| `0x81C`, `0x81D`, `0x81E` | DialogBranch, DialogTopic, DialogResponses | `SNPD_DailyDiaryStartBranch`, `…StartTopic` | Top-level, player: "Would you keep a diary? Write in it every day." One silent response (no text, no voice), TIF `SNPD_TIF_DailyDiaryStart`. Conditions: `SNPD_NpcDiaries` = 1, not in `SNPD_DailyDiaryFaction` |
-| `0x81F`, `0x820`, `0x821` | DialogBranch, DialogTopic, DialogResponses | `SNPD_DailyDiaryStopBranch`, `…StopTopic` | "You don't need to write in your diary every day anymore." Silent, TIF `SNPD_TIF_DailyDiaryStop`. Condition: in the faction |
 | `0xD62` | Book | `SkyrimNetDiaryTemplate` | Template diary |
-
-`Seq/SkyrimNet Physical Diaries.seq` lists the start-game quests with dialogue: raw little-endian `uint32` FormIDs as stored in the plugin (`0x0100081B`: master index 1, after Skyrim.esm), no header. A new start-game quest with dialogue means rewriting it. The build mirrors `Seq` into the deploy.
 
 The DLL finds the templates by EditorID (`kJournalTemplates`, `kNightingaleTemplate` in `BookManager.h`), so a template's FormID can change, its EditorID can't.
 

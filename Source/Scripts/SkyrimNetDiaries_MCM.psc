@@ -35,6 +35,11 @@ Function RefreshSkyrimNetSettings() global native  ; read SkyrimNet's diary sett
 ; settings, SkyrimNetDiaries and SkyrimNetDayBoundary (changed in SkyrimNet's config)
 int  Function GetNpcSetting(string key)          global native
      Function SetNpcSetting(string key, int value) global native
+; This save's NPCs who write every day, in the order added.  Add: 1 added, 0 already there, -1 can't.
+bool     Function IsDailyWriter(Actor akActor)     global native
+int      Function AddDailyWriter(Actor akActor)    global native
+string[] Function GetDailyWriterNames()            global native
+         Function RemoveDailyWriter(int index)     global native
 
 ; ======== Option handles ========
 int oidEntriesPerVolume  = -1
@@ -56,6 +61,14 @@ int oidNpcRunHour        = -1
 int oidNpcCloseBoost     = -1
 int oidSkyrimNetDiaries   = -1
 int oidSkyrimNetDayBound  = -1
+int oidNpcDailyWriters   = -1
+int oidAddTarget         = -1
+
+; The Daily Writers page: each writer's option and name, in the order added, and the NPC in the crosshair.
+int[] _writerOids
+string[] _writerNames
+int _writerCount = 0
+Actor _target
 
 ; Font presets
 string[] _fontValues
@@ -73,9 +86,7 @@ string _fontFaceOnOpen = ""
 
 event OnConfigInit()
     ModName = "Physical Diaries"
-    Pages   = new string[2]
-    Pages[0] = "$SNPD_PageSettings"
-    Pages[1] = "$SNPD_PageMaintenance"
+    SetPages()
 
     _fontValues = new string[3]
     _fontValues[0] = "$HandwrittenFont"
@@ -88,7 +99,16 @@ event OnConfigInit()
     _fontDisplayNames[2] = "Book"
 endevent
 
+; Also on open: OnConfigInit runs once per save, so a save made before the Daily Writers page needs it here.
+function SetPages()
+    Pages    = new string[3]
+    Pages[0] = "$SNPD_PageSettings"
+    Pages[1] = "$SNPD_PageDailyWriters"
+    Pages[2] = "$SNPD_PageMaintenance"
+endfunction
+
 event OnConfigOpen()
+    SetPages()
     ; Always rebuild font arrays (OnConfigInit only runs once per save,
     ; so these may be uninitialized on existing saves with older scripts)
     _fontValues = new string[3]
@@ -157,10 +177,15 @@ event OnPageReset(string page)
     oidNpcCloseBoost    = -1
     oidSkyrimNetDiaries = -1
     oidSkyrimNetDayBound = -1
+    oidNpcDailyWriters  = -1
+    oidAddTarget        = -1
+    _writerCount        = 0
 
     if page == Pages[0]
         RenderSettingsPage()
     elseif page == Pages[1]
+        RenderDailyWritersPage()
+    elseif page == Pages[2]
         RenderMaintenancePage()
     endif
 endevent
@@ -197,6 +222,33 @@ function RenderSettingsPage()
     oidNpcCloseBoost   = AddToggleOption("$SNPD_NpcCloseBoost", GetNpcSetting("CloseBoost") != 0)
     oidSkyrimNetDiaries = AddToggleOption("$SNPD_SkyrimNetDiaries", GetNpcSetting("SkyrimNetDiaries") != 0)
     oidSkyrimNetDayBound = AddToggleOption("$SNPD_SkyrimNetDayBoundary", GetNpcSetting("SkyrimNetDayBoundary") != 0)
+endfunction
+
+; The switch and the add button, a rule, then the writers two to a row (selecting one asks to remove it).
+; At most 128 are listed.
+function RenderDailyWritersPage()
+    SetCursorFillMode(LEFT_TO_RIGHT)
+    oidNpcDailyWriters = AddToggleOption("$SNPD_NpcDailyWriters", GetNpcSetting("DailyWriters") != 0)
+    _target = Game.GetCurrentCrosshairRef() as Actor
+    if _target && _target != Game.GetPlayer() && !IsDailyWriter(_target)
+        oidAddTarget = AddTextOption("$SNPD_AddTarget", _target.GetDisplayName())
+    else
+        oidAddTarget = AddTextOption("$SNPD_AddTarget", "", OPTION_FLAG_DISABLED)
+    endif
+    AddHeaderOption("")
+    AddHeaderOption("")
+
+    _writerNames = GetDailyWriterNames()
+    _writerOids = new int[128]
+    _writerCount = _writerNames.Length
+    if _writerCount > 128
+        _writerCount = 128
+    endif
+    int i = 0
+    while i < _writerCount
+        _writerOids[i] = AddTextOption(_writerNames[i], "")
+        i += 1
+    endwhile
 endfunction
 
 function RenderMaintenancePage()
@@ -253,6 +305,26 @@ event OnOptionSelect(int oid)
             endif
             ForcePageReset()
         endif
+    elseif oid == oidNpcDailyWriters
+        bool newVal = GetNpcSetting("DailyWriters") == 0
+        SetNpcSetting("DailyWriters", newVal as int)
+        SetToggleOptionValue(oid, newVal)
+    elseif oid == oidAddTarget
+        if AddDailyWriter(_target) >= 0
+            ForcePageReset()
+        endif
+    else
+        int i = 0
+        while i < _writerCount
+            if _writerOids[i] == oid
+                if ShowMessage("$SNPD_RemoveWriter{" + _writerNames[i] + "}", true, "$SNPD_Confirm", "$SNPD_Cancel")
+                    RemoveDailyWriter(i)
+                    ForcePageReset()
+                endif
+                return
+            endif
+            i += 1
+        endwhile
     endif
 endevent
 
@@ -403,13 +475,22 @@ event OnOptionHighlight(int oid)
         SetInfoText("$SNPD_TipSkyrimNetDiaries")
     elseif oid == oidSkyrimNetDayBound
         SetInfoText("$SNPD_TipSkyrimNetDayBoundary")
+    elseif oid == oidNpcDailyWriters
+        SetInfoText("$SNPD_TipNpcDailyWriters")
+    elseif oid == oidAddTarget
+        SetInfoText("$SNPD_TipAddTarget")
+    elseif _writerCount > 0 && _writerOids.Find(oid) >= 0 && _writerOids.Find(oid) < _writerCount
+        SetInfoText("$SNPD_TipWriterRemove")
     endif
 endevent
 
 ; ======== Default reset ========
 
 event OnOptionDefault(int oid)
-    if oid == oidEntriesPerVolume
+    if oid == oidNpcDailyWriters
+        SetNpcSetting("DailyWriters", 1)
+        SetToggleOptionValue(oid, true)
+    elseif oid == oidEntriesPerVolume
         SetEntriesPerVolume(10)
         SetSliderOptionValue(oid, 10.0, "{0}")
     elseif oid == oidShowDateHeaders

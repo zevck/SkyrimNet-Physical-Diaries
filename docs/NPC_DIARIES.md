@@ -2,9 +2,9 @@
 
 Optionally, NPCs write diary entries on their own, once a game day, so diaries exist without the player asking anyone to write. SNPD only decides **who** writes and **when**; the entry is SkyrimNet's own diary generation, and it becomes a book through the usual pipeline ([VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md)).
 
-Status (2026-10-01): run on AE (daily runs wrote entries that became books; declined picks cost nothing). Not yet run in game: the whitelist dialogue, the Sleep/Wait and fast-travel early runs. Off by default: every entry is an LLM call the player pays for.
+Status (2026-10-01): run on AE (daily runs wrote entries that became books; declined picks cost nothing). Not yet run in game: the Daily Writers page, the Sleep/Wait and fast-travel early runs. Off by default: every entry is an LLM call the player pays for.
 
-Code: `src/NpcDiaries.cpp`; the whitelist dialogue in the ESP ([PLUGIN.md](PLUGIN.md#records)) with the fragments `SNPD_TIF_DailyDiaryStart` / `Stop`; settings in [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md).
+Code: `src/NpcDiaries.cpp`; the daily writers on the MCM's Daily Writers page, kept in the save; settings in [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md).
 
 ---
 
@@ -43,27 +43,34 @@ From SkyrimNet's `PublicGetActorEngagement` (one call, no LLM; a short window of
 - **SkyrimNet's activity data is keyed by actor name**: same-named NPCs share one row (their events summed) with the highest FormID of that name. So it only weights and finds the random picks; a pick that lands on the wrong same-named actor costs nothing (SkyrimNet finds no events for them). The daily writers don't come from it (below).
 - **Filtered** like part of SkyrimNet's actor filter (SkyrimNet applies the whole filter itself from Beta 26; before that, the Papyrus generator didn't): not the player, not dead, not in `SkyrimNet_ActorBlacklistFaction`; in `SkyrimNet_ActorWhitelistFaction`, or of a race that allows dialogue.
 - **Already written up** are skipped: when an actor's newest diary entry is dated at or after their last event (`lastEventTime`), SkyrimNet would find no uncovered events and decline, and the pick would be wasted. One `GetDiaryEntries(formId, 1)` per candidate, no LLM. (SkyrimNet's own test is by event id, over the last 10 entries; dates are the cheap stand-in.)
-- **Daily writers**: every NPC in `SNPD_DailyDiaryFaction` ([the whitelist](#the-whitelist)), uncapped: asking an NPC to write every day is the player's conscious choice, cost included. SNPD keeps them by FormID itself (`g_writers`, added and removed by the dialogue, saved in `SNND`), not from the name-keyed activity data. Faction members added another way (the console, another mod) join when an activity row resolves to them; ones removed from the faction another way are dropped.
+- **Daily writers**: this save's list ([below](#daily-writers)), uncapped: setting an NPC to write every day is the player's conscious choice, cost included. Kept by FormID (`g_writers`), not found through the name-keyed activity data. Off with `[NpcDiaries] DailyWriters` = 0 (the list stays).
 - **Random picks**: `[NpcDiaries] DailyRandom` (default 3) of the rest, weighted random without repeats. Weight: `1 + 4 × recent memory importance + 0.1 × recent events (up to 20)`, doubled for followers (`IsPlayerTeammate`) and the player's spouse (relationship Lover) with `[NpcDiaries] CloseBoost` on. Busy, important NPCs write most days; quiet ones sometimes. Adopted children aren't recognised yet.
 - Each run logs a summary (actors from SkyrimNet, quiet, not loaded, filtered, written up, candidates) and each pick (`[NpcDiaries] Day …`); Debug Logging adds every actor's numbers.
 
-A pick SkyrimNet declines (too few events) costs nothing, so the daily cost is at most the whitelisted NPCs plus `DailyRandom` calls.
+A pick SkyrimNet declines (too few events) costs nothing, so the daily cost is at most the daily writers plus `DailyRandom` calls.
 
 ---
 
-## The whitelist
+## Daily writers
 
-The player asks an NPC in dialogue: **"Would you keep a diary? Write in it every day."** (`SNPD_DailyDiaryStartTopic`), and later **"You don't need to write in your diary every day anymore."** (`SNPD_DailyDiaryStopTopic`).
+The NPCs who write every day belong to the save: an NPC who matters in one playthrough may not in another. They're kept in the `SNND` co-save record (FormIDs, resolved with `ResolveFormID` on load, so a load-order change is fine; an NPC whose plugin is gone drops out), in the order they were added, and a load or new game replaces the list.
 
-- The topics are top-level player dialogue in `SNPD_DialogueQuest` (start-game enabled, listed in `Seq/SkyrimNet Physical Diaries.seq`, the same setup as Physical Letters' mailing dialogue). The ask needs the feature on (the global `SNPD_NpcDiaries`, set from the INI at load and on MCM changes; a save keeps a global's value, so it's set again after every load) and the NPC outside the faction; the stop only that they're in it, so it always works.
-- **The NPC says nothing**: one response with no text and no voice. Followers, spouses and children can have any voice type, and no vanilla line is recorded for all of them. (Not yet confirmed in game that an empty response ends cleanly; the fallback is a short unvoiced text line.)
-- The fragments add or remove the faction and call `SkyrimNetDiaries_Native.DailyDiaryChanged`, which shows `[Messages] DailyDiaryOn` / `DailyDiaryOff` with the NPC's name. The topic text comes from the locale file (`[Format] DailyDiaryAsk` / `DailyDiaryStop`, set on the topics at load; the ESP's is English).
-- Membership lives on the actor, in the save, so Keep/Clear can't confuse it. SNPD also keeps its own list of the daily writers by FormID (`g_writers`, in the `SNND` co-save record, restored with the save), because SkyrimNet's activity rows are keyed by name ([Who writes](#who-writes)). Other mods or the console can use the faction too: such members are found through the activity rows.
-- SkyrimNet's dialogue actions should pick the topics up like any vanilla topic.
+The MCM's **Daily Writers** page (`RenderDailyWritersPage`, filled left to right):
+
+| | |
+|---|---|
+| **Write Every Day** (toggle: `[NpcDiaries] DailyWriters`, on by default; off keeps the list, but only the random picks write) | **Add Targeted Actor** (shows the NPC in the crosshair when the menu opened, `Game.GetCurrentCrosshairRef`; disabled for no one, the player, or someone already listed) |
+| *(a rule: two empty headers)* | |
+| NPC 1 | NPC 2 |
+| NPC 3 | … |
+
+Selecting an NPC asks to remove them (`$SNPD_RemoveWriter{}` with their name). Up to 128 are listed. Adding and removing show `[Messages] DailyDiaryOn` / `DailyDiaryOff` with the NPC's name (`AddDailyWriter`, `RemoveDailyWriter`). The page list is set again in `OnConfigOpen` (`SetPages`), since `OnConfigInit` runs once per save and older saves had two pages.
+
+History: until 2026-10-02 a silent dialogue ("Would you keep a diary?") added the NPC to a faction, with the same list in `SNND` (version 2, which still loads); for a day it was the INI's `[DailyWriters]`, which made the list the same for every playthrough.
 
 ---
 
 ## Not done yet
 
-- Run in game: the Sleep/Wait run when the clock passes the writing hour, the fast-travel and carriage run, the wait while SkyrimNet's AI or diaries are off (the one-minute recheck), the dialogue (silent response, faction, notice), the MCM's SkyrimNet options (`GetConfigBool` / `PatchConfig`), a reload not running twice, the global after a load.
+- Run in game: the Sleep/Wait run when the clock passes the writing hour, the fast-travel and carriage run, the wait while SkyrimNet's AI or diaries are off (the one-minute recheck), the Daily Writers page (add, remove with the prompt, the switch, the list after save/reload and on another character), the MCM's SkyrimNet options (`GetConfigBool` / `PatchConfig`), a reload not running twice.
 - Adopted children for the close-NPC weight.

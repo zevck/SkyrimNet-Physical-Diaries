@@ -131,6 +131,8 @@ namespace SkyrimNetDiaries {
         static constexpr IntSetting kNpcDailyRandom   { "NpcDiaries", "DailyRandom",   3,  0, 20 };
         static constexpr IntSetting kNpcRunHour       { "NpcDiaries", "RunHour",       22, 12, 23 };
         static constexpr IntSetting kNpcCloseBoost    { "NpcDiaries", "CloseBoost",    1,  0, 1  };
+        // The save's daily writers write every day (the list itself is in the save).  docs/NPC_DIARIES.md
+        static constexpr IntSetting kNpcDailyWriters  { "NpcDiaries", "DailyWriters",  1,  0, 1  };
         static constexpr IntSetting kFontSizeTitle    { "Fonts",   "TitleSize",        18, 8, 24 };
         static constexpr IntSetting kFontSizeDate     { "Fonts",   "DateSize",         16, 8, 24 };
         static constexpr IntSetting kFontSizeContent  { "Fonts",   "ContentSize",      14, 8, 24 };
@@ -138,7 +140,7 @@ namespace SkyrimNetDiaries {
         // INI order.  Language (string) is written first in [General], FontFace last in [Fonts].
         static constexpr IntSetting kIntSettings[] = {
             kDebugLog, kShowDateHeaders, kEntriesPerVolume, kPlayerDiaryBooks, kEditKey, kDeleteKey, kNewEntryKey,
-            kNpcDiaries, kNpcDailyRandom, kNpcRunHour, kNpcCloseBoost,
+            kNpcDiaries, kNpcDailyRandom, kNpcRunHour, kNpcCloseBoost, kNpcDailyWriters,
             kFontSizeTitle, kFontSizeDate, kFontSizeContent, kFontSizeSmall,
         };
 

@@ -30,7 +30,6 @@ $mirroredFolders = @(
     "Source\Scripts",
     "SKSE\Plugins\SkyrimNetPhysicalDiaries\Locales",
     "SKSE\Plugins\SkyrimNet\external\zevick.physical-diaries",
-    "Seq",
     "Interface\Translations"
 )
 

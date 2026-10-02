@@ -46,16 +46,21 @@ namespace SkyrimNetDiaries::NpcDiaries {
         constexpr double kDaySeconds = 86400.0, kWeekSeconds = 604800.0;
         constexpr std::string_view kNamePlaceholder = "{Name}";
 
-        RE::TESFaction* g_dailyFaction = nullptr;
-        RE::TESGlobal* g_enabledGlobal = nullptr;
         RE::TESFaction* g_skyrimNetBlacklist = nullptr;
         RE::TESFaction* g_skyrimNetWhitelist = nullptr;
 
-        // Game thread.  The day last run (whole days of GameDaysPassed), the NPCs asked to write daily (by FormID:
-        // SkyrimNet's activity data is keyed by name), and a counter Revert bumps so leftover requests stop.
+        // Game thread.  The day last run (whole days of GameDaysPassed), this save's daily writers in the order
+        // they were added, and a counter Revert bumps so leftover requests stop.
         std::int32_t g_lastRunDay = -1;
-        std::set<RE::FormID> g_writers;
+        std::vector<RE::FormID> g_writers;
         std::uint32_t g_session = 0;
+
+        void Notify(std::string text, RE::Actor* actor) {
+            if (const auto at = text.find(kNamePlaceholder); at != std::string::npos) {
+                text.replace(at, kNamePlaceholder.size(), actor->GetDisplayFullName());
+            }
+            RE::SendHUDMessage::ShowHUDMessage(text.c_str());
+        }
 
         std::int32_t Today() {
             auto* calendar = RE::Calendar::GetSingleton();
@@ -209,25 +214,11 @@ namespace SkyrimNetDiaries::NpcDiaries {
             return picked;
         }
 
-        // Every NPC asked to write daily (uncapped: the player's choice), from SNPD's own list, since SkyrimNet's
-        // activity rows are keyed by name.  Faction members added another way (console, mods) join from those rows.
-        std::vector<Candidate> DailyWriters(const nlohmann::json& list) {
-            std::set<RE::FormID> ids;
-            for (auto it = g_writers.begin(); it != g_writers.end();) {
-                auto* actor = RE::TESForm::LookupByID<RE::Actor>(*it);
-                if (actor && g_dailyFaction && !actor->IsInFaction(g_dailyFaction)) {
-                    it = g_writers.erase(it);  // removed from the faction some other way
-                    continue;
-                }
-                ids.insert(*it++);
-            }
-            for (const auto& a : list) {
-                const auto formId = static_cast<RE::FormID>(a.value("formId", std::int64_t{ 0 }));
-                auto* actor = RE::TESForm::LookupByID<RE::Actor>(formId);
-                if (actor && g_dailyFaction && actor->IsInFaction(g_dailyFaction)) ids.insert(formId);
-            }
+        // Every daily writer of this save (uncapped: the player's choice), unless switched off in the MCM.
+        std::vector<Candidate> DailyWriters() {
             std::vector<Candidate> writers;
-            for (const auto formId : ids) {
+            if (Config::GetSingleton()->Get(Config::kNpcDailyWriters) == 0) return writers;
+            for (const auto formId : g_writers) {
                 auto* actor = RE::TESForm::LookupByID<RE::Actor>(formId);
                 if (MayWrite(actor)) writers.push_back({ formId, actor->GetDisplayFullName(), 0.0 });
             }
@@ -243,7 +234,7 @@ namespace SkyrimNetDiaries::NpcDiaries {
             }
             auto* config = Config::GetSingleton();
             const bool closeBoost = config->Get(Config::kNpcCloseBoost) != 0;
-            const auto writers = DailyWriters(list);
+            const auto writers = DailyWriters();
             std::vector<Candidate> pool;
             int quiet = 0, unknown = 0, filtered = 0, writtenUp = 0;
             const double gameNow = CurrentGameTimeSeconds();
@@ -426,23 +417,8 @@ namespace SkyrimNetDiaries::NpcDiaries {
     }
 
     void OnDataLoaded() {
-        // By EditorID, like SNPD's other records: a FormID can change in the CK or xEdit, an EditorID can't.
-        g_dailyFaction = RE::TESForm::LookupByEditorID<RE::TESFaction>("SNPD_DailyDiaryFaction");
-        g_enabledGlobal = RE::TESForm::LookupByEditorID<RE::TESGlobal>("SNPD_NpcDiaries");
         g_skyrimNetBlacklist = RE::TESForm::LookupByEditorID<RE::TESFaction>("SkyrimNet_ActorBlacklistFaction");
         g_skyrimNetWhitelist = RE::TESForm::LookupByEditorID<RE::TESFaction>("SkyrimNet_ActorWhitelistFaction");
-        auto* loc = Localization::GetSingleton();
-        if (auto* ask = RE::TESForm::LookupByEditorID<RE::TESTopic>("SNPD_DailyDiaryStartTopic")) {
-            ask->fullName = loc->GetDailyDiaryAsk();
-        }
-        if (auto* stop = RE::TESForm::LookupByEditorID<RE::TESTopic>("SNPD_DailyDiaryStopTopic")) {
-            stop->fullName = loc->GetDailyDiaryStop();
-        }
-        if (!g_dailyFaction || !g_enabledGlobal) {
-            SKSE::log::error("[NpcDiaries] The ESP's daily-diary records are missing: NPC diaries are off");
-            return;
-        }
-        SyncEnabled();
         if (auto* ui = RE::UI::GetSingleton()) {
             static MenuSink sink;
             ui->AddEventSink<RE::MenuOpenCloseEvent>(&sink);
@@ -451,13 +427,10 @@ namespace SkyrimNetDiaries::NpcDiaries {
         SKSE::log::info("[NpcDiaries] Ready ({})", Enabled() ? "on" : "off");
     }
 
-    void SyncEnabled() {
-        if (g_enabledGlobal) g_enabledGlobal->value = Enabled() ? 1.0f : 0.0f;
-    }
-
-    // Version 2: the day, then the daily writers (count, FormIDs).  Version 1 had only the day.
+    // Version 4: the day, then the daily writers (count, FormIDs).  Version 2 had the same layout (its writers came
+    // from the old dialogue); versions 1 and 3 only the day.
     void Save(SKSE::SerializationInterface* a_intfc, std::uint32_t a_type) {
-        if (!a_intfc->OpenRecord(a_type, 2)) return;
+        if (!a_intfc->OpenRecord(a_type, 4)) return;
         a_intfc->WriteRecordData(g_lastRunDay);
         a_intfc->WriteRecordData(static_cast<std::uint32_t>(g_writers.size()));
         for (const auto formId : g_writers) a_intfc->WriteRecordData(formId);
@@ -468,11 +441,13 @@ namespace SkyrimNetDiaries::NpcDiaries {
         if (!a_intfc->ReadRecordData(day)) return;
         g_lastRunDay = day;
         std::uint32_t count = 0;
-        if (a_version < 2 || !a_intfc->ReadRecordData(count)) return;
+        if ((a_version != 2 && a_version < 4) || !a_intfc->ReadRecordData(count)) return;
         for (std::uint32_t i = 0; i < count; ++i) {
             RE::FormID saved = 0, formId = 0;
             if (!a_intfc->ReadRecordData(saved)) return;
-            if (a_intfc->ResolveFormID(saved, formId)) g_writers.insert(formId);  // the load order may have changed
+            if (a_intfc->ResolveFormID(saved, formId) && std::ranges::find(g_writers, formId) == g_writers.end()) {
+                g_writers.push_back(formId);  // the load order may have changed; a plugin removed drops it
+            }
         }
     }
 
@@ -509,20 +484,36 @@ namespace SkyrimNetDiaries::NpcDiaries {
         return true;
     }
 
-    void DailyDiaryChanged(RE::Actor* a_actor, bool a_daily) {
-        if (!a_actor) return;
-        if (a_daily) {
-            g_writers.insert(a_actor->GetFormID());
-        } else {
-            g_writers.erase(a_actor->GetFormID());
+    bool IsDailyWriter(const RE::Actor* a_actor) {
+        return a_actor && std::ranges::find(g_writers, a_actor->GetFormID()) != g_writers.end();
+    }
+
+    int AddDailyWriter(RE::Actor* a_actor) {
+        if (!a_actor || a_actor->IsPlayerRef()) return -1;
+        if (IsDailyWriter(a_actor)) return 0;
+        g_writers.push_back(a_actor->GetFormID());
+        Notify(Localization::GetSingleton()->GetDailyDiaryOn(), a_actor);
+        SKSE::log::info("[NpcDiaries] {} (0x{:08X}) writes daily", a_actor->GetDisplayFullName(), a_actor->GetFormID());
+        return 1;
+    }
+
+    std::vector<std::string> DailyWriterNames() {
+        std::vector<std::string> names;
+        for (const auto formId : g_writers) {
+            auto* actor = RE::TESForm::LookupByID<RE::Actor>(formId);
+            names.push_back(actor ? actor->GetDisplayFullName() : std::format("0x{:08X}", formId));
         }
-        auto* loc = Localization::GetSingleton();
-        std::string text = a_daily ? loc->GetDailyDiaryOn() : loc->GetDailyDiaryOff();
-        if (const auto at = text.find(kNamePlaceholder); at != std::string::npos) {
-            text.replace(at, kNamePlaceholder.size(), a_actor->GetDisplayFullName());
+        return names;
+    }
+
+    void RemoveDailyWriter(int a_index) {
+        if (a_index < 0 || a_index >= static_cast<int>(g_writers.size())) return;
+        const auto formId = g_writers[a_index];
+        g_writers.erase(g_writers.begin() + a_index);
+        if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(formId)) {
+            Notify(Localization::GetSingleton()->GetDailyDiaryOff(), actor);
         }
-        RE::SendHUDMessage::ShowHUDMessage(text.c_str());
-        SKSE::log::info("[NpcDiaries] {} {} writing daily", a_actor->GetDisplayFullName(), a_daily ? "started" : "stopped");
+        SKSE::log::info("[NpcDiaries] 0x{:08X} no longer writes daily", formId);
     }
 
 }  // namespace SkyrimNetDiaries::NpcDiaries

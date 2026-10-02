@@ -40,7 +40,7 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 | [BOOK_TEXT.md](BOOK_TEXT.md) | Rendering, dates, cleaning LLM output, the `GetDescription` hook (the book menu and other readers), UTF-8 → Win-1251 |
 | [THEFT.md](THEFT.md) | Theft, return and handover; the decorator; clearing; save reverts |
 | [EDITING.md](EDITING.md) | The player writing in their own journal in the book menu: writing mode, diaries and journals, the SWF's edit mode, input, saving to SkyrimNet, back to reading, tearing out an entry, the close hook |
-| [NPC_DIARIES.md](NPC_DIARIES.md) | Optional: NPCs writing diary entries on their own once a day through SkyrimNet's generation: when, who, the whitelist dialogue |
+| [NPC_DIARIES.md](NPC_DIARIES.md) | Optional: NPCs writing diary entries on their own once a day through SkyrimNet's generation: when, who, the daily writers |
 | [LOCALIZATION.md](LOCALIZATION.md) | Language choice, locale files, GMST names, MCM translations |
 
 ### Data, settings and interfaces

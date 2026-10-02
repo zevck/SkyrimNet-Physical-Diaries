@@ -25,7 +25,6 @@ The repo has the layout of an MO2 mod folder. Builds are deployed as a `Physical
 | `Interface/Translations/SkyrimNet Physical Diaries_*.txt` | MCM translations (UTF-16 LE with BOM) |
 | `swf/<name>/` → `Interface/<name>.swf` | Flash UI: base movies as JPEXS XML (the default plus variants for other UI mods) and our ActionScript classes, built by `Build_Local.ps1` (the SWFs are gitignored). `swf/book/` is the book menu with SNPD's edit mode: vanilla, and a Convenient Reading variant. See [DEVELOPMENT.md](DEVELOPMENT.md#swf). |
 | `SkyrimNet Physical Diaries_DESC.ini` | Description Framework descriptions of the inkwells' fill (optional DF; deployed to the mod's root). See [EDITING.md](EDITING.md#quill-and-ink). |
-| `Seq/SkyrimNet Physical Diaries.seq` | The start-game dialogue quests, for the engine ([PLUGIN.md](PLUGIN.md)) |
 | `utilities/` | `Spriggit.ps1` (the pinned Spriggit CLI) and `esp_to_spriggit.ps1` (an ESP edited in CK or xEdit back to YAML). See [PLUGIN.md](PLUGIN.md). |
 | `docs/` | These developer docs |
 | Root `*.md` other than `README.md` | Old design notes from single investigations. Most are gitignored. They predate the current code. |
@@ -80,7 +79,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 | Persistence | `src/DiaryDB.cpp`, `include/DiaryDB.h` | Per-save SQLite: volumes, actor templates, stolen volumes, the ranges of journal text written in blood. See [DATABASE.md](DATABASE.md). |
 | SkyrimNet client | `src/Database.cpp`, `include/Database.h`, `include/SkyrimNetPublicAPI.h` | Loads SkyrimNet's exported functions, parses diary JSON, UUID ↔ FormID, names, bio template names |
 | Diary editing | `src/BookEditor.cpp` (the edit session), `src/EditorWrites.cpp` (the write queue), `src/EditorJournals.cpp` (which journal, blank journals), `include/BookEditor.h`, `include/EditorInternal.h` (their shared state), `swf/book/scripts/__Packages/BookMenu.as` | The player writing in their own journal in the book menu: loading the volume into the SWF's edit mode, keyboard input, saving changed entries to SkyrimNet, writing new ones and tearing entries out (all through one write queue, then `BookManager::ReconcileAfterWrite`), turning a blank journal the player reads into a new journal (journals sit side by side, each holding the entries tagged for it), going back to reading, the `BookMenu::ProcessMessage` hook that turns a close with unsaved changes into a save prompt. Started by a key while the journal is open. See [EDITING.md](EDITING.md). |
-| NPC diaries | `src/NpcDiaries.cpp`, `include/NpcDiaries.h` | Optional: once a game day, picks NPCs (SkyrimNet's engagement data, the whitelist faction) and asks SkyrimNet's Papyrus `GenerateDiaryEntry` to write for them; the whitelist dialogue's notice. See [NPC_DIARIES.md](NPC_DIARIES.md). |
+| NPC diaries | `src/NpcDiaries.cpp`, `include/NpcDiaries.h` | Optional: once a game day, picks NPCs (SkyrimNet's engagement data, the save's daily writers) and asks SkyrimNet's Papyrus `GenerateDiaryEntry` to write for them. See [NPC_DIARIES.md](NPC_DIARIES.md). |
 | Blank journals | `src/BlankJournals.cpp`, `include/BlankJournals.h` | The blank journal items: their localized name, adding them to general-goods merchants' stock in memory, hiding their recipes while writing is off. See [EDITING.md](EDITING.md#blank-journals). |
 | Writing tools | `src/WritingTools.cpp`, `include/WritingTools.h` | Quill and ink: whether the player has a quill, using one dip of ink by swapping their emptiest inkwell for the ESP's next partly used one. See [EDITING.md](EDITING.md#quill-and-ink). |
 | Writing mode | `src/WritingMode.cpp`, `include/WritingMode.h` | Whether SNPD's `book.swf` is installed (a marker with an interface version, read from the file at `kDataLoaded`); player writing exists only then. See [EDITING.md](EDITING.md#writing-mode). |
@@ -107,7 +106,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 **Load callback** (inside the load, before `kPostLoadGame`): read the save's book-forms record and fill in its books (`DynamicForms::Load`, `ConfigureLoadedBooks`), and the NPC diaries record (`SNND`: the day last run, the daily writers). See [BOOK_FORMS.md](BOOK_FORMS.md#load).
 
 **`kPostLoadGame`**:
-1. `DynamicForms::RebuildLoadedWorldCopies()`: world copies of our books in the loaded cells were built before the load callback filled the books in. Runs first and does not depend on SkyrimNet. Then `NpcDiaries::SyncEnabled()`: the save restored the dialogue's global, so it is set from the INI again.
+1. `DynamicForms::RebuildLoadedWorldCopies()`: world copies of our books in the loaded cells were built before the load callback filled the books in. Runs first and does not depend on SkyrimNet.
 2. `Database::InitializeAPI()`. If SkyrimNet is not loaded, stop here.
 3. The post-load sync polls every 100 ms (a sleeper thread re-queues a game-thread task) until `Database::IsMemorySystemReady()` (up to 60 s) **and** `TimelineGate::IsSettled()` (no limit while SkyrimNet's keep/clear check is pending). Then:
    - Detect the save folder from `SkyrimNet.log` and `DiaryDB::Open()` it.

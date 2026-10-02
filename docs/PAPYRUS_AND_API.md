@@ -11,8 +11,7 @@ Code: `Source/Scripts/*.psc` → `Scripts/*.pex`, `src/PapyrusAPI.cpp`, `include
 | Script | Attached to | Role |
 |---|---|---|
 | `SkyrimNetDiaries_EventListener` | Quest in the ESP (`extends Quest`) | `OnInit`: registers for ModEvent `SkyrimNet_DiaryCreated` (the `snpd_diary_stolen` decorator is native, registered by the DLL; see [THEFT.md](THEFT.md)). `OnDiaryCreated`: passes the JSON payload to `SkyrimNetDiaries_Native.UpdateDiaryFromEvent`. Don't parse `actorFormId` in Papyrus: `as int` clamps FormIDs of `0x80000000` and up (ESL and high load-order NPCs) to `0x7FFFFFFF`. |
-| `SkyrimNetDiaries_Native` | — (native declarations) | `UpdateDiaryFromEvent(string json)`; legacy `UpdateDiaryForActor(int formId)`; `DailyDiaryChanged(Actor, bool)` |
-| `SNPD_TIF_DailyDiaryStart`, `SNPD_TIF_DailyDiaryStop` | The whitelist dialogue's responses (`extends TopicInfo`) | Add the speaker to `SNPD_DailyDiaryFaction` or remove them, then `DailyDiaryChanged` for the notice ([NPC_DIARIES.md](NPC_DIARIES.md#the-whitelist)) |
+| `SkyrimNetDiaries_Native` | — (native declarations) | `UpdateDiaryFromEvent(string json)`; legacy `UpdateDiaryForActor(int formId)` |
 | `SkyrimNetDiaries_MCM` | MCM quest (`SKI_ConfigBase`) | Settings and Maintenance pages. See [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md). |
 
 ## Native functions
@@ -23,8 +22,7 @@ All registered in `PapyrusAPI::RegisterFunctions`.
 |---|---|---|
 | `SkyrimNetDiaries_Native.UpdateDiaryFromEvent(String)` | `UpdateDiaryFromEventWrapper`: parses `actorFormId` from the event JSON, then `UpdateDiaryForFormID` (clears stolen volumes, then `UpdateDiaryForActorInternal`) | EventListener |
 | `SkyrimNetDiaries_Native.UpdateDiaryForActor(int)` | `UpdateDiaryForActorWrapper` → `UpdateDiaryForFormID`. Legacy, kept for older listener scripts; wrong for FormIDs ≥ `0x80000000` | Nothing in SNPD |
-| `SkyrimNetDiaries_Native.DailyDiaryChanged(Actor, bool)` | `DailyDiaryChangedWrapper` → `NpcDiaries::DailyDiaryChanged`: the localized notice | The whitelist dialogue's fragments |
-| `SkyrimNetDiaries_MCM.*` (getters and setters for each setting, `RegenerateTextsOnly`, `ResetAllDiaries`; `GetNpcSetting`/`SetNpcSetting(key)` for `[NpcDiaries]`, and for `SkyrimNetDiaries` / `SkyrimNetDayBoundary`, routed to SkyrimNet's config through `NpcDiaries::Get/SetSkyrimNetDiarySetting`; `RefreshSkyrimNetSettings` on MCM open) | `MCM_*` | MCM |
+| `SkyrimNetDiaries_MCM.*` (getters and setters for each setting, `RegenerateTextsOnly`, `ResetAllDiaries`; `GetNpcSetting`/`SetNpcSetting(key)` for `[NpcDiaries]`, and for `SkyrimNetDiaries` / `SkyrimNetDayBoundary`, routed to SkyrimNet's config through `NpcDiaries::Get/SetSkyrimNetDiarySetting`; `RefreshSkyrimNetSettings` on MCM open; `IsDailyWriter`, `AddDailyWriter`, `GetDailyWriterNames`, `RemoveDailyWriter` for the save's daily writers) | `MCM_*` | MCM |
 
 SNPD also calls SkyrimNet's Papyrus natives from C++ (`DispatchStaticCall`) for [NPC diaries](NPC_DIARIES.md): `SkyrimNetApi.GenerateDiaryEntry(Actor)`, `SkyrimNetApi.GetConfigBool` for SkyrimNet's global AI toggle, diary switch and day boundary (the result arrives through an `IStackCallbackFunctor`), and `SkyrimNetApi.PatchConfig` when the MCM changes the last two.
 

@@ -62,10 +62,6 @@ namespace SkyrimNetDiaries {
         // The blank journal item's name ("Blank Journal")
         const std::string& GetBlankJournalName() const { return blankJournalName_; }
 
-        // The daily-diary dialogue topics' text (docs/NPC_DIARIES.md#the-whitelist)
-        const std::string& GetDailyDiaryAsk() const { return dailyDiaryAsk_; }
-        const std::string& GetDailyDiaryStop() const { return dailyDiaryStop_; }
-
         // Empty volume placeholder text
         const std::string& GetEmptyVolumeText() const { return emptyVolumeText_; }
 
@@ -143,8 +139,6 @@ namespace SkyrimNetDiaries {
         std::string dateShortFmt_;   // e.g. "{d} {Month}, 4E {y}"
         std::string diaryTitleFmt_;  // e.g. "{Name}'s Diary"
         std::string blankJournalName_;  // the blank journal item's name
-        std::string dailyDiaryAsk_;
-        std::string dailyDiaryStop_;
         std::string dailyDiaryOn_;
         std::string dailyDiaryOff_;
         std::string journalTitleFmt_;  // e.g. "{Name}'s Journal": the player's written volumes

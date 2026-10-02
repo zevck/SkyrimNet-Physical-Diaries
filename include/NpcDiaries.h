@@ -21,18 +21,17 @@
 
 #include "PCH.h"
 #include <optional>
+#include <string>
+#include <vector>
 
 // NPCs writing diary entries on their own, once a game day, through SkyrimNet's own diary
 // generation.  Optional and off by default.  See docs/NPC_DIARIES.md.
 namespace SkyrimNetDiaries::NpcDiaries {
 
-    // kDataLoaded: our records, the dialogue topics' localized text, the clock and the menu sink.
+    // kDataLoaded: SkyrimNet's filter factions, the daily writers, the clock and the menu sink.
     void OnDataLoaded();
 
-    // The dialogue's global follows [NpcDiaries] Enabled: after a load (saves keep globals) and MCM changes.
-    void SyncEnabled();
-
-    // The co-save: the game day the diaries last ran, and the NPCs asked to write daily.
+    // The co-save: the game day the diaries last ran, and the daily writers.
     void Save(SKSE::SerializationInterface* a_intfc, std::uint32_t a_type);
     void Load(SKSE::SerializationInterface* a_intfc, std::uint32_t a_version);
     void Revert();
@@ -43,7 +42,11 @@ namespace SkyrimNetDiaries::NpcDiaries {
     void RefreshSkyrimNetSettings();  // the MCM opens: read them again (answers before the page is drawn, normally)
     bool SetSkyrimNetDiarySetting(std::string_view a_key, bool a_value);
 
-    // Papyrus (the dialogue's fragments): an NPC starts or stops writing every day.
-    void DailyDiaryChanged(RE::Actor* a_actor, bool a_daily);
+    // The MCM: this save's NPCs who write every day, in the order added (game thread).  Add returns 1 added,
+    // 0 already there, -1 can't (no actor, or the player).
+    bool IsDailyWriter(const RE::Actor* a_actor);
+    int AddDailyWriter(RE::Actor* a_actor);
+    std::vector<std::string> DailyWriterNames();
+    void RemoveDailyWriter(int a_index);
 
 }  // namespace SkyrimNetDiaries::NpcDiaries

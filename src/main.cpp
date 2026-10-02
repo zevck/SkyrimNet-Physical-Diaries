@@ -186,8 +186,6 @@ namespace {
             // First, and independent of SkyrimNet: world copies of our books in the
             // loaded cells were built before the load callback filled the books in.
             DynamicForms::RebuildLoadedWorldCopies();
-            // The save restored the dialogue's global: set it from the INI again.
-            SkyrimNetDiaries::NpcDiaries::SyncEnabled();
 
             if (!SkyrimNetDiaries::Database::InitializeAPI()) {
                 // Too old was logged (and shown) once at startup.
