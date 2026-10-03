@@ -71,35 +71,25 @@ namespace SkyrimNetDiaries {
         const std::string& GetWritingOffText() const { return writingOffText_; }
         // Startup: SkyrimNet is older than the public API SNPD needs.
         const std::string& GetSkyrimNetTooOldText() const { return skyrimNetTooOldText_; }
-        // The book editor's prompt on closing with unsaved changes, and its buttons.
-        const std::string& GetEditSavePrompt() const { return editSavePrompt_; }
-        const std::string& GetEditSave() const { return editSave_; }
-        const std::string& GetEditDiscard() const { return editDiscard_; }
-        const std::string& GetEditKeepWriting() const { return editKeepWriting_; }
+        // SkyrimNet didn't save the journal.
         const std::string& GetEditSaveFailed() const { return editSaveFailed_; }
-        // Tearing out an entry: the prompt ({Date} = the entry's date) and its buttons, and the
+        // Tearing out an entry: the question ({Date} = the entry's date) and its buttons, and the
         // notification when SkyrimNet doesn't delete it.
         const std::string& GetEditDeletePrompt() const { return editDeletePrompt_; }
         const std::string& GetEditDelete() const { return editDelete_; }
         const std::string& GetEditKeep() const { return editKeep_; }
         const std::string& GetEditDeleteFailed() const { return editDeleteFailed_; }
-        // Why writing can't start (SkyrimNet too old; the book menu doesn't pause the game),
+        // Why writing can't start (SkyrimNet too old),
         // and the hint when a save leaves an emptied entry as it was.
         const std::string& GetEditNeedsSkyrimNet() const { return editNeedsSkyrimNet_; }
-        const std::string& GetEditNeedsPause() const { return editNeedsPause_; }
         const std::string& GetEditEmptiedHint() const { return editEmptiedHint_; }
         // A journal holds EntriesPerVolume entries: no new one in a full journal.
         const std::string& GetEditJournalFull() const { return editJournalFull_; }
         // A blank journal read from the inventory became one of the player's journals.
         const std::string& GetEditStartedVolume() const { return editStartedVolume_; }
+        // After a load: a journal made after the save, whose entries SkyrimNet kept, is back with the player.
+        const std::string& GetJournalRestored() const { return journalRestored_; }
         const std::string& GetEditNoJournal() const { return editNoJournal_; }
-        const std::string& GetEditNeedsQuill() const { return editNeedsQuill_; }
-        const std::string& GetEditInkRanDry() const { return editInkRanDry_; }
-        const std::string& GetEditOk() const { return editOk_; }
-        const std::string& GetEditBloodPrompt() const { return editBloodPrompt_; }
-        const std::string& GetEditBloodYes() const { return editBloodYes_; }
-        const std::string& GetEditBloodNo() const { return editBloodNo_; }
-        const std::string& GetEditTooWeak() const { return editTooWeak_; }
         const std::string& GetEditJournalNotCarried() const { return editJournalNotCarried_; }
         const std::string& GetBlankJournalFailed() const { return blankJournalFailed_; }
         // An NPC starts or stops writing every day; {Name} is theirs.
@@ -147,28 +137,17 @@ namespace SkyrimNetDiaries {
         std::string templatesMissingText_;
         std::string writingOffText_;
         std::string skyrimNetTooOldText_;
-        std::string editSavePrompt_;
-        std::string editSave_;
-        std::string editDiscard_;
-        std::string editKeepWriting_;
         std::string editSaveFailed_;
         std::string editDeletePrompt_;
         std::string editDelete_;
         std::string editKeep_;
         std::string editDeleteFailed_;
         std::string editNeedsSkyrimNet_;
-        std::string editNeedsPause_;
         std::string editEmptiedHint_;
         std::string editJournalFull_;
         std::string editStartedVolume_;
+        std::string journalRestored_;
         std::string editNoJournal_;
-        std::string editNeedsQuill_;
-        std::string editInkRanDry_;
-        std::string editOk_;
-        std::string editBloodPrompt_;
-        std::string editBloodYes_;
-        std::string editBloodNo_;
-        std::string editTooWeak_;
         std::string editJournalNotCarried_;
         std::string blankJournalFailed_;
     };

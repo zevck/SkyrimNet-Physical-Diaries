@@ -229,28 +229,17 @@ namespace SkyrimNetDiaries {
                 if (key == "TemplatesMissing") templatesMissingText_ = text;
                 else if (key == "WritingOff") writingOffText_ = text;
                 else if (key == "SkyrimNetTooOld") skyrimNetTooOldText_ = text;
-                else if (key == "EditSavePrompt") editSavePrompt_ = text;
-                else if (key == "EditSave") editSave_ = text;
-                else if (key == "EditDiscard") editDiscard_ = text;
-                else if (key == "EditKeepWriting") editKeepWriting_ = text;
                 else if (key == "EditSaveFailed") editSaveFailed_ = text;
                 else if (key == "EditDeletePrompt") editDeletePrompt_ = text;
                 else if (key == "EditDelete") editDelete_ = text;
                 else if (key == "EditKeep") editKeep_ = text;
                 else if (key == "EditDeleteFailed") editDeleteFailed_ = text;
                 else if (key == "EditNeedsSkyrimNet") editNeedsSkyrimNet_ = text;
-                else if (key == "EditNeedsPause") editNeedsPause_ = text;
                 else if (key == "EditEmptiedHint") editEmptiedHint_ = text;
                 else if (key == "EditJournalFull") editJournalFull_ = text;
                 else if (key == "EditStartedVolume") editStartedVolume_ = text;
+                else if (key == "JournalRestored") journalRestored_ = text;
                 else if (key == "EditNoJournal") editNoJournal_ = text;
-                else if (key == "EditNeedsQuill") editNeedsQuill_ = text;
-                else if (key == "EditInkRanDry") editInkRanDry_ = text;
-                else if (key == "EditOk") editOk_ = text;
-                else if (key == "EditBloodPrompt") editBloodPrompt_ = text;
-                else if (key == "EditBloodYes") editBloodYes_ = text;
-                else if (key == "EditBloodNo") editBloodNo_ = text;
-                else if (key == "EditTooWeak") editTooWeak_ = text;
                 else if (key == "EditJournalNotCarried") editJournalNotCarried_ = text;
                 else if (key == "BlankJournalFailed") blankJournalFailed_ = text;
                 else if (key == "DailyDiaryOn") dailyDiaryOn_ = text;
@@ -377,33 +366,22 @@ namespace SkyrimNetDiaries {
             " - powerofthree's Tweaks or Native EditorID Fix is installed for your game version\n\n"
             "See SkyrimNetPhysicalDiaries.log for details.";
         writingOffText_ =
-            "Physical Diaries' book menu (interface\\book.swf) is missing and writing is disabled. Journals are now read-only. "
-            "Please check your installation if this was not intentional.";
+            "Ink & Quill - Writing Framework isn't installed, or its writing is off (see InkAndQuill.log). Your journals "
+            "are read-only until it's back.";
         skyrimNetTooOldText_ =
             "Physical Diaries needs a newer version of SkyrimNet. Diaries and journals are disabled until SkyrimNet "
             "is updated.";
-        editSavePrompt_ = "Keep the changes to your journal?";
-        editSave_ = "Save";
-        editDiscard_ = "Discard";
-        editKeepWriting_ = "Keep writing";
         editSaveFailed_ = "Your journal couldn't be saved. See SkyrimNetPhysicalDiaries.log.";
         editDeletePrompt_ = "Tear out the entry from {Date}?\n\nIt will be gone from your journal and from your memory.";
         editDelete_ = "Tear out";
         editKeep_ = "Keep it";
         editDeleteFailed_ = "The entry couldn't be torn out. See SkyrimNetPhysicalDiaries.log.";
         editNeedsSkyrimNet_ = "Writing in your journal needs a newer SkyrimNet.";
-        editNeedsPause_ = "Writing in your journal needs the book menu to pause the game.";
         editEmptiedHint_ = "An emptied entry is kept. To remove an entry, tear it out.";
         editJournalFull_ = "Your journal is full. Read a blank journal to begin another.";
         editStartedVolume_ = "You begin a new journal.";
+        journalRestored_ = "You still have your journal.";
         editNoJournal_ = "You have no journal. Read a blank journal to begin one.";
-        editNeedsQuill_ = "To write in your journal you need a quill and an inkwell.";
-        editInkRanDry_ = "Your inkwell runs dry.";
-        editOk_ = "OK";
-        editBloodPrompt_ = "You have no ink. Write in your own blood?";
-        editBloodYes_ = "Write in blood";
-        editBloodNo_ = "Put the quill down";
-        editTooWeak_ = "You're too weak to write in blood.";
         editJournalNotCarried_ = "Your journal isn't with you.";
         blankJournalFailed_ = "The journal couldn't be started. See SkyrimNetPhysicalDiaries.log.";
         dailyDiaryOn_ = "{Name} will write in their diary every day.";

@@ -18,6 +18,7 @@
  */
 
 #include "PapyrusAPI.h"
+#include "BookEditor.h"
 #include "BookManager.h"
 #include "Config.h"
 #include "Database.h"
@@ -25,6 +26,7 @@
 #include "DiaryTheftHandler.h"
 #include "NpcDiaries.h"
 #include "VolumeSync.h"
+#include "WritingMode.h"
 #include <spdlog/spdlog.h>
 
 namespace SkyrimNetDiaries::PapyrusAPI {
@@ -226,28 +228,26 @@ namespace SkyrimNetDiaries::PapyrusAPI {
         }
     }
 
-    std::int32_t MCM_GetEditKey(RE::StaticFunctionTag*) {
-        return static_cast<std::int32_t>(SkyrimNetDiaries::Config::GetSingleton()->GetEditKey());
-    }
-    void MCM_SetEditKey(RE::StaticFunctionTag*, std::int32_t v) {
-        SkyrimNetDiaries::Config::GetSingleton()->SetEditKey(static_cast<int>(v));
-        SkyrimNetDiaries::Config::GetSingleton()->Save();
-    }
+    // Ink & Quill is installed and writing is on: the journals can be written in.
+    bool MCM_IsWritingOn(RE::StaticFunctionTag*) { return SkyrimNetDiaries::WritingMode::IsOn(); }
 
     std::int32_t MCM_GetDeleteKey(RE::StaticFunctionTag*) {
         return static_cast<std::int32_t>(SkyrimNetDiaries::Config::GetSingleton()->GetDeleteKey());
     }
-    void MCM_SetDeleteKey(RE::StaticFunctionTag*, std::int32_t v) {
+    // False: saved, but Ink & Quill refused it while writing (the MCM says so).
+    bool MCM_SetDeleteKey(RE::StaticFunctionTag*, std::int32_t v) {
         SkyrimNetDiaries::Config::GetSingleton()->SetDeleteKey(static_cast<int>(v));
         SkyrimNetDiaries::Config::GetSingleton()->Save();
+        return SkyrimNetDiaries::BookEditor::RegisterKeys();
     }
 
     std::int32_t MCM_GetNewEntryKey(RE::StaticFunctionTag*) {
         return static_cast<std::int32_t>(SkyrimNetDiaries::Config::GetSingleton()->GetNewEntryKey());
     }
-    void MCM_SetNewEntryKey(RE::StaticFunctionTag*, std::int32_t v) {
+    bool MCM_SetNewEntryKey(RE::StaticFunctionTag*, std::int32_t v) {
         SkyrimNetDiaries::Config::GetSingleton()->SetNewEntryKey(static_cast<int>(v));
         SkyrimNetDiaries::Config::GetSingleton()->Save();
+        return SkyrimNetDiaries::BookEditor::RegisterKeys();
     }
 
     RE::BSFixedString MCM_GetFontFace(RE::StaticFunctionTag*) {
@@ -297,8 +297,7 @@ namespace SkyrimNetDiaries::PapyrusAPI {
         a_vm->RegisterFunction("SetShowDateHeaders",  "SkyrimNetDiaries_MCM", MCM_SetShowDateHeaders);
         a_vm->RegisterFunction("GetPlayerDiaryBooks", "SkyrimNetDiaries_MCM", MCM_GetPlayerDiaryBooks);
         a_vm->RegisterFunction("SetPlayerDiaryBooks", "SkyrimNetDiaries_MCM", MCM_SetPlayerDiaryBooks);
-        a_vm->RegisterFunction("GetEditKey",          "SkyrimNetDiaries_MCM", MCM_GetEditKey);
-        a_vm->RegisterFunction("SetEditKey",          "SkyrimNetDiaries_MCM", MCM_SetEditKey);
+        a_vm->RegisterFunction("IsWritingOn",         "SkyrimNetDiaries_MCM", MCM_IsWritingOn);
         a_vm->RegisterFunction("GetDeleteKey",        "SkyrimNetDiaries_MCM", MCM_GetDeleteKey);
         a_vm->RegisterFunction("SetDeleteKey",        "SkyrimNetDiaries_MCM", MCM_SetDeleteKey);
         a_vm->RegisterFunction("GetNewEntryKey",      "SkyrimNetDiaries_MCM", MCM_GetNewEntryKey);

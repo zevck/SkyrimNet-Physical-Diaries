@@ -18,53 +18,36 @@
  */
 
 #include "WritingMode.h"
-#include <charconv>
-#include <fstream>
-#include <iterator>
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
 
 namespace SkyrimNetDiaries::WritingMode {
 
     namespace {
-
-        // BookMenu.as WRITING_INTERFACE (mod-neutral: Physical Letters ships the same book.swf).  A SWF only adds
-        // calls, so any version from kMinInterface up will do; raise it when the plugin needs a newer call.
-        constexpr std::string_view kMarker = "BOOKMENU_WRITING_INTERFACE=";
-        constexpr int kMinInterface = 3;  // 2: blood (EditSetBlood, marked bodies); 3: EditCanErase
-
-        bool g_on = false;
-
+        const IQ_API* g_api = nullptr;
     }
 
-    void Detect() {
-        g_on = false;
-        std::ifstream file("Data/Interface/book.swf", std::ios::binary);
-        if (!file) {
-            SKSE::log::info("[WritingMode] Off: no loose Interface/book.swf (the game's own, or one in a BSA)");
-            return;
+    void Connect() {
+        auto* module = GetModuleHandleA("InkAndQuill.dll");
+        const auto get = module ? reinterpret_cast<IQ_GetAPI_t>(GetProcAddress(module, "IQ_GetAPI")) : nullptr;
+        g_api = get ? get(IQ_API_VERSION) : nullptr;
+        if (g_api) {
+            SKSE::log::info("[WritingMode] Ink & Quill found (API {})", g_api->version);
+        } else if (module) {
+            SKSE::log::info("[WritingMode] Off: Ink & Quill is too old (needs API {})", IQ_API_VERSION);
+        } else {
+            SKSE::log::info("[WritingMode] Off: Ink & Quill isn't installed");
         }
-        const std::string data{ std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>() };
-        if (data.size() < 3 || data.compare(0, 3, "FWS") != 0) {
-            // CWS/ZWS: compressed, so not ours (ours ships uncompressed) or it was re-saved.
-            SKSE::log::info("[WritingMode] Off: Interface/book.swf has no writing (compressed, {} bytes)", data.size());
-            return;
-        }
-        const auto at = data.find(kMarker);
-        if (at == std::string::npos) {
-            SKSE::log::info("[WritingMode] Off: Interface/book.swf is another mod's, without writing");
-            return;
-        }
-        int version = 0;
-        const char* first = data.data() + at + kMarker.size();
-        std::from_chars(first, data.data() + data.size(), version);
-        if (version < kMinInterface) {
-            SKSE::log::error("[WritingMode] Off: Interface/book.swf is too old (interface {}, this plugin needs {} or "
-                             "newer). Reinstall SNPD.", version, kMinInterface);
-            return;
-        }
-        g_on = true;
-        SKSE::log::info("[WritingMode] On: Interface/book.swf has writing (interface {})", version);
     }
 
-    bool IsOn() { return g_on; }
+    bool IsOn() { return g_api && g_api->IsWritingOn(); }
+
+    const IQ_API* API() { return g_api; }
 
 }

@@ -26,10 +26,10 @@
 #include <unordered_set>
 
 // Shared by the book editor's sources: BookEditor.cpp, EditorWrites.cpp, EditorJournals.cpp.
-// Main thread only (the book menu pauses the game).  See docs/EDITING.md.
+// Game thread: Ink & Quill's callbacks are UI tasks, on the main thread, paused or not.  See docs/EDITING.md.
 namespace SkyrimNetDiaries::BookEditor {
 
-    // An entry being edited, the text it was given or last saved, and whether its last save failed.
+    // An entry being edited, its run as given or last saved, and whether its last save failed.
     struct EditedEntry {
         DiaryEntry entry;
         std::string savedBody;
@@ -39,22 +39,22 @@ namespace SkyrimNetDiaries::BookEditor {
         bool IsNew() const { return entry.id == 0 && entry.localKey != 0; }
     };
 
-    inline std::vector<EditedEntry> g_edit;  // page order, as the SWF's EditGetBodies
+    inline std::vector<EditedEntry> g_edit;  // the session's entries: entry k is Ink & Quill's run k
     inline RE::FormID g_bookFormId = 0;      // the journal being edited
     inline RE::FormID g_lastJournal = 0;     // the journal last written in (the new-entry key's first pick)
-    inline RE::FormID g_newEntryOnOpen = 0;  // start a new entry once this book is open with its text
-    inline RE::FormID g_blankOnOpen = 0;     // a blank journal: it becomes a journal once its text is in
 
     // An entry's key in the pending-write bookkeeping: its id, or its local key (negated).
     inline int EntryKey(const DiaryEntry& entry) { return entry.id != 0 ? entry.id : -entry.localKey; }
 
     // The entries as the book shows them: a new entry that was never given text isn't one.
-    std::vector<DiaryEntry> EditedEntries();
+    std::vector<DiaryEntry> EditedEntries(int skip = -1);
 
-    // ---- The book movie (BookEditor.cpp) ----
+    // ---- Sessions (BookEditor.cpp) ----
 
-    RE::GFxMovieView* BookMovie();
     void Notify(const std::string& text);
+
+    // The new-entry key from play opened this journal: begin in a new entry once its menu is open.
+    bool BeginNewEntryOnOpen(RE::FormID bookFormId);
 
     // ---- Writes to SkyrimNet (EditorWrites.cpp) ----
 
@@ -95,10 +95,15 @@ namespace SkyrimNetDiaries::BookEditor {
     // The new-entry key during play: open a journal with room and start a new entry.  Game thread.
     void NewEntryFromPlay();
 
-    // The book menu opened: mark a blank journal read from the inventory for ConvertBlankJournal.
-    void NoteBlankJournal();
+    // Whose journals: the player's SkyrimNet UUID and name (SkyrimNet's, else the game's).
+    struct JournalOwner {
+        std::string uuid;
+        std::string name;
+    };
+    std::optional<JournalOwner> PlayerJournalOwner();
 
-    // The open blank journal becomes a new journal, in place.  UI thread.
-    void ConvertBlankJournal();
+    // A new, empty journal beside the player's others, in `look` (a template EditorID), in their inventory.
+    // Its book's FormID, or 0.
+    RE::FormID StartJournal(const std::string& look);
 
 } // namespace SkyrimNetDiaries::BookEditor

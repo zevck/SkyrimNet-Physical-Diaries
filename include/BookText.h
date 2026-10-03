@@ -30,10 +30,10 @@ namespace SkyrimNetDiaries {
     // every later page one entry; the inter-plugin API splits on this.
     inline constexpr std::string_view kPageBreak = "[pagebreak]\n\n";
 
-    // One volume of exactly the entries given, titled by kind.  An empty list renders the "all entries
-    // removed" page, marked with kEmptySentinel (a journal's is blank, still marked).
-    std::string FormatDiaryEntries(const std::vector<DiaryEntry>& entries,
-                                   const std::string& actorName, VolumeKind kind = VolumeKind::Generated);
+    // One volume of exactly the entries given, titled by kind; none: the sentinel's "all entries removed" page.
+    // `marked`: Ink & Quill's marked text instead, never for the book menu (docs/EDITING.md#marked-text).
+    std::string FormatDiaryEntries(const std::vector<DiaryEntry>& entries, const std::string& actorName,
+                                   VolumeKind kind = VolumeKind::Generated, bool marked = false);
 
     // Blood text: stored as byte ranges in DiaryDB, marked inline with these private-use characters
     // while editing and rendering.  See docs/EDITING.md#writing-in-blood.
@@ -45,12 +45,13 @@ namespace SkyrimNetDiaries {
     std::string MarkBlood(const std::string& content, const std::string& ranges);
     // Marked text: the content (no markers) and its ranges.
     std::pair<std::string, std::string> SplitBlood(std::string_view marked);
+    // In Ink & Quill's marked text, what the player can't change is between these (U+E002, U+E003).
+    inline constexpr std::string_view kLockOpen = "\xEE\x80\x82";   // U+E002
+    inline constexpr std::string_view kLockClose = "\xEE\x80\x83";  // U+E003
 
     // Plain-text pieces of that layout for the book editor (no markup, not escaped).
     // An entry's text as its page shows it (the same cleanup as FormatDiaryEntries), blood marked.
     std::string EditableEntryText(const DiaryEntry& entry);
-    // Its date heading; empty when [Diary] ShowDateHeaders is off.
-    std::string EntryHeading(const DiaryEntry& entry);
     // Its date as a heading shows it, whether headings are on or not.
     std::string EntryDate(const DiaryEntry& entry);
     // The title page's date range ("" for no entries).

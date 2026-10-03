@@ -265,8 +265,10 @@ namespace SkyrimNetDiaries {
             return NeutralizePageBreaks(std::move(result));
         }
 
-        std::string SanitizeBookText(const DiaryEntry& entry) {
+        // `marked`: blood stays as its markers (the editor paints it).
+        std::string SanitizeBookText(const DiaryEntry& entry, bool marked) {
             std::string text = EscapeMarkup(SanitizePlain(MarkBlood(entry.content, entry.blood), !IsPlayerWritten(entry)));
+            if (marked) return text;
             ReplaceAll(text, kBloodOpen, std::format("<font color='{}'>", kBloodColor));
             ReplaceAll(text, kBloodClose, "</font>");
             return text;
@@ -320,10 +322,9 @@ namespace SkyrimNetDiaries {
 
     std::string MarkBlood(const std::string& text, const std::string& ranges) {
         // Markers come only from the ranges: any already in the text (an NPC's entry is LLM output)
-        // would become markup.
+        // would become markup, and a lock marker would break the editor's runs.
         std::string content = text;
-        ReplaceAll(content, kBloodOpen, "");
-        ReplaceAll(content, kBloodClose, "");
+        for (const auto marker : { kBloodOpen, kBloodClose, kLockOpen, kLockClose }) ReplaceAll(content, marker, "");
         if (ranges.empty()) return content;
         std::string out;
         out.reserve(content.size() + ranges.size());
@@ -382,11 +383,6 @@ namespace SkyrimNetDiaries {
         return FormatGameDate(entry.entry_date);
     }
 
-    std::string EntryHeading(const DiaryEntry& entry) {
-        return SkyrimNetDiaries::Config::GetSingleton()->GetShowDateHeaders() ? FormatGameDate(entry.entry_date)
-                                                                              : std::string();
-    }
-
     std::string TitlePageDates(const std::vector<DiaryEntry>& entries) {
         if (entries.empty()) return {};
         // Earliest and latest: entries are in write order, and dates run back once after a Keep.
@@ -397,7 +393,7 @@ namespace SkyrimNetDiaries {
     }
 
     std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& entries,
-                                   const std::string& actorName, SkyrimNetDiaries::VolumeKind kind) {
+                                   const std::string& actorName, SkyrimNetDiaries::VolumeKind kind, bool marked) {
         std::string bookText;
         auto config = SkyrimNetDiaries::Config::GetSingleton();
         int fontTitle = config->GetFontSizeTitle();
@@ -407,7 +403,8 @@ namespace SkyrimNetDiaries {
         std::string fontFace = config->GetFontFace();
 
         // Blank first page
-        bookText = std::string(kPageBreak);
+        bookText = marked ? std::string(kLockOpen) : std::string();
+        bookText += kPageBreak;
 
         // Title page — handwriting font, centred; leading newlines push it down visually
         bookText += "\n\n\n\n\n\n";
@@ -416,7 +413,10 @@ namespace SkyrimNetDiaries {
         bookText += loc->FormatTitle(EscapeMarkup(actorName), kind);
         bookText += "</p></font>\n\n";
 
-        if (entries.empty()) {
+        if (entries.empty() && marked) {
+            // No runs; the sentinel (an HTML comment) stays out of the editor.
+            bookText += std::string(kPageBreak);
+        } else if (entries.empty()) {
             // A journal is just blank (new, or its entries torn out); the sentinel still tells
             // the inter-plugin API there are no entries.
             bookText += std::string(kPageBreak);
@@ -449,24 +449,24 @@ namespace SkyrimNetDiaries {
                     bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'></font>\n\n";  // Reset to content font size
                 }
 
-                // Entry content - wrap EACH paragraph in font tag since Skyrim resets after \n\n
-                std::string content = SanitizeBookText(entry);
-
-                // Split by double newlines (paragraph breaks) and wrap each
-                size_t pos = 0;
-                size_t found;
-                while ((found = content.find("\n\n", pos)) != std::string::npos) {
-                    std::string paragraph = content.substr(pos, found - pos);
+                // Entry content - wrap EACH paragraph in font tag since Skyrim resets after \n\n.
+                // Marked: the run is the paragraphs and the breaks between them, nothing after the last.
+                if (marked) bookText += kLockClose;
+                const std::string content = SanitizeBookText(entry, marked);
+                bool first = true;
+                for (size_t pos = 0;;) {
+                    const size_t found = content.find("\n\n", pos);
+                    const std::string paragraph =
+                        content.substr(pos, found == std::string::npos ? std::string::npos : found - pos);
                     if (!paragraph.empty()) {
-                        bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'>" + paragraph + "</font>\n\n";
+                        if (!std::exchange(first, false)) bookText += "\n\n";
+                        bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'>" + paragraph + "</font>";
                     }
+                    if (found == std::string::npos) break;
                     pos = found + 2;
                 }
-                // Last paragraph
-                std::string lastParagraph = content.substr(pos);
-                if (!lastParagraph.empty()) {
-                    bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'>" + lastParagraph + "</font>\n\n";
-                }
+                if (marked) bookText += kLockOpen;
+                if (!first) bookText += "\n\n";
 
                 bookText += "\n\n";
 
@@ -477,6 +477,7 @@ namespace SkyrimNetDiaries {
             }
         }
 
+        if (marked) bookText += kLockClose;
         return bookText;
     }
 

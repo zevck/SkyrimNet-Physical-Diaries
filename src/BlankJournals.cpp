@@ -107,6 +107,12 @@ namespace SkyrimNetDiaries::BlankJournals {
         }
     }
 
+    std::vector<RE::FormID> Forms() {
+        std::vector<RE::FormID> forms;
+        for (const auto& [form, look] : g_looks) forms.push_back(form);
+        return forms;
+    }
+
     std::string LookOf(RE::FormID bookFormId) {
         const auto it = g_looks.find(bookFormId);
         return it == g_looks.end() ? std::string{} : it->second;

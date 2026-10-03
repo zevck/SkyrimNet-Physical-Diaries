@@ -22,12 +22,11 @@ int  Function GetFontSizeContent()               global native
      Function SetFontSizeContent(int value)      global native
 int  Function GetFontSizeSmall()                 global native
      Function SetFontSizeSmall(int value)        global native
-int  Function GetEditKey()                       global native
-     Function SetEditKey(int value)              global native
+bool Function IsWritingOn()                      global native  ; Ink & Quill installed, writing on
 int  Function GetDeleteKey()                     global native
-     Function SetDeleteKey(int value)            global native
+bool Function SetDeleteKey(int value)            global native  ; false: Ink & Quill keeps it while writing
 int  Function GetNewEntryKey()                   global native
-     Function SetNewEntryKey(int value)          global native
+bool Function SetNewEntryKey(int value)          global native
 string Function GetFontFace()                    global native
        Function SetFontFace(string value)        global native
 Function RefreshSkyrimNetSettings() global native  ; read SkyrimNet's diary settings again (on open)
@@ -51,7 +50,6 @@ int oidFontSizeDate      = -1
 int oidFontSizeContent   = -1
 int oidFontSizeSmall     = -1
 int oidFontFace          = -1
-int oidEditKey           = -1
 int oidDeleteKey         = -1
 int oidNewEntryKey       = -1
 int oidResetAll          = -1
@@ -167,7 +165,6 @@ event OnPageReset(string page)
     oidFontSizeContent  = -1
     oidFontSizeSmall    = -1
     oidFontFace         = -1
-    oidEditKey          = -1
     oidDeleteKey        = -1
     oidNewEntryKey      = -1
     oidResetAll         = -1
@@ -206,14 +203,17 @@ function RenderSettingsPage()
 
     SetCursorPosition(1)  ; the right column
     AddHeaderOption("$SNPD_HeaderWriting")
-    oidEditKey = AddKeyMapOption("$SNPD_EditKey", GetEditKey())
-    oidDeleteKey = AddKeyMapOption("$SNPD_DeleteKey", GetDeleteKey())
-    ; 0 in the INI is unbound (the default); SkyUI shows -1 as no key.
+    ; 0 in the INI is unbound (the default); SkyUI shows -1 as no key.  Writing is Ink & Quill's key.
     int newEntryKey = GetNewEntryKey()
     if newEntryKey == 0
         newEntryKey = -1
     endif
-    oidNewEntryKey = AddKeyMapOption("$SNPD_NewEntryKey", newEntryKey)
+    int writingFlags = OPTION_FLAG_NONE
+    if !IsWritingOn()
+        writingFlags = OPTION_FLAG_DISABLED
+    endif
+    oidDeleteKey = AddKeyMapOption("$SNPD_DeleteKey", GetDeleteKey(), writingFlags)
+    oidNewEntryKey = AddKeyMapOption("$SNPD_NewEntryKey", newEntryKey, writingFlags)
 
     AddHeaderOption("$SNPD_HeaderNpcDiaries")
     oidNpcEnabled      = AddToggleOption("$SNPD_NpcEnabled", GetNpcSetting("Enabled") != 0)
@@ -417,20 +417,19 @@ event OnOptionSliderAccept(int oid, float value)
     endif
 endevent
 
-; ======== Key map (edit key) ========
+; ======== Key maps (tear-out and new-entry keys) ========
 
 event OnOptionKeyMapChange(int oid, int keyCode, string conflictControl, string conflictName)
-    ; The key only acts while the player reads their own diary, where game controls
-    ; don't apply, so a conflict with one doesn't matter.
-    if oid == oidEditKey && keyCode > 0
-        SetEditKey(keyCode)
-        SetKeyMapOptionValue(oid, keyCode)
-    elseif oid == oidDeleteKey && keyCode > 0
-        SetDeleteKey(keyCode)
+    bool kept = true
+    if oid == oidDeleteKey && keyCode > 0
+        kept = SetDeleteKey(keyCode)
         SetKeyMapOptionValue(oid, keyCode)
     elseif oid == oidNewEntryKey && keyCode > 0
-        SetNewEntryKey(keyCode)
+        kept = SetNewEntryKey(keyCode)
         SetKeyMapOptionValue(oid, keyCode)
+    endif
+    if !kept
+        ShowMessage("$SNPD_KeyNotWhileWriting", false)
     endif
 endevent
 
@@ -455,8 +454,6 @@ event OnOptionHighlight(int oid)
         SetInfoText("$SNPD_TipContentFontSize")
     elseif oid == oidFontSizeSmall
         SetInfoText("$SNPD_TipSmallFontSize")
-    elseif oid == oidEditKey
-        SetInfoText("$SNPD_TipEditKey")
     elseif oid == oidDeleteKey
         SetInfoText("$SNPD_TipDeleteKey")
     elseif oid == oidNewEntryKey
@@ -518,9 +515,6 @@ event OnOptionDefault(int oid)
     elseif oid == oidFontSizeSmall
         SetFontSizeSmall(12)
         SetSliderOptionValue(oid, 12.0, "{0}")
-    elseif oid == oidEditKey
-        SetEditKey(61)
-        SetKeyMapOptionValue(oid, 61)
     elseif oid == oidDeleteKey
         SetDeleteKey(68)
         SetKeyMapOptionValue(oid, 68)

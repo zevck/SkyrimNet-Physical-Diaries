@@ -1,4 +1,4 @@
-# Incremental plugin build (never /t:Rebuild: it rebuilds all of CommonLib), Pyro, SWFs, ESP, deploy to every instance.
+# Incremental plugin build (never /t:Rebuild: it rebuilds all of CommonLib), Pyro, ESP, deploy to every instance.
 # Switches and config: docs/DEVELOPMENT.md#build.  PASS/FAIL also goes to %TEMP%\snpd-build-result.json.
 
 #Requires -Version 7
@@ -10,7 +10,6 @@ param(
     [int]$threads,
     [switch]$noDeploy,
     [switch]$skipScripts,
-    [switch]$skipSwf,
     [switch]$skipEsp,
     [switch]$fresh
 )
@@ -87,8 +86,6 @@ $defaultOutputPath     = ""
 $additionalOutputPaths = @()
 $ckPath                = ""
 $pyroPath              = ""
-$ffdecPath             = ""
-$swfVariant            = ""
 $spriggitPath          = ""
 $defaultThreads        = 16
 if (Test-Path .\Build_Config_Local.ps1) { . .\Build_Config_Local.ps1 }
@@ -147,51 +144,6 @@ if (-not $skipScripts) {
     if ($missing) { Complete-Build -Status 'FAILURE' -Stage 'scripts' -Message ("No .pex for: " + (($missing | ForEach-Object BaseName) -join ', ')) }
 }
 
-# --- SWF (JPEXS ffdec-cli): each base swf\<name>\<name>[.<variant>].xml plus our scripts\ -----------------------
-# Built only when the base or a script is newer than the output.  See docs/DEVELOPMENT.md#swf.
-if (-not $skipSwf -and (Test-Path swf)) {
-    foreach ($dir in Get-ChildItem swf -Directory) {
-        $scriptsNewest = Get-ChildItem (Join-Path $dir.FullName "scripts") -Recurse -File -ErrorAction SilentlyContinue |
-                         Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        foreach ($xml in Get-ChildItem $dir.FullName -Filter "$($dir.Name)*.xml" -File) {
-            $variant = $xml.BaseName.Substring($dir.Name.Length).TrimStart('.')
-            $output  = if ($variant) { "build\variants\$variant\Interface\$($dir.Name).swf" } else { "Interface\$($dir.Name).swf" }
-            $sourceTime = @($xml.LastWriteTime, $scriptsNewest.LastWriteTime) | Sort-Object -Descending | Select-Object -First 1
-            if ((Test-Path -LiteralPath $output) -and (Get-Item $output).LastWriteTime -ge $sourceTime) { continue }
-
-            if (-not $ffdecPath -or -not (Test-Path -LiteralPath $ffdecPath)) {
-                Complete-Build -Status 'FAILURE' -Stage 'swf' -Message "ffdec-cli.exe not found ('$ffdecPath'). Set `$ffdecPath in Build_Config_Local.ps1, or pass -skipSwf."
-            }
-            Write-Host "Building $output (JPEXS)..." -ForegroundColor Cyan
-            $baseSwf = Join-Path $PSScriptRoot "build\swf\$($xml.BaseName)_base.swf"
-            New-Item -ItemType Directory -Force -Path (Split-Path $baseSwf), (Split-Path (Join-Path $PSScriptRoot $output)) | Out-Null
-            $log = & $ffdecPath -xml2swf $xml.FullName $baseSwf 2>&1
-            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $baseSwf)) {
-                $log | ForEach-Object { Write-Host "  $_" }
-                Complete-Build -Status 'FAILURE' -Stage 'swf' -Code $LASTEXITCODE -Message "xml2swf failed for $($xml.Name)"
-            }
-            $scriptedSwf = Join-Path $PSScriptRoot "build\swf\$($xml.BaseName)_scripted.swf"
-            $log = & $ffdecPath -importScript $baseSwf $scriptedSwf $dir.FullName 2>&1
-            if ($LASTEXITCODE -ne 0 -or ($log | Where-Object { "$_" -match '(?i)error|exception' })) {
-                $log | ForEach-Object { Write-Host "  $_" }
-                Complete-Build -Status 'FAILURE' -Stage 'swf' -Code $LASTEXITCODE -Message "importScript failed for $($xml.Name)"
-            }
-            # Shipped uncompressed: the plugin finds book.swf's marker as plain text (WritingMode.cpp).
-            $log = & $ffdecPath -decompress $scriptedSwf (Join-Path $PSScriptRoot $output) 2>&1
-            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $output)) {
-                $log | ForEach-Object { Write-Host "  $_" }
-                Complete-Build -Status 'FAILURE' -Stage 'swf' -Code $LASTEXITCODE -Message "decompress failed for $($xml.Name)"
-            }
-            # What the plugin checks: uncompressed, with the marker.  A stale output passes the steps above.
-            $bytes = [System.IO.File]::ReadAllBytes((Join-Path $PSScriptRoot $output))
-            $text = [System.Text.Encoding]::ASCII.GetString($bytes)
-            if (-not $text.StartsWith('FWS') -or -not $text.Contains('BOOKMENU_WRITING_INTERFACE=')) {
-                Complete-Build -Status 'FAILURE' -Stage 'swf' -Message "$output isn't uncompressed with the writing marker"
-            }
-        }
-    }
-}
-
 # --- ESP (Spriggit) ----------------------------------------------------------------
 # The .esp is built from its text source when any source file is newer than it.
 if (-not $skipEsp -and (Test-Path -LiteralPath $PluginSourceDir)) {
@@ -218,7 +170,7 @@ function Deploy-To {
     New-Item -ItemType Directory -Force -Path (Join-Path $dest "SKSE\Plugins") | Out-Null
 
     # The DLL is locked while that instance's game is running - report it, but still
-    # copy everything else: a SWF change can be tested without restarting.
+    # copy everything else: a script change can be tested without restarting.
     $dllLocked = $false
     try {
         Copy-Item -LiteralPath $builtDll -Destination (Join-Path $dest "SKSE\Plugins\$target.dll") -Force
@@ -235,15 +187,6 @@ function Deploy-To {
         } else {
             try { Copy-Item -LiteralPath $builtEsp -Destination $deployedEsp -Force } catch { $dllLocked = $true }
         }
-    }
-    # Description Framework's config for the partly used inkwells (it reads Data\*_DESC.ini).
-    Copy-Item -LiteralPath "SkyrimNet Physical Diaries_DESC.ini" -Destination $dest -Force
-    # The shipped SWFs, then the chosen variant's on top ($swfVariant).
-    $swfSources = @("Interface")
-    if ($swfVariant) { $swfSources += "build\variants\$swfVariant\Interface" }
-    foreach ($swfFile in $swfSources | ForEach-Object { Get-ChildItem "$_\*.swf" -ErrorAction SilentlyContinue }) {
-        New-Item -ItemType Directory -Force -Path (Join-Path $dest "Interface") | Out-Null
-        Copy-Item -LiteralPath $swfFile.FullName -Destination (Join-Path $dest "Interface\$($swfFile.Name)") -Force
     }
 
     foreach ($folder in $mirroredFolders) {

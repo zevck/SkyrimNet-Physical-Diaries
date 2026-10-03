@@ -33,17 +33,15 @@ The folder is located from **the DLL's own path** (`GetModuleHandleExA` on a fun
 | `[Format] EmptyVolumeText` | Page shown when all of a volume's entries were deleted (not in a journal, which is left blank) | |
 | `[Messages] TemplatesMissing` | The startup warning shown when the template books are missing. One line; `\n` is a line break. The button uses the game's own `sOk` string. | |
 | `[Messages] SkyrimNetTooOld` | The startup warning shown when SkyrimNet is older than public API v11 (`kDataLoaded`). Same format and button. | |
-| `[Messages] WritingOff` | Shown once per game run after loading a save with journals while writing is off (`book.swf` missing, outdated or overridden). Same format and button. | |
-| `[Messages] EditSavePrompt`, `EditSave`, `EditDiscard`, `EditKeepWriting` | The book editor's prompt when the player closes their journal with unsaved changes, and its three buttons ([EDITING.md](EDITING.md#closing)). Every locale file has them; a missing one gets the English default from `Localization.cpp`. | |
-| `[Messages] EditSaveFailed` | Notification when SkyrimNet doesn't save an edit. Same fallback. | |
-| `[Messages] EditDeletePrompt`, `EditDelete`, `EditKeep` | The prompt when the player tears out an entry, and its two buttons ([EDITING.md](EDITING.md#tearing-out-an-entry)). Same fallback. | `{Date}` the entry's date (prompt only) |
+| `[Messages] WritingOff` | Shown once per game run after loading a save with journals while writing is off (Ink & Quill missing or too old, or its writing off). Same format and button. | |
+| `[Messages] EditSaveFailed` | Notification when SkyrimNet doesn't save an edit, and the refusal when SNPD can't match a save to the journal's entries. Same fallback. | |
+| `[Messages] EditDeletePrompt`, `EditDelete`, `EditKeep` | The question when the player tears out an entry (Ink & Quill's `Prompt`), and its two buttons ([EDITING.md](EDITING.md#tearing-out-an-entry)). Same fallback. | `{Date}` the entry's date (prompt only) |
 | `[Messages] EditDeleteFailed` | Notification when SkyrimNet doesn't delete an entry. Same fallback. | |
-| `[Messages] EditNeedsSkyrimNet`, `EditNeedsPause` | Notifications when writing can't start: SkyrimNet is older than public API v11, or the book menu doesn't pause the game ([EDITING.md](EDITING.md#opening)). Same fallback. | |
-| `[Messages] EditEmptiedHint` | Notification when a save keeps an emptied entry (removing one is tearing it out). Same fallback. | |
+| `[Messages] EditNeedsSkyrimNet` | Notification when writing can't start: SkyrimNet is older than public API v11 ([EDITING.md](EDITING.md#starting)). Same fallback. | |
+| `[Messages] EditEmptiedHint` | Notification when a save keeps an emptied entry (removing one is tearing it out); the refusal's message when nothing else changed. Same fallback. | |
 | `[Messages] EditJournalFull`, `EditNoJournal`, `EditJournalNotCarried` | Notifications for the new-entry key: the journal is full (it holds `EntriesPerVolume` entries); during play, the player has no journal, or doesn't carry one ([EDITING.md](EDITING.md#new-entries)). Same fallback. | |
-| `[Messages] EditNeedsQuill`, `EditInkRanDry`, `EditOk` | Quill and ink: the message box when writing can't start (OK button), and the notice when an inkwell runs dry ([EDITING.md](EDITING.md#quill-and-ink)). Same fallback. | |
-| `[Messages] EditBloodPrompt`, `EditBloodYes`, `EditBloodNo`, `EditTooWeak` | No ink: the prompt to write in blood and its buttons, and the message box when the player is too weak ([EDITING.md](EDITING.md#writing-in-blood)). Same fallback. | |
-| `[Messages] EditStartedVolume`, `BlankJournalFailed` | A blank journal read from the inventory became the player's journal, or couldn't ([EDITING.md](EDITING.md#reading-a-blank-journal)). Same fallback. | |
+| `[Messages] EditStartedVolume`, `BlankJournalFailed` | A blank journal's first save made the player's journal, or couldn't (the save is refused) ([EDITING.md](EDITING.md#reading-a-blank-journal)). Same fallback. | |
+| `[Messages] JournalRestored` | Notification after a load when a journal made after the save, whose entries SkyrimNet kept, is made again in the player's inventory ([EDITING.md](EDITING.md#diaries-and-journals)). Same fallback. | |
 | `[Messages] DailyDiaryOn`, `DailyDiaryOff` | Notification when an NPC starts or stops writing every day | `{Name}` the NPC |
 | `[Months]`, `[Days]` | Optional name overrides, keyed by the English name | |
 

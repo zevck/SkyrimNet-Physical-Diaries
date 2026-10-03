@@ -19,57 +19,89 @@
 
 #include "EditorInternal.h"
 #include "ActorLookup.h"
-#include "BlankJournals.h"
-#include "BookTextHook.h"
 #include "Config.h"
 #include "Localization.h"
 
-// The player's journals: which one the new-entry key opens, and blank journals becoming journals
-// (docs/EDITING.md#new-entries, #reading-a-blank-journal).
+#include <set>
+
+// The player's journals: which one the new-entry key opens, and making a new one (docs/EDITING.md#new-entries,
+// #reading-a-blank-journal).
 namespace SkyrimNetDiaries::BookEditor {
 
     namespace {
-        // Open a book and start a new entry once its text is in (BookMenuAdvanceMovie).  Game thread.
+        // Open a journal and begin a new entry once its menu is open.  Game thread.
         void OpenForNewEntry(RE::FormID bookFormId) {
             auto* book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(bookFormId);
             if (!book) return;
-            g_newEntryOnOpen = bookFormId;
             RE::BookMenu::OpenMenuFromBaseForm(book);
+            BeginNewEntryOnOpen(bookFormId);
         }
 
-        // A new, empty journal beside the player's others, in `look` (a template EditorID), in their
-        // inventory.  Its book's FormID, or 0.
-        RE::FormID StartJournal(const std::string& look) {
-            const std::string uuid = Database::GetUUIDFromFormID(0x14);
-            auto* player = RE::PlayerCharacter::GetSingleton();
-            if (uuid.empty() || !player) return 0;
-            // After every journal SkyrimNet's entries name: a KEEP leaves entries of journals this save lacks.
+        // The journal numbers SkyrimNet's entries name (untagged ones are journal 1's), or nullopt.
+        std::optional<std::set<int>> TaggedJournals() {
             bool ok = false;
             const auto written = Database::GetDiaryEntries(0x14, kFetchAllEntries, 0.0, 0.0, &ok, VolumeKind::Written);
-            if (!ok) return 0;
-            int number = 0;
-            for (const auto& entry : written) number = std::max(number, JournalOf(entry));
-            auto* manager = BookManager::GetSingleton();
-            if (const auto* journals = manager->GetAllVolumesForActor(uuid, VolumeKind::Written)) {
-                for (const auto& journal : *journals) number = std::max(number, journal.volumeNumber);
-            }
-            ++number;
-            std::string name = Database::GetActorName(uuid);
-            if (name.empty()) name = player->GetName();
-            const RE::FormID journal = manager->CreateEmptyVolume(uuid, name, number, 0x14,
-                                                                  Database::GetTemplateNameByUUID(uuid), look);
-            if (journal != 0) SKSE::log::info("[BookEditor] Made journal {} (0x{:X})", number, journal);
-            return journal;
+            if (!ok) return std::nullopt;
+            std::set<int> numbers;
+            for (const auto& entry : written) numbers.insert(std::max(JournalOf(entry), 1));
+            return numbers;
         }
 
-        // Points the open book menu at another book: the engine's globals for the base form and the
-        // item's extra data list (cleared).  VR's list address is inferred (docs/DEVELOPMENT.md).
-        void SetBookMenuBook(RE::TESObjectBOOK* a_book) {
-            static REL::Relocation<RE::ExtraDataList**> extraList{ REL::VariantID(519294, 405834, 0x30111F8) };
-            static REL::Relocation<RE::TESObjectBOOK**> book{ REL::VariantID(519295, 405835, 0x3011200) };
-            *extraList = nullptr;
-            *book = a_book;
+        RE::FormID MakeJournal(const JournalOwner& owner, int number, const std::string& look) {
+            return BookManager::GetSingleton()->CreateEmptyVolume(owner.uuid, owner.name, number, 0x14,
+                                                                  Database::GetTemplateNameByUUID(owner.uuid), look);
         }
+    }
+
+    std::optional<JournalOwner> PlayerJournalOwner() {
+        const std::string uuid = Database::GetUUIDFromFormID(0x14);
+        auto* player = RE::PlayerCharacter::GetSingleton();
+        if (uuid.empty() || !player) return std::nullopt;
+        std::string name = Database::GetActorName(uuid);
+        if (name.empty()) name = player->GetName();
+        return JournalOwner{ uuid, std::move(name) };
+    }
+
+    RE::FormID StartJournal(const std::string& look) {
+        const auto owner = PlayerJournalOwner();
+        // After every journal SkyrimNet's entries name: a KEEP leaves entries of journals this save lacks.
+        const auto tagged = owner ? TaggedJournals() : std::nullopt;
+        if (!tagged) return 0;
+        int number = tagged->empty() ? 0 : *tagged->rbegin();
+        if (const auto* journals = BookManager::GetSingleton()->GetAllVolumesForActor(owner->uuid, VolumeKind::Written)) {
+            for (const auto& journal : *journals) number = std::max(number, journal.volumeNumber);
+        }
+        const RE::FormID journal = MakeJournal(*owner, ++number, look);
+        if (journal != 0) SKSE::log::info("[BookEditor] Made journal {} (0x{:X})", number, journal);
+        return journal;
+    }
+
+    void RestoreLostJournals() {
+        auto* manager = BookManager::GetSingleton();
+        const auto looks = manager->TakeLostJournalLooks();
+        const auto owner = PlayerJournalOwner();
+        auto numbers = owner ? TaggedJournals() : std::nullopt;
+        if (!numbers) return;
+        if (const auto* journals = manager->GetAllVolumesForActor(owner->uuid, VolumeKind::Written)) {
+            for (const auto& journal : *journals) numbers->erase(journal.volumeNumber);
+        }
+        int restored = 0;
+        for (const int number : *numbers) {
+            const auto look = looks.find(number);
+            const RE::FormID book = MakeJournal(*owner, number, look != looks.end() ? look->second : std::string());
+            auto* vol = book ? manager->GetBookForFormID(book) : nullptr;
+            if (!vol) {
+                SKSE::log::error("[Restore] Journal {}: has entries but couldn't be made again", number);
+                continue;
+            }
+            bool ok = false;
+            const auto live = manager->GetLiveEntries(*vol, 0x14, &ok);
+            if (ok) manager->SetVolumeText(*vol, live);
+            SKSE::log::info("[Restore] Journal {}: not in this save, {} entries in SkyrimNet: made again (0x{:X}, {})",
+                            number, live.size(), book, look != looks.end() ? "its look" : "a new look");
+            ++restored;
+        }
+        if (restored > 0) Notify(Localization::GetSingleton()->GetJournalRestored());
     }
 
     bool JournalFull(const DiaryBookData& vol) {
@@ -87,10 +119,10 @@ namespace SkyrimNetDiaries::BookEditor {
             Notify(loc->GetEditNeedsSkyrimNet());
             return;
         }
-        const std::string uuid = Database::GetUUIDFromFormID(0x14);
+        const auto owner = PlayerJournalOwner();
         auto* player = RE::PlayerCharacter::GetSingleton();
-        if (uuid.empty() || !player) return;
-        const auto* journals = BookManager::GetSingleton()->GetAllVolumesForActor(uuid, VolumeKind::Written);
+        if (!owner || !player) return;
+        const auto* journals = BookManager::GetSingleton()->GetAllVolumesForActor(owner->uuid, VolumeKind::Written);
         if (!journals || journals->empty()) {
             Notify(loc->GetEditNoJournal());
             return;
@@ -111,59 +143,6 @@ namespace SkyrimNetDiaries::BookEditor {
             return;
         }
         OpenForNewEntry(pick->bookFormId);
-    }
-
-    // Only from the player's own inventory: in the world, a container, a shop or the gift menu, or
-    // without what writing needs, a blank journal is just an empty book.
-    void NoteBlankJournal() {
-        auto* book = RE::BookMenu::GetTargetForm();
-        auto* player = RE::PlayerCharacter::GetSingleton();
-        auto* ui = RE::UI::GetSingleton();
-        if (!book || !player || !ui || BlankJournals::LookOf(book->GetFormID()).empty()) return;
-        if (RE::BookMenu::GetTargetReference() || ui->IsMenuOpen(RE::ContainerMenu::MENU_NAME) ||
-            ui->IsMenuOpen(RE::BarterMenu::MENU_NAME) || ui->IsMenuOpen(RE::GiftMenu::MENU_NAME) ||
-            CountInInventory(player, book) <= 0) {
-            return;
-        }
-        auto* loc = Localization::GetSingleton();
-        if (!Database::CanWriteDiaries()) {
-            Notify(loc->GetEditNeedsSkyrimNet());
-            return;
-        }
-        if (!ui->GameIsPaused()) {
-            // The conversion runs as a UI task, on the game thread only while the menu pauses it.
-            Notify(loc->GetEditNeedsPause());
-            return;
-        }
-        g_blankOnOpen = book->GetFormID();
-    }
-
-    // Without closing the book (the two share the model): the new journal, the blank used up, the
-    // menu pointed at the journal and showing its pages.
-    void ConvertBlankJournal() {
-        auto* blank = RE::BookMenu::GetTargetForm();
-        auto* player = RE::PlayerCharacter::GetSingleton();
-        if (!blank || !player) return;
-        auto* loc = Localization::GetSingleton();
-        const std::string look = BlankJournals::LookOf(blank->GetFormID());
-        const RE::FormID next = StartJournal(look);
-        auto* journal = RE::TESForm::LookupByID<RE::TESObjectBOOK>(next);
-        if (!journal) {
-            SKSE::log::error("[BookEditor] Couldn't start a journal from blank journal 0x{:X}", blank->GetFormID());
-            Notify(loc->GetBlankJournalFailed());
-            return;
-        }
-        player->RemoveItem(blank, 1, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
-        SetBookMenuBook(journal);
-        if (const auto* vol = BookManager::GetSingleton()->GetBookForFormID(next); vol && BookMovie()) {
-            RE::GFxValue text;
-            const std::string forMenu = BookTextHook::ForBookMenu(vol->cachedBookText);
-            text.SetString(forMenu.c_str());
-            BookMovie()->Invoke("_root.BookMenu_mc.ReplaceBookText", nullptr, &text, 1);
-        }
-        SKSE::log::info("[BookEditor] Blank journal 0x{:X} became journal 0x{:X} ({})", blank->GetFormID(), next, look);
-        g_lastJournal = next;
-        Notify(loc->GetEditStartedVolume());
     }
 
 } // namespace SkyrimNetDiaries::BookEditor

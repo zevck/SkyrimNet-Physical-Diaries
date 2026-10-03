@@ -115,11 +115,8 @@ namespace SkyrimNetDiaries {
         static constexpr IntSetting kDebugLog         { "General", "DebugLog",         0,  0, 1  };
         static constexpr IntSetting kShowDateHeaders  { "Diary",   "ShowDateHeaders",  1,  0, 1  };
         static constexpr IntSetting kEntriesPerVolume { "Diary",   "EntriesPerVolume", 10, 1, 50 };
-        // -1 (default): off with writing installed, on without; 0/1 forced.  docs/CONFIG_AND_MCM.md
+        // -1 (default): off with writing on (Ink & Quill), on without; 0/1 forced.  docs/CONFIG_AND_MCM.md
         static constexpr IntSetting kPlayerDiaryBooks { "Diary",   "PlayerDiaryBooks", -1, -1, 1 };
-        // Scan code that starts writing in the player's journal, and saves and goes back to reading
-        // (61 = F3).  Not a key that types: while writing it can't also type.
-        static constexpr IntSetting kEditKey          { "Diary",   "EditKey",          61, 1, 255 };
         // DirectX scan code of the key that tears out the entry under the caret while the
         // player writes (68 = F10).  Not a key that types.
         static constexpr IntSetting kDeleteKey        { "Diary",   "DeleteKey",        68, 1, 255 };
@@ -139,7 +136,7 @@ namespace SkyrimNetDiaries {
         static constexpr IntSetting kFontSizeSmall    { "Fonts",   "SmallSize",        12, 8, 24 };
         // INI order.  Language (string) is written first in [General], FontFace last in [Fonts].
         static constexpr IntSetting kIntSettings[] = {
-            kDebugLog, kShowDateHeaders, kEntriesPerVolume, kPlayerDiaryBooks, kEditKey, kDeleteKey, kNewEntryKey,
+            kDebugLog, kShowDateHeaders, kEntriesPerVolume, kPlayerDiaryBooks, kDeleteKey, kNewEntryKey,
             kNpcDiaries, kNpcDailyRandom, kNpcRunHour, kNpcCloseBoost, kNpcDailyWriters,
             kFontSizeTitle, kFontSizeDate, kFontSizeContent, kFontSizeSmall,
         };
@@ -160,7 +157,6 @@ namespace SkyrimNetDiaries {
             const int v = Get(kPlayerDiaryBooks);
             return v < 0 ? !WritingMode::IsOn() : v != 0;
         }
-        std::uint32_t GetEditKey() const { return static_cast<std::uint32_t>(Get(kEditKey)); }
         std::uint32_t GetDeleteKey() const { return static_cast<std::uint32_t>(Get(kDeleteKey)); }
         std::uint32_t GetNewEntryKey() const { return static_cast<std::uint32_t>(Get(kNewEntryKey)); }
         int GetFontSizeTitle() const { return Get(kFontSizeTitle); }
@@ -174,7 +170,6 @@ namespace SkyrimNetDiaries {
         void SetShowDateHeaders(bool v) { Set(kShowDateHeaders, v ? 1 : 0); }
         void SetEntriesPerVolume(int v) { Set(kEntriesPerVolume, v); }
         void SetPlayerDiaryBooks(int v) { Set(kPlayerDiaryBooks, v); }  // -1: the default, by writing mode
-        void SetEditKey(int v)          { Set(kEditKey, v); }
         void SetDeleteKey(int v)        { Set(kDeleteKey, v); }
         void SetNewEntryKey(int v)      { Set(kNewEntryKey, v); }
         void SetFontSizeTitle(int v)    { Set(kFontSizeTitle, v); }

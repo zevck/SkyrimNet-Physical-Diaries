@@ -21,15 +21,24 @@
 
 #include "PCH.h"
 
-// The player writing in their own diary in the book menu.  See docs/EDITING.md.
+// The player writing in their own journals, through Ink & Quill.  See docs/EDITING.md.
 namespace SkyrimNetDiaries::BookEditor {
 
-    // Once, at kDataLoaded: the book-menu and keyboard sinks and the close hook.
+    // Once, at kDataLoaded with writing on (after BlankJournals::OnDataLoaded): Ink & Quill's owner for the
+    // journals and the blank journals, the new-entry key.
     void Register();
+
+    // SNPD's keys that act while writing (tear-out, new entry), given to Ink & Quill.  At Register and on MCM changes.
+    // False: Ink & Quill refused one, which then won't act while writing (docs/CONFIG_AND_MCM.md).
+    bool RegisterKeys();
 
     // A session ended (load or new game): drop the edit state; writes still in SkyrimNet
     // finish without touching the new session.
     void Reset();
+
+    // Post-load, after ReconcileWithTimeline: a journal with entries in SkyrimNet but no book in this save (made
+    // after it, then a KEEP) is made again in the player's inventory (docs/EDITING.md#diaries-and-journals).
+    void RestoreLostJournals();
 
     // Game thread: the player's edits to this book are still being written to SkyrimNet, which has the old text.
     bool HasPendingWrites(RE::FormID a_bookFormId);

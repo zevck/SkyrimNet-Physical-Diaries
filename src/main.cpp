@@ -36,7 +36,6 @@
 #include "VolumeSync.h"
 #include "WritingMode.h"
 #include "NpcDiaries.h"
-#include "WritingTools.h"
 #include <spdlog/sinks/basic_file_sink.h>
 #include <algorithm>
 #include <atomic>
@@ -76,10 +75,9 @@ namespace {
         shown = true;
         SKSE::log::error("================================================================");
         SKSE::log::error("[Physical Diaries] WRITING IS OFF, BUT THIS SAVE HAS JOURNALS: they're read-only.");
-        SKSE::log::error("  The loaded Interface\\book.swf isn't SNPD's writing one (see the [WritingMode] line above):");
-        SKSE::log::error("   1. SNPD was installed without the writing option");
-        SKSE::log::error("   2. Another mod's book.swf wins the file conflict");
-        SKSE::log::error("   3. SNPD's book.swf is older than this plugin");
+        SKSE::log::error("  Writing in them needs Ink & Quill - Writing Framework (see the [WritingMode] line above):");
+        SKSE::log::error("   1. Ink & Quill isn't installed, or is older than this plugin");
+        SKSE::log::error("   2. Its writing is off: see InkAndQuill.log (another mod's book.swf may win the conflict)");
         SKSE::log::error("================================================================");
         ShowWarning(SkyrimNetDiaries::Localization::GetSingleton()->GetWritingOffText());
     }
@@ -116,6 +114,9 @@ namespace {
         }
 
         switch (msg->type) {
+        case SKSE::MessagingInterface::kPostLoad:
+            SkyrimNetDiaries::WritingMode::Connect();
+            break;
         case SKSE::MessagingInterface::kDataLoaded: {
             try {
                 // The stolen-diary decorator for SkyrimNet's prompts (native, registered once).
@@ -151,13 +152,9 @@ namespace {
                     }
                 }
 
-                // The player's diary editor, only with SNPD's book.swf installed (docs/EDITING.md).
-                SkyrimNetDiaries::WritingMode::Detect();
-                if (SkyrimNetDiaries::WritingMode::IsOn()) {
-                    SkyrimNetDiaries::BookEditor::Register();
-                    SkyrimNetDiaries::WritingTools::OnDataLoaded();
-                }
+                // Writing in the player's journals, only through Ink & Quill (docs/EDITING.md).
                 SkyrimNetDiaries::BlankJournals::OnDataLoaded();
+                if (SkyrimNetDiaries::WritingMode::IsOn()) SkyrimNetDiaries::BookEditor::Register();
                 SkyrimNetDiaries::NpcDiaries::OnDataLoaded();
 
                 // Now that GMSTs are loaded, read localized month/day names
@@ -266,6 +263,8 @@ namespace {
                     // Match SkyrimNet's history: volumes reaching past this save lose the
                     // entries a Clear deleted.
                     SkyrimNetDiaries::ReconcileWithTimeline();
+                    // A journal made after this save whose entries SkyrimNet kept comes back to the player.
+                    SkyrimNetDiaries::BookEditor::RestoreLostJournals();
 
                     // Drop theft records made after this save's game time (they belong to a
                     // timeline the player has left).

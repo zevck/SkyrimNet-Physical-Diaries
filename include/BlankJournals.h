@@ -25,9 +25,12 @@
 // tanning rack; the Nightingale look only crafted, by a Nightingale.  See docs/EDITING.md#blank-journals.
 namespace SkyrimNetDiaries::BlankJournals {
 
-    // kDataLoaded, after WritingMode::Detect.  Writing on: names the books in the game's
+    // kDataLoaded, before BookEditor::Register.  Writing on: names the books in the game's
     // language and adds them to merchant stock.  Writing off: hides their recipes.
     void OnDataLoaded();
+
+    // The blank journals found at kDataLoaded (writing on).
+    std::vector<RE::FormID> Forms();
 
     // The journal look (template book EditorID) of a blank journal, or "" if `bookFormId` isn't one.
     std::string LookOf(RE::FormID bookFormId);

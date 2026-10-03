@@ -131,6 +131,10 @@ namespace SkyrimNetDiaries {
         // Returns the UUIDs of actors with a volume to recreate.  Game thread.
         std::vector<std::string> LoadFromDB();
 
+        // The looks of the player's journals the last LoadFromDB found no book for (number → template EditorID),
+        // for RestoreLostJournals.  Taking them clears them.
+        std::unordered_map<int, std::string> TakeLostJournalLooks() { return std::exchange(lostJournalLooks_, {}); }
+
         // Clears the actor FormID cache.  Called when a session ends (kPreLoadGame,
         // kNewGame).
         static void ClearActorCache();
@@ -176,6 +180,7 @@ namespace SkyrimNetDiaries {
         // This save's books no volume claims, by volume key: reused if that volume is
         // created again (docs/BOOK_FORMS.md#load).
         std::unordered_map<std::string, RE::FormID> unclaimed_;
+        std::unordered_map<int, std::string> lostJournalLooks_;
         // Read by the text hook on any thread, so under their own lock.
         mutable std::mutex snapshotMutex_;
         std::unordered_map<const RE::TESDescription*, RE::FormID> descriptionIndex_;

@@ -17,7 +17,7 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 | Change how entries are split into volumes | [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md) | [DATABASE.md](DATABASE.md) |
 | Work on save reverts (SkyrimNet KEEP / CLEAR) | [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#save-reverts-the-keep--clear-fork) | [THEFT.md](THEFT.md#save-reverts) |
 | Change how the text looks or is cleaned up | [BOOK_TEXT.md](BOOK_TEXT.md) | [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md) |
-| Work on the player editing their diary in the book menu | [EDITING.md](EDITING.md) | [DEVELOPMENT.md](DEVELOPMENT.md#swf) |
+| Work on the player editing their diary in the book menu | [EDITING.md](EDITING.md) | Ink & Quill's `docs/API.md` |
 | Work on NPCs writing diaries on their own | [NPC_DIARIES.md](NPC_DIARIES.md) | [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md), [DATABASE.md](DATABASE.md#co-save-records) |
 | Fix something VR-specific | [BOOK_TEXT.md](BOOK_TEXT.md#delivery-the-getdescription-hook) | [BOOK_FORMS.md](BOOK_FORMS.md#the-engine-behaviour-this-rests-on), [DEVELOPMENT.md](DEVELOPMENT.md#engine-touchpoints) |
 | Work on theft, return or the SkyrimNet decorator | [THEFT.md](THEFT.md) | [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md) |
@@ -39,7 +39,7 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 | [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md) | Entries → volumes, boundaries, update and seal, load-time recovery and catch-up, refresh on open, save reverts, save-folder detection |
 | [BOOK_TEXT.md](BOOK_TEXT.md) | Rendering, dates, cleaning LLM output, the `GetDescription` hook (the book menu and other readers), UTF-8 → Win-1251 |
 | [THEFT.md](THEFT.md) | Theft, return and handover; the decorator; clearing; save reverts |
-| [EDITING.md](EDITING.md) | The player writing in their own journal in the book menu: writing mode, diaries and journals, the SWF's edit mode, input, saving to SkyrimNet, back to reading, tearing out an entry, the close hook |
+| [EDITING.md](EDITING.md) | The player writing in their own journal through Ink & Quill: writing mode, diaries and journals, blank journals, marked text, saving to SkyrimNet, tearing out an entry, new entries |
 | [NPC_DIARIES.md](NPC_DIARIES.md) | Optional: NPCs writing diary entries on their own once a day through SkyrimNet's generation: when, who, the daily writers |
 | [LOCALIZATION.md](LOCALIZATION.md) | Language choice, locale files, GMST names, MCM translations |
 

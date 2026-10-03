@@ -44,7 +44,7 @@ Entries are shown in write order, so after a Keep the dates run backwards once, 
 
 `CreateAllVolumesForActor(uuid, name, formId, bioTemplate, entries, startingVolume, afterId)` cuts the entries (in id order) into chunks of `EntriesPerVolume` and calls `CreateDiaryBook` for each; a chunk's `afterId` is the previous chunk's last id.
 
-**Empty volumes** (`BookManager::CreateEmptyVolume`) are only the player's journals, made when the player reads a blank journal. Journals aren't split by time: each holds the entries tagged for it (`snpd_journal_<n>`), side by side, so their entry-id bounds (`afterId`, `lastId`) mean nothing, and they grow only in the book editor ([EDITING.md](EDITING.md#diaries-and-journals)). Nothing on this page seals, extends or creates them; `ReconcileWithTimeline` only re-renders a journal whose entry count changed.
+**Empty volumes** (`BookManager::CreateEmptyVolume`) are only the player's journals, made by the first save in a blank journal. Journals aren't split by time: each holds the entries tagged for it (`snpd_journal_<n>`), side by side, so their entry-id bounds (`afterId`, `lastId`) mean nothing, and they grow only in the book editor ([EDITING.md](EDITING.md#diaries-and-journals)). Nothing on this page seals or extends them; `ReconcileWithTimeline` only re-renders a journal whose entry count changed, and `RestoreLostJournals` makes one again after a Keep when the save has no book for it.
 
 ---
 

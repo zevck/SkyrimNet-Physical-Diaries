@@ -410,6 +410,7 @@ namespace SkyrimNetDiaries {
         // catch-up scan think every actor has books, so nothing is recreated after a reload-without-save.
         books_.clear();
         ClearIndexes();
+        lostJournalLooks_.clear();
         unclaimed_.clear();
         actorTemplates_.clear();
 
@@ -467,6 +468,7 @@ namespace SkyrimNetDiaries {
                                           .retired = true });
                     RetireBook(old->GetFormID(), row.actorUuid, row.kind);
                 }
+                if (row.kind == VolumeKind::Written) lostJournalLooks_[row.volumeNumber] = row.journalTemplate;
                 db->DeleteVolume(row.actorUuid, row.kind, row.volumeNumber);
                 invalidActors.push_back(row.actorUuid);
                 continue;

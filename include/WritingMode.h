@@ -20,15 +20,19 @@
 #pragma once
 
 #include "PCH.h"
+#include "InkAndQuillAPI.h"
 
-// Player writing is on when the loaded book.swf has writing (a new enough interface
-// marker).  See docs/EDITING.md#writing-mode.
+// The player writes in their journals through Ink & Quill, when it's installed and its writing is on.
+// See docs/EDITING.md#writing-mode.
 namespace SkyrimNetDiaries::WritingMode {
 
-    // kDataLoaded, before BookEditor::Register.
-    void Detect();
+    // kPostLoad: finds Ink & Quill's API.
+    void Connect();
 
-    // A book.swf with writing is installed, at this plugin's interface version or newer.
+    // Ink & Quill is installed, new enough, and its book.swf is the one the game loads.  kDataLoaded or later.
     bool IsOn();
+
+    // Ink & Quill's API, or nullptr.
+    const IQ_API* API();
 
 }

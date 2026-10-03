@@ -21,6 +21,7 @@ The rendered text is Skyrim book markup: HTML-like `<font>` / `<p align>` tags a
 - **Empty volume:** if there are no entries, page 2 is the localized "all entries removed" text, prefixed with the sentinel `<!-- SNPD_EMPTY -->` (`Localization::kEmptySentinel`). The inter-plugin API looks for the sentinel so it can report `NoEntries` instead of handing placeholder text to TTS mods. **A journal** (new, or its entries torn out in the editor) gets the sentinel alone: a blank page, not the notice.
 - **Blood:** a journal entry's text written in blood (ranges from DiaryDB, `DiaryEntry::blood`) is marked with private-use characters before sanitizing and escaping, then rendered as `<font color='#2B0202'>…</font>` (`SanitizeBookText`; see [EDITING.md](EDITING.md#writing-in-blood)).
 - Font face and sizes come from `Config` (see [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md)).
+- **Marked text** (`marked` = true, for Ink & Quill's editor only): the same layout with what the player can't change between U+E002 and U+E003, each entry's paragraphs one unlocked run, blood left as its markers, no empty-volume sentinel. Never sent to the book menu ([EDITING.md](EDITING.md#marked-text)).
 
 The inter-plugin API splits the rendered text back apart on `"[pagebreak]\n\n"` and relies on this exact page layout (entries start at page index 2). Changing the layout changes that API. See [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md#inter-plugin-api-skse-messaging).
 
