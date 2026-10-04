@@ -234,20 +234,27 @@ namespace SkyrimNetDiaries::PapyrusAPI {
     std::int32_t MCM_GetDeleteKey(RE::StaticFunctionTag*) {
         return static_cast<std::int32_t>(SkyrimNetDiaries::Config::GetSingleton()->GetDeleteKey());
     }
-    // False: saved, but Ink & Quill refused it while writing (the MCM says so).
-    bool MCM_SetDeleteKey(RE::StaticFunctionTag*, std::int32_t v) {
+    // Why Ink & Quill wouldn't let this key act while writing (its own words, translated), or "" if it would.
+    RE::BSFixedString MCM_CheckWritingKey(RE::StaticFunctionTag*, std::int32_t key) {
+        if (!SkyrimNetDiaries::WritingMode::IsOn() || key <= 0) return "";
+        const char* message = nullptr;
+        if (SkyrimNetDiaries::WritingMode::API()->CheckKey(static_cast<std::uint32_t>(key), &message) == IQ_KEY_OK) return "";
+        return message && *message ? message : "That key doesn't work while writing.";
+    }
+
+    void MCM_SetDeleteKey(RE::StaticFunctionTag*, std::int32_t v) {
         SkyrimNetDiaries::Config::GetSingleton()->SetDeleteKey(static_cast<int>(v));
         SkyrimNetDiaries::Config::GetSingleton()->Save();
-        return SkyrimNetDiaries::BookEditor::RegisterKeys();
+        SkyrimNetDiaries::BookEditor::RegisterKeys();
     }
 
     std::int32_t MCM_GetNewEntryKey(RE::StaticFunctionTag*) {
         return static_cast<std::int32_t>(SkyrimNetDiaries::Config::GetSingleton()->GetNewEntryKey());
     }
-    bool MCM_SetNewEntryKey(RE::StaticFunctionTag*, std::int32_t v) {
+    void MCM_SetNewEntryKey(RE::StaticFunctionTag*, std::int32_t v) {
         SkyrimNetDiaries::Config::GetSingleton()->SetNewEntryKey(static_cast<int>(v));
         SkyrimNetDiaries::Config::GetSingleton()->Save();
-        return SkyrimNetDiaries::BookEditor::RegisterKeys();
+        SkyrimNetDiaries::BookEditor::RegisterKeys();
     }
 
     RE::BSFixedString MCM_GetFontFace(RE::StaticFunctionTag*) {
@@ -300,6 +307,7 @@ namespace SkyrimNetDiaries::PapyrusAPI {
         a_vm->RegisterFunction("IsWritingOn",         "PhysicalDiaries_MCM", MCM_IsWritingOn);
         a_vm->RegisterFunction("GetDeleteKey",        "PhysicalDiaries_MCM", MCM_GetDeleteKey);
         a_vm->RegisterFunction("SetDeleteKey",        "PhysicalDiaries_MCM", MCM_SetDeleteKey);
+        a_vm->RegisterFunction("CheckWritingKey",     "PhysicalDiaries_MCM", MCM_CheckWritingKey);
         a_vm->RegisterFunction("GetNewEntryKey",      "PhysicalDiaries_MCM", MCM_GetNewEntryKey);
         a_vm->RegisterFunction("SetNewEntryKey",      "PhysicalDiaries_MCM", MCM_SetNewEntryKey);
         a_vm->RegisterFunction("GetFontFace",         "PhysicalDiaries_MCM", MCM_GetFontFace);

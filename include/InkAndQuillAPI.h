@@ -150,7 +150,16 @@ typedef struct IQ_API
     /* While writing: candidates for the text at the caret, each the text that would follow it ("ia", ", 6391 Whiterun");
        shown one at a time, faded.  count 0 clears them.  False: not writing, or a prompt open.  docs/API.md#suggestions */
     bool (*Suggest)(const char* const* completions, int32_t count);
+    /* Whether a key works as a client's key while writing (RegisterKeys): an IQ_KEY_ value; message (optional) gets why
+       not, translated, for the client's MCM to show.  docs/API.md#clients-keys */
+    int32_t (*CheckKey)(uint32_t keyCode, const char** message);
 } IQ_API;
+
+/* CheckKey's answers. */
+#define IQ_KEY_OK 0           /* works while writing */
+#define IQ_KEY_NOT_KEYBOARD 1 /* a mouse or gamepad code */
+#define IQ_KEY_TYPES 2        /* it types or edits while writing */
+#define IQ_KEY_EDIT_KEY 3     /* Ink & Quill's edit key */
 
 /* Exported by InkAndQuill.dll as "IQ_GetAPI". */
 typedef const IQ_API* (*IQ_GetAPI_t)(uint32_t version);

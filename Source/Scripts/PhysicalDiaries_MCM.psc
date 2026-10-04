@@ -24,9 +24,10 @@ int  Function GetFontSizeSmall()                 global native
      Function SetFontSizeSmall(int value)        global native
 bool Function IsWritingOn()                      global native  ; Ink & Quill installed, writing on
 int  Function GetDeleteKey()                     global native
-bool Function SetDeleteKey(int value)            global native  ; false: Ink & Quill keeps it while writing
+     Function SetDeleteKey(int value)            global native
 int  Function GetNewEntryKey()                   global native
-bool Function SetNewEntryKey(int value)          global native
+     Function SetNewEntryKey(int value)          global native
+string Function CheckWritingKey(int value)       global native  ; "": Ink & Quill lets it act while writing; else why not
 string Function GetFontFace()                    global native
        Function SetFontFace(string value)        global native
 Function RefreshSkyrimNetSettings() global native  ; read SkyrimNet's diary settings again (on open)
@@ -421,18 +422,22 @@ endevent
 
 ; ======== Key maps (tear-out and new-entry keys) ========
 
+; A key Ink & Quill refuses while writing is refused here too, with its reason; the old key stays.
 event OnOptionKeyMapChange(int oid, int keyCode, string conflictControl, string conflictName)
-    bool kept = true
-    if oid == oidDeleteKey && keyCode > 0
-        kept = SetDeleteKey(keyCode)
-        SetKeyMapOptionValue(oid, keyCode)
-    elseif oid == oidNewEntryKey && keyCode > 0
-        kept = SetNewEntryKey(keyCode)
-        SetKeyMapOptionValue(oid, keyCode)
+    if keyCode <= 0 || (oid != oidDeleteKey && oid != oidNewEntryKey)
+        return
     endif
-    if !kept
-        ShowMessage("$SNPD_KeyNotWhileWriting", false)
+    string refused = CheckWritingKey(keyCode)
+    if refused != ""
+        ShowMessage(refused, false)
+        return
     endif
+    if oid == oidDeleteKey
+        SetDeleteKey(keyCode)
+    else
+        SetNewEntryKey(keyCode)
+    endif
+    SetKeyMapOptionValue(oid, keyCode)
 endevent
 
 ; ======== Highlight / tooltip ========
@@ -521,8 +526,8 @@ event OnOptionDefault(int oid)
         SetDeleteKey(68)
         SetKeyMapOptionValue(oid, 68)
     elseif oid == oidNewEntryKey
-        SetNewEntryKey(0)
-        SetKeyMapOptionValue(oid, -1)
+        SetNewEntryKey(66)
+        SetKeyMapOptionValue(oid, 66)
     elseif oid == oidNpcEnabled
         SetNpcSetting("Enabled", 0)
         SetToggleOptionValue(oid, false)
