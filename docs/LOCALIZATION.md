@@ -10,7 +10,7 @@ Code: `src/Localization.cpp`, `include/Localization.h` (singleton `SkyrimNetDiar
 
 `Localization::Initialize()` runs in `SKSEPlugin_Load`, before `BookTextHook::Install()`:
 
-1. `[General] Language` in `SkyrimNetPhysicalDiaries.ini`, if set (lets an English game use, say, German books).
+1. `[General] Language` in `PhysicalDiaries.ini`, if set (lets an English game use, say, German books).
 2. Otherwise `sLanguage` from `Documents/My Games/Skyrim Special Edition/Skyrim.ini` (found with `SHGetFolderPath`).
 3. Otherwise `ENGLISH`.
 
@@ -18,7 +18,7 @@ The name must match a locale file, e.g. `GERMAN` → `Locales/GERMAN.ini`.
 
 ## Locale files
 
-`SKSE/Plugins/SkyrimNetPhysicalDiaries/Locales/<LANGUAGE>.ini`. Nine ship: CHINESE, ENGLISH, FRENCH, GERMAN, ITALIAN, JAPANESE, POLISH, RUSSIAN, SPANISH.
+`SKSE/Plugins/PhysicalDiaries/Locales/<LANGUAGE>.ini`. Nine ship: CHINESE, ENGLISH, FRENCH, GERMAN, ITALIAN, JAPANESE, POLISH, RUSSIAN, SPANISH.
 
 The folder is located from **the DLL's own path** (`GetModuleHandleExA` on a function address), not `SKSE::log::log_directory()`, which points to Documents.
 
@@ -31,7 +31,7 @@ The folder is located from **the DLL's own path** (`GetModuleHandleExA` on a fun
 | `[Format] JournalTitle` | The player's journal's title (writing mode; must differ from `DiaryTitle`) | `{Name}` |
 | `[Format] VolumeSuffix` | Appended from volume 2 on (default `, v{n}`) | `{n}` number, `{cn}` Chinese numeral |
 | `[Format] EmptyVolumeText` | Page shown when all of a volume's entries were deleted (not in a journal, which is left blank) | |
-| `[Messages] TemplatesMissing` | The startup warning shown when the template books are missing. One line; `\n` is a line break. The button uses the game's own `sOk` string. | |
+| `[Messages] TemplatesMissing`, `OldFiles` | The startup warnings shown when the template books are missing, and when 1.x's `SkyrimNet Physical Diaries.esp` or `SkyrimNetPhysicalDiaries.dll` is still installed ([ARCHITECTURE.md](ARCHITECTURE.md#names)). One line; `\n` is a line break. The button uses the game's own `sOk` string. | |
 | `[Messages] SkyrimNetTooOld` | The startup warning shown when SkyrimNet is older than public API v11 (`kDataLoaded`). Same format and button. | |
 | `[Messages] WritingOff` | Shown once per game run after loading a save with journals while writing is off (Ink & Quill missing or too old, or its writing off). Same format and button. | |
 | `[Messages] EditSaveFailed` | Notification when SkyrimNet doesn't save an edit, and the refusal when SNPD can't match a save to the journal's entries. Same fallback. | |
@@ -39,7 +39,7 @@ The folder is located from **the DLL's own path** (`GetModuleHandleExA` on a fun
 | `[Messages] EditDeleteFailed` | Notification when SkyrimNet doesn't delete an entry. Same fallback. | |
 | `[Messages] EditNeedsSkyrimNet` | Notification when writing can't start: SkyrimNet is older than public API v11 ([EDITING.md](EDITING.md#starting)). Same fallback. | |
 | `[Messages] EditEmptiedHint` | Notification when a save keeps an emptied entry (removing one is tearing it out); the refusal's message when nothing else changed. Same fallback. | |
-| `[Messages] EditJournalFull`, `EditNoJournal`, `EditJournalNotCarried` | Notifications for the new-entry key: the journal is full (it holds `EntriesPerVolume` entries); during play, the player has no journal, or doesn't carry one ([EDITING.md](EDITING.md#new-entries)). Same fallback. | |
+| `[Messages] EditJournalFull` | Notification for the new-entry key: the journal is full (it holds `EntriesPerVolume` entries) ([EDITING.md](EDITING.md#new-entries)). Same fallback. | |
 | `[Messages] EditStartedVolume`, `BlankJournalFailed` | A blank journal's first save made the player's journal, or couldn't (the save is refused) ([EDITING.md](EDITING.md#reading-a-blank-journal)). Same fallback. | |
 | `[Messages] JournalRestored` | Notification after a load when a journal made after the save, whose entries SkyrimNet kept, is made again in the player's inventory ([EDITING.md](EDITING.md#diaries-and-journals)). Same fallback. | |
 | `[Messages] DailyDiaryOn`, `DailyDiaryOff` | Notification when an NPC starts or stops writing every day | `{Name}` the NPC |
@@ -53,7 +53,7 @@ Precedence: locale `[Months]`/`[Days]` → the game's GMSTs → English. It appl
 
 ## MCM translations
 
-`Interface/Translations/SkyrimNet Physical Diaries_<LANGUAGE>.txt`, one per shipped locale. **Must be UTF-16 LE with BOM**; Skyrim ignores UTF-8 translation files. Keys are the `$SNPD_…` strings used in `SkyrimNetDiaries_MCM.psc`.
+`Interface/Translations/Physical Diaries_<LANGUAGE>.txt`, one per shipped locale. Skyrim loads the files named after each loaded plugin, so the name must match the `.esp`'s. **Must be UTF-16 LE with BOM**; Skyrim ignores UTF-8 translation files. Keys are the `$SNPD_…` strings used in `PhysicalDiaries_MCM.psc`.
 
 ## Rules
 

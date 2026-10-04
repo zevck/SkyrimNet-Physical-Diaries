@@ -16,8 +16,9 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
 
-$target   = "SkyrimNetPhysicalDiaries"
-$builtDll = Join-Path $PSScriptRoot "build\$config\$target.dll"
+$target   = "SkyrimNetPhysicalDiaries"   # the CMake target; its file is PhysicalDiaries.dll
+$dllName  = "PhysicalDiaries.dll"
+$builtDll = Join-Path $PSScriptRoot "build\$config\$dllName"
 . (Join-Path $PSScriptRoot "utilities\Spriggit.ps1")
 $espName  = $PluginName
 $builtEsp = Join-Path $PSScriptRoot "build\esp\$espName"
@@ -27,7 +28,7 @@ $builtEsp = Join-Path $PSScriptRoot "build\esp\$espName"
 $mirroredFolders = @(
     "Scripts",
     "Source\Scripts",
-    "SKSE\Plugins\SkyrimNetPhysicalDiaries\Locales",
+    "SKSE\Plugins\PhysicalDiaries\Locales",
     "SKSE\Plugins\SkyrimNet\external\zevick.physical-diaries",
     "Interface\Translations"
 )
@@ -139,7 +140,7 @@ if (-not $skipScripts) {
     if ($pyroSummary) { Write-Host ("  " + ("$pyroSummary" -replace '^.*\[INFO\]\s*', '')) -ForegroundColor DarkGray }
 
     # Every .psc must have a .pex (the check that would have caught the missing
-    # SkyrimNetDiaries_API.pex before v1.0.0 shipped).
+    # API script's .pex before v1.0.0 shipped).
     $missing = Get-ChildItem "Source\Scripts\*.psc" | Where-Object { -not (Test-Path -LiteralPath (Join-Path "Scripts" ($_.BaseName + ".pex"))) }
     if ($missing) { Complete-Build -Status 'FAILURE' -Stage 'scripts' -Message ("No .pex for: " + (($missing | ForEach-Object BaseName) -join ', ')) }
 }
@@ -173,7 +174,7 @@ function Deploy-To {
     # copy everything else: a script change can be tested without restarting.
     $dllLocked = $false
     try {
-        Copy-Item -LiteralPath $builtDll -Destination (Join-Path $dest "SKSE\Plugins\$target.dll") -Force
+        Copy-Item -LiteralPath $builtDll -Destination (Join-Path $dest "SKSE\Plugins\$dllName") -Force
     } catch {
         $dllLocked = $true
     }

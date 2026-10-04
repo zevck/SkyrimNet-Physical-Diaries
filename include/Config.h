@@ -120,8 +120,7 @@ namespace SkyrimNetDiaries {
         // DirectX scan code of the key that tears out the entry under the caret while the
         // player writes (68 = F10).  Not a key that types.
         static constexpr IntSetting kDeleteKey        { "Diary",   "DeleteKey",        68, 1, 255 };
-        // Scan code that starts a new journal entry, book open or during play.  Unbound by default: during
-        // play any key would clash with some other mod's.  Not a key that types.
+        // Scan code that starts a new entry in the open journal.  Unbound by default.  Not a key that types.
         static constexpr IntSetting kNewEntryKey      { "Diary",   "NewEntryKey",      0,  0, 255 };
         // NPCs writing diaries on their own (docs/NPC_DIARIES.md).  Off by default: each entry is an LLM call.
         static constexpr IntSetting kNpcDiaries       { "NpcDiaries", "Enabled",       0,  0, 1  };

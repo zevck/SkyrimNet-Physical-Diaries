@@ -71,6 +71,9 @@ typedef struct IQ_Session
     void (*onDiscard)(void* user);
     /* Optional.  The session is over (closed, discarded, never started, a load): once, always last. */
     void (*onEnd)(void* user);
+    /* Optional.  The player changed run's text (typed, erased, pasted); the caret is caretOffset characters into it.
+       In the key's own UI task: a Reload from here shows with the keystroke.  docs/API.md#reacting-to-typing */
+    void (*onChange)(void* user, int32_t run, int32_t caretOffset);
 } IQ_Session;
 
 /* The edit key in an open book no session is writing in.  Return true if this book is yours and you called
@@ -104,8 +107,8 @@ typedef struct IQ_API
 
     /* While writing: the runs as the player has them, unsaved text included.  Returns the count, or -1. */
     int32_t (*CurrentRuns)(IQ_RunVisitor visit, void* user);
-    /* While writing: the text rendered again (marked, and as it now reads); from[i] is the run new run i was (-1: new),
-       count the new runs'.  The caret goes to caretRun at caretOffset (-1: its end). */
+    /* While writing: the text rendered again (marked, and as it now reads); from[i] is the run new run i was (-1: new;
+       -2 - k: saved as run k was when the session began), count the new runs'.  The caret: caretRun at caretOffset. */
     bool (*Reload)(const char* markedText, const char* readingText, const int32_t* from, int32_t count, int32_t caretRun,
                    int32_t caretOffset);
 
@@ -144,10 +147,17 @@ typedef struct IQ_API
        False: not writing, a prompt open, or no buttons.  docs/API.md#asking-the-player */
     bool (*Prompt)(const char* text, const char* const* buttons, int32_t count, int32_t cancelButton, IQ_PromptDone done,
                    void* user);
+    /* While writing: candidates for the text at the caret, each the text that would follow it ("ia", ", 6391 Whiterun");
+       shown one at a time, faded.  count 0 clears them.  False: not writing, or a prompt open.  docs/API.md#suggestions */
+    bool (*Suggest)(const char* const* completions, int32_t count);
 } IQ_API;
 
 /* Exported by InkAndQuill.dll as "IQ_GetAPI". */
 typedef const IQ_API* (*IQ_GetAPI_t)(uint32_t version);
+
+/* Exported as "IQ_IsWriting": the player is writing (any client's session), for mods that only ask.  No API to get,
+   not listed as a client; any thread.  docs/API.md#is-the-player-writing */
+typedef bool (*IQ_IsWriting_t)(void);
 
 #ifdef __cplusplus
 }

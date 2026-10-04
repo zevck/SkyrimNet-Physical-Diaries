@@ -29,6 +29,8 @@
 #include "DynamicForms.h"
 #include "InterPluginAPI.h"
 #include "Localization.h"
+#include "LegacyFiles.h"
+#include "PluginPaths.h"
 #include "PapyrusAPI.h"
 #include "SaveFolder.h"
 #include "Serialization.h"
@@ -141,7 +143,7 @@ namespace {
                         SKSE::log::error("[Physical Diaries] DIARY TEMPLATE BOOKS NOT FOUND — diaries cannot be created!");
                         for (const char* id : missing) SKSE::log::error("  {}: MISSING", id);
                         SKSE::log::error("  Possible causes:");
-                        SKSE::log::error("   1. 'SkyrimNet Physical Diaries.esp' is not enabled in the load order");
+                        SKSE::log::error("   1. 'Physical Diaries.esp' is not enabled in the load order");
                         SKSE::log::error("   2. An EditorID-exposure plugin (po3_Tweaks / Native EditorID Fix) is");
                         SKSE::log::error("      missing or is the wrong runtime build (SE vs AE vs VR)");
                         SKSE::log::error("   3. The ESP was modified by a tool that stripped the template records");
@@ -150,6 +152,15 @@ namespace {
                     } else {
                         SKSE::log::info("[Physical Diaries] Diary template books verified (all {} resolved)", templates.size());
                     }
+                }
+
+                // 1.x's plugin (renamed in 2.0, ESL-flagged): left enabled, its quest runs a second MCM.
+                if (auto* data = RE::TESDataHandler::GetSingleton();
+                    data && (data->LookupLoadedModByName("SkyrimNet Physical Diaries.esp") ||
+                             data->LookupLoadedLightModByName("SkyrimNet Physical Diaries.esp"))) {
+                    SKSE::log::error("[Physical Diaries] The old 'SkyrimNet Physical Diaries.esp' is still enabled: "
+                                     "disable or delete it and enable 'Physical Diaries.esp'");
+                    ShowWarning(SkyrimNetDiaries::Localization::GetSingleton()->GetOldFilesText());
                 }
 
                 // Writing in the player's journals, only through Ink & Quill (docs/EDITING.md).
@@ -322,7 +333,7 @@ namespace {
             return;
         }
 
-        *path /= "SkyrimNetPhysicalDiaries.log"sv;
+        *path /= "PhysicalDiaries.log"sv;
         auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true);
 
         auto log = std::make_shared<spdlog::logger>("global log"s, std::move(sink));
@@ -343,15 +354,29 @@ namespace {
 SKSE_PLUGIN_LOAD(const SKSE::LoadInterface* a_skse)
 {
     InitializeLog();
-    SKSE::log::info("Loading SkyrimNetPhysicalDiaries...");
+    SKSE::log::info("Loading Physical Diaries...");
 
     // log = false: InitializeLog already set up our logger, and CommonLib's own
     // would replace it (and reopen the same file).
     SKSE::Init(a_skse, { .log = false });
 
+    // 1.x's DLL left installed runs beside this one, on the same files: this one stays off and says why.
+    if (SkyrimNetDiaries::LegacyFiles::OldDllPresent()) {
+        SKSE::log::critical("SkyrimNetPhysicalDiaries.dll (1.x) is still installed: Physical Diaries stays off until it's removed");
+        SkyrimNetDiaries::Localization::GetSingleton()->Initialize();
+        if (auto* messaging = SKSE::GetMessagingInterface()) {
+            messaging->RegisterListener([](SKSE::MessagingInterface::Message* a_msg) {
+                if (a_msg->type == SKSE::MessagingInterface::kDataLoaded) {
+                    ShowWarning(SkyrimNetDiaries::Localization::GetSingleton()->GetOldFilesText());
+                }
+            });
+        }
+        return true;
+    }
+    SkyrimNetDiaries::LegacyFiles::CopySettings();
+
     // Save the config straight back so MO2 writes it into Overwrite and user settings survive mod updates.
-    auto configPath = std::filesystem::current_path() / "Data" / "SKSE" / "Plugins" / "SkyrimNetPhysicalDiaries.ini";
-    SkyrimNetDiaries::Config::GetSingleton()->Load(configPath);
+    SkyrimNetDiaries::Config::GetSingleton()->Load(SkyrimNetDiaries::PluginPaths::IniPath());
     SkyrimNetDiaries::Config::GetSingleton()->Save();  // Persist to MO2 Overwrite on first run
 
     // Apply log level from config (must come after Load so INI value is available)
@@ -385,7 +410,7 @@ SKSE_PLUGIN_LOAD(const SKSE::LoadInterface* a_skse)
     SKSE::log::debug("Registering Papyrus native functions...");
     SkyrimNetDiaries::PapyrusAPI::Register();
 
-    SKSE::log::info("SkyrimNetPhysicalDiaries loaded successfully!");
+    SKSE::log::info("Physical Diaries loaded");
 
     return true;
 }

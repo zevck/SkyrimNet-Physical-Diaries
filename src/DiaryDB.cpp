@@ -18,6 +18,8 @@
  */
 
 #include "DiaryDB.h"
+#include "LegacyFiles.h"
+#include "PluginPaths.h"
 
 #include <sqlite3.h>
 #include <filesystem>
@@ -43,9 +45,9 @@ namespace SkyrimNetDiaries {
             return false;
         }
 
-        auto dbPath = std::filesystem::current_path()
-            / "Data" / "SKSE" / "Plugins" / "SkyrimNetPhysicalDiaries"
-            / saveFolder / "diary.db";
+        // 1.x's copy first, if this save has one there and none here (docs/ARCHITECTURE.md#names).
+        if (!LegacyFiles::CopyDiaryDb(saveFolder)) return false;
+        auto dbPath = PluginPaths::DataDir() / saveFolder / "diary.db";
         std::filesystem::create_directories(dbPath.parent_path());
 
         if (sqlite3_open(dbPath.string().c_str(), &db_) != SQLITE_OK) {

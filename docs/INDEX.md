@@ -34,7 +34,7 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 ### Runtime
 | Document | Description |
 |----------|-------------|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Repo layout, component map, startup and load sequence, one entry end to end, threading, dependencies |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Repo layout, component map, startup and load sequence, one entry end to end, threading, dependencies, names (and 1.x's, with the copy to the new ones) |
 | [BOOK_FORMS.md](BOOK_FORMS.md) | Book forms the engine saves itself (no plugin file): the engine facts they rest on, creation, the co-save record, load and matching against DiaryDB, retirement, templates, finding the NPC, the DPF migration, alternatives tested |
 | [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md) | Entries → volumes, boundaries, update and seal, load-time recovery and catch-up, refresh on open, save reverts, save-folder detection |
 | [BOOK_TEXT.md](BOOK_TEXT.md) | Rendering, dates, cleaning LLM output, the `GetDescription` hook (the book menu and other readers), UTF-8 → Win-1251 |
@@ -66,4 +66,4 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 - **One DLL for SE, AE and VR.** Test the hook, form creation and the co-save record on VR when you touch them.
 - **A Papyrus change isn't done until the `.pex` is built and shipped.**
 - **There is no automated test suite.** Changes are checked in game through the logs.
-- **These docs describe the code as of 2026-10-01** (v2.0.0, unreleased; the new book forms not yet run in game on VR). Line numbers drift; function names are the stable anchor. When the code and a doc disagree, the code wins. Fix the doc in the same change.
+- **These docs describe the code as of 2026-10-04** (v2.0.0, unreleased; the new book forms not yet run in game on VR). Line numbers drift; function names are the stable anchor. When the code and a doc disagree, the code wins. Fix the doc in the same change.

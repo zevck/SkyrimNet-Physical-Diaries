@@ -1,0 +1,17 @@
+FormKey: 000808:Physical Diaries.esp
+EditorID: SNPD_LItemBlankJournal
+Flags:
+- CalculateFromAllLevelsLessThanOrEqualPlayer
+Entries:
+- Data:
+    Level: 1
+    Reference: 000805:Physical Diaries.esp
+    Count: 1
+- Data:
+    Level: 1
+    Reference: 000806:Physical Diaries.esp
+    Count: 1
+- Data:
+    Level: 1
+    Reference: 000807:Physical Diaries.esp
+    Count: 1

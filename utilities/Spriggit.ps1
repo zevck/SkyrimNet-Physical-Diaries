@@ -7,7 +7,7 @@ $SpriggitPackage = "Spriggit.Yaml.Skyrim"
 $SpriggitUrl     = "https://github.com/Mutagen-Modding/Spriggit/releases/download/$SpriggitVersion/SpriggitCLI.zip"
 $SpriggitSha256  = "9b1088eed09f3b6b9d30a40b3b0545cea4c84c3f821b512590a60819f6916529"
 
-$PluginName      = "SkyrimNet Physical Diaries.esp"
+$PluginName      = "Physical Diaries.esp"
 $PluginSourceDir = Join-Path $PSScriptRoot "..\spriggit\SkyrimNetPhysicalDiaries"
 
 # The CLI: $ConfiguredPath (Build_Config_Local.ps1's $spriggitPath) if set, else

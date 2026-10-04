@@ -10,9 +10,9 @@ Code: `Source/Scripts/*.psc` → `Scripts/*.pex`, `src/PapyrusAPI.cpp`, `include
 
 | Script | Attached to | Role |
 |---|---|---|
-| `SkyrimNetDiaries_EventListener` | Quest in the ESP (`extends Quest`) | `OnInit`: registers for ModEvent `SkyrimNet_DiaryCreated` (the `snpd_diary_stolen` decorator is native, registered by the DLL; see [THEFT.md](THEFT.md)). `OnDiaryCreated`: passes the JSON payload to `SkyrimNetDiaries_Native.UpdateDiaryFromEvent`. Don't parse `actorFormId` in Papyrus: `as int` clamps FormIDs of `0x80000000` and up (ESL and high load-order NPCs) to `0x7FFFFFFF`. |
-| `SkyrimNetDiaries_Native` | — (native declarations) | `UpdateDiaryFromEvent(string json)`; legacy `UpdateDiaryForActor(int formId)` |
-| `SkyrimNetDiaries_MCM` | MCM quest (`SKI_ConfigBase`) | Settings, Daily Writers and Maintenance pages. See [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md). |
+| `PhysicalDiaries_EventListener` | Quest in the ESP (`extends Quest`) | `OnInit`: registers for ModEvent `SkyrimNet_DiaryCreated` (the `snpd_diary_stolen` decorator is native, registered by the DLL; see [THEFT.md](THEFT.md)). `OnDiaryCreated`: passes the JSON payload to `PhysicalDiaries_Native.UpdateDiaryFromEvent`. Don't parse `actorFormId` in Papyrus: `as int` clamps FormIDs of `0x80000000` and up (ESL and high load-order NPCs) to `0x7FFFFFFF`. |
+| `PhysicalDiaries_Native` | — (native declarations) | `UpdateDiaryFromEvent(string json)`; legacy `UpdateDiaryForActor(int formId)` |
+| `PhysicalDiaries_MCM` | MCM quest (`SKI_ConfigBase`) | Settings, Daily Writers and Maintenance pages. See [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md). |
 
 ## Native functions
 
@@ -20,9 +20,9 @@ All registered in `PapyrusAPI::RegisterFunctions`.
 
 | Papyrus class.function | C++ | Called from |
 |---|---|---|
-| `SkyrimNetDiaries_Native.UpdateDiaryFromEvent(String)` | `UpdateDiaryFromEventWrapper`: parses `actorFormId` from the event JSON, then `UpdateDiaryForFormID` (clears stolen volumes, then `UpdateDiaryForActorInternal`) | EventListener |
-| `SkyrimNetDiaries_Native.UpdateDiaryForActor(int)` | `UpdateDiaryForActorWrapper` → `UpdateDiaryForFormID`. Legacy, kept for older listener scripts; wrong for FormIDs ≥ `0x80000000` | Nothing in SNPD |
-| `SkyrimNetDiaries_MCM.*` (getters and setters for each setting, `IsWritingOn` (Ink & Quill there, its writing on), `RegenerateTextsOnly`, `ResetAllDiaries`; `GetNpcSetting`/`SetNpcSetting(key)` for `[NpcDiaries]`, and for `SkyrimNetDiaries` / `SkyrimNetDayBoundary`, routed to SkyrimNet's config through `NpcDiaries::Get/SetSkyrimNetDiarySetting`; `RefreshSkyrimNetSettings` on MCM open; `IsDailyWriter`, `AddDailyWriter`, `GetDailyWriterNames`, `RemoveDailyWriter` for the save's daily writers) | `MCM_*` | MCM |
+| `PhysicalDiaries_Native.UpdateDiaryFromEvent(String)` | `UpdateDiaryFromEventWrapper`: parses `actorFormId` from the event JSON, then `UpdateDiaryForFormID` (clears stolen volumes, then `UpdateDiaryForActorInternal`) | EventListener |
+| `PhysicalDiaries_Native.UpdateDiaryForActor(int)` | `UpdateDiaryForActorWrapper` → `UpdateDiaryForFormID`. Legacy, kept for older listener scripts; wrong for FormIDs ≥ `0x80000000` | Nothing in SNPD |
+| `PhysicalDiaries_MCM.*` (getters and setters for each setting, `IsWritingOn` (Ink & Quill there, its writing on), `RegenerateTextsOnly`, `ResetAllDiaries`; `GetNpcSetting`/`SetNpcSetting(key)` for `[NpcDiaries]`, and for `SkyrimNetDiaries` / `SkyrimNetDayBoundary`, routed to SkyrimNet's config through `NpcDiaries::Get/SetSkyrimNetDiarySetting`; `RefreshSkyrimNetSettings` on MCM open; `IsDailyWriter`, `AddDailyWriter`, `GetDailyWriterNames`, `RemoveDailyWriter` for the save's daily writers) | `MCM_*` | MCM |
 
 SNPD also calls SkyrimNet's Papyrus natives from C++ (`DispatchStaticCall`) for [NPC diaries](NPC_DIARIES.md): `SkyrimNetApi.GenerateDiaryEntry(Actor)`, `SkyrimNetApi.GetConfigBool` for SkyrimNet's global AI toggle, diary switch and day boundary (the result arrives through an `IStackCallbackFunctor`), and `SkyrimNetApi.PatchConfig` when the MCM changes the last two.
 
@@ -39,7 +39,7 @@ If any step is skipped, the build is still clean and the failure appears only at
 
 ## Inter-plugin API (SKSE messaging)
 
-For other SKSE plugins, such as TTS or reading mods, that want a diary's text. **SeverActions uses it for its book-reading action**, so treat it as a contract: don't change result codes, layout or output without a version bump. Declared in `include/SkyrimNetPhysicalDiariesAPI.h` (`SNPD_API_VERSION = 3`). All three queries are synchronous: the struct is filled in before `Dispatch` returns. Callers dispatch to `"SkyrimNetPhysicalDiaries"`; SNPD's single `RegisterListener(OnMessage)` receives it (a 2026-09-27 review claimed that listener only hears SKSE; SeverActions shows otherwise).
+For other SKSE plugins, such as TTS or reading mods, that want a diary's text. **SeverActions uses it for its book-reading action**, so treat it as a contract: don't change result codes, layout or output without a version bump. Declared in `include/SkyrimNetPhysicalDiariesAPI.h` (`SNPD_API_VERSION = 3`). All three queries are synchronous: the struct is filled in before `Dispatch` returns. Callers dispatch to `"SkyrimNetPhysicalDiaries"`, the DLL's declared plugin name (kept when the file became `PhysicalDiaries.dll` in 2.0: [ARCHITECTURE.md](ARCHITECTURE.md#names)); SNPD's single `RegisterListener(OnMessage)` receives it (a 2026-09-27 review claimed that listener only hears SKSE; SeverActions shows otherwise).
 
 | Message | Struct | Returns |
 |---|---|---|

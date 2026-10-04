@@ -3,12 +3,12 @@
   "type": "bundle",
   "title": "Physical Diaries",
   "tagline": "NPCs notice when their diary has been stolen.",
-  "description": "Prompt content for SkyrimNet Physical Diaries: when the player has stolen an NPC's diary, the NPC's next diary entry is told about it.",
+  "description": "Prompt content for Physical Diaries: when the player has stolen an NPC's diary, the NPC's next diary entry is told about it.",
   "author": "zevick",
   "tags": ["diary", "diaries", "books", "immersive"],
   "nsfw": false,
   "icon": "book",
   "version": "1.0.0",
   "min_skyrimnet_version": "0.25.0",
-  "mods": [{ "name": "SkyrimNet Physical Diaries", "file": "SkyrimNet Physical Diaries.esp", "required": true }]
+  "mods": [{ "name": "Physical Diaries", "file": "Physical Diaries.esp", "required": true }]
 }

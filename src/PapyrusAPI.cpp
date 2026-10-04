@@ -264,46 +264,46 @@ namespace SkyrimNetDiaries::PapyrusAPI {
             return false;
         }
 
-        a_vm->RegisterFunction("UpdateDiaryForActor",  "SkyrimNetDiaries_Native", UpdateDiaryForActorWrapper);
-        a_vm->RegisterFunction("UpdateDiaryFromEvent", "SkyrimNetDiaries_Native", UpdateDiaryFromEventWrapper);
-        a_vm->RegisterFunction("GetNpcSetting",        "SkyrimNetDiaries_MCM", MCM_GetNpcSetting);
-        a_vm->RegisterFunction("RefreshSkyrimNetSettings", "SkyrimNetDiaries_MCM", MCM_RefreshSkyrimNetSettings);
-        a_vm->RegisterFunction("IsDailyWriter",        "SkyrimNetDiaries_MCM", MCM_IsDailyWriter);
-        a_vm->RegisterFunction("AddDailyWriter",       "SkyrimNetDiaries_MCM", MCM_AddDailyWriter);
-        a_vm->RegisterFunction("GetDailyWriterNames",  "SkyrimNetDiaries_MCM", MCM_GetDailyWriterNames);
-        a_vm->RegisterFunction("RemoveDailyWriter",    "SkyrimNetDiaries_MCM", MCM_RemoveDailyWriter);
-        a_vm->RegisterFunction("SetNpcSetting",        "SkyrimNetDiaries_MCM", MCM_SetNpcSetting);
+        a_vm->RegisterFunction("UpdateDiaryForActor",  "PhysicalDiaries_Native", UpdateDiaryForActorWrapper);
+        a_vm->RegisterFunction("UpdateDiaryFromEvent", "PhysicalDiaries_Native", UpdateDiaryFromEventWrapper);
+        a_vm->RegisterFunction("GetNpcSetting",        "PhysicalDiaries_MCM", MCM_GetNpcSetting);
+        a_vm->RegisterFunction("RefreshSkyrimNetSettings", "PhysicalDiaries_MCM", MCM_RefreshSkyrimNetSettings);
+        a_vm->RegisterFunction("IsDailyWriter",        "PhysicalDiaries_MCM", MCM_IsDailyWriter);
+        a_vm->RegisterFunction("AddDailyWriter",       "PhysicalDiaries_MCM", MCM_AddDailyWriter);
+        a_vm->RegisterFunction("GetDailyWriterNames",  "PhysicalDiaries_MCM", MCM_GetDailyWriterNames);
+        a_vm->RegisterFunction("RemoveDailyWriter",    "PhysicalDiaries_MCM", MCM_RemoveDailyWriter);
+        a_vm->RegisterFunction("SetNpcSetting",        "PhysicalDiaries_MCM", MCM_SetNpcSetting);
 
         // MCM Debug log
-        a_vm->RegisterFunction("GetDebugLog", "SkyrimNetDiaries_MCM", MCM_GetDebugLog);
-        a_vm->RegisterFunction("SetDebugLog", "SkyrimNetDiaries_MCM", MCM_SetDebugLog);
+        a_vm->RegisterFunction("GetDebugLog", "PhysicalDiaries_MCM", MCM_GetDebugLog);
+        a_vm->RegisterFunction("SetDebugLog", "PhysicalDiaries_MCM", MCM_SetDebugLog);
 
         // MCM Maintenance
-        a_vm->RegisterFunction("RegenerateTextsOnly", "SkyrimNetDiaries_MCM", MCM_RegenerateTextsOnly);
-        a_vm->RegisterFunction("ResetAllDiaries",      "SkyrimNetDiaries_MCM", MCM_ResetAllDiaries);
+        a_vm->RegisterFunction("RegenerateTextsOnly", "PhysicalDiaries_MCM", MCM_RegenerateTextsOnly);
+        a_vm->RegisterFunction("ResetAllDiaries",      "PhysicalDiaries_MCM", MCM_ResetAllDiaries);
 
         // MCM Config
-        a_vm->RegisterFunction("GetEntriesPerVolume", "SkyrimNetDiaries_MCM", MCM_GetEntriesPerVolume);
-        a_vm->RegisterFunction("SetEntriesPerVolume", "SkyrimNetDiaries_MCM", MCM_SetEntriesPerVolume);
-        a_vm->RegisterFunction("GetFontSizeTitle",    "SkyrimNetDiaries_MCM", MCM_GetFontSizeTitle);
-        a_vm->RegisterFunction("SetFontSizeTitle",    "SkyrimNetDiaries_MCM", MCM_SetFontSizeTitle);
-        a_vm->RegisterFunction("GetFontSizeDate",     "SkyrimNetDiaries_MCM", MCM_GetFontSizeDate);
-        a_vm->RegisterFunction("SetFontSizeDate",     "SkyrimNetDiaries_MCM", MCM_SetFontSizeDate);
-        a_vm->RegisterFunction("GetFontSizeContent",  "SkyrimNetDiaries_MCM", MCM_GetFontSizeContent);
-        a_vm->RegisterFunction("SetFontSizeContent",  "SkyrimNetDiaries_MCM", MCM_SetFontSizeContent);
-        a_vm->RegisterFunction("GetFontSizeSmall",    "SkyrimNetDiaries_MCM", MCM_GetFontSizeSmall);
-        a_vm->RegisterFunction("SetFontSizeSmall",    "SkyrimNetDiaries_MCM", MCM_SetFontSizeSmall);
-        a_vm->RegisterFunction("GetShowDateHeaders",  "SkyrimNetDiaries_MCM", MCM_GetShowDateHeaders);
-        a_vm->RegisterFunction("SetShowDateHeaders",  "SkyrimNetDiaries_MCM", MCM_SetShowDateHeaders);
-        a_vm->RegisterFunction("GetPlayerDiaryBooks", "SkyrimNetDiaries_MCM", MCM_GetPlayerDiaryBooks);
-        a_vm->RegisterFunction("SetPlayerDiaryBooks", "SkyrimNetDiaries_MCM", MCM_SetPlayerDiaryBooks);
-        a_vm->RegisterFunction("IsWritingOn",         "SkyrimNetDiaries_MCM", MCM_IsWritingOn);
-        a_vm->RegisterFunction("GetDeleteKey",        "SkyrimNetDiaries_MCM", MCM_GetDeleteKey);
-        a_vm->RegisterFunction("SetDeleteKey",        "SkyrimNetDiaries_MCM", MCM_SetDeleteKey);
-        a_vm->RegisterFunction("GetNewEntryKey",      "SkyrimNetDiaries_MCM", MCM_GetNewEntryKey);
-        a_vm->RegisterFunction("SetNewEntryKey",      "SkyrimNetDiaries_MCM", MCM_SetNewEntryKey);
-        a_vm->RegisterFunction("GetFontFace",         "SkyrimNetDiaries_MCM", MCM_GetFontFace);
-        a_vm->RegisterFunction("SetFontFace",         "SkyrimNetDiaries_MCM", MCM_SetFontFace);
+        a_vm->RegisterFunction("GetEntriesPerVolume", "PhysicalDiaries_MCM", MCM_GetEntriesPerVolume);
+        a_vm->RegisterFunction("SetEntriesPerVolume", "PhysicalDiaries_MCM", MCM_SetEntriesPerVolume);
+        a_vm->RegisterFunction("GetFontSizeTitle",    "PhysicalDiaries_MCM", MCM_GetFontSizeTitle);
+        a_vm->RegisterFunction("SetFontSizeTitle",    "PhysicalDiaries_MCM", MCM_SetFontSizeTitle);
+        a_vm->RegisterFunction("GetFontSizeDate",     "PhysicalDiaries_MCM", MCM_GetFontSizeDate);
+        a_vm->RegisterFunction("SetFontSizeDate",     "PhysicalDiaries_MCM", MCM_SetFontSizeDate);
+        a_vm->RegisterFunction("GetFontSizeContent",  "PhysicalDiaries_MCM", MCM_GetFontSizeContent);
+        a_vm->RegisterFunction("SetFontSizeContent",  "PhysicalDiaries_MCM", MCM_SetFontSizeContent);
+        a_vm->RegisterFunction("GetFontSizeSmall",    "PhysicalDiaries_MCM", MCM_GetFontSizeSmall);
+        a_vm->RegisterFunction("SetFontSizeSmall",    "PhysicalDiaries_MCM", MCM_SetFontSizeSmall);
+        a_vm->RegisterFunction("GetShowDateHeaders",  "PhysicalDiaries_MCM", MCM_GetShowDateHeaders);
+        a_vm->RegisterFunction("SetShowDateHeaders",  "PhysicalDiaries_MCM", MCM_SetShowDateHeaders);
+        a_vm->RegisterFunction("GetPlayerDiaryBooks", "PhysicalDiaries_MCM", MCM_GetPlayerDiaryBooks);
+        a_vm->RegisterFunction("SetPlayerDiaryBooks", "PhysicalDiaries_MCM", MCM_SetPlayerDiaryBooks);
+        a_vm->RegisterFunction("IsWritingOn",         "PhysicalDiaries_MCM", MCM_IsWritingOn);
+        a_vm->RegisterFunction("GetDeleteKey",        "PhysicalDiaries_MCM", MCM_GetDeleteKey);
+        a_vm->RegisterFunction("SetDeleteKey",        "PhysicalDiaries_MCM", MCM_SetDeleteKey);
+        a_vm->RegisterFunction("GetNewEntryKey",      "PhysicalDiaries_MCM", MCM_GetNewEntryKey);
+        a_vm->RegisterFunction("SetNewEntryKey",      "PhysicalDiaries_MCM", MCM_SetNewEntryKey);
+        a_vm->RegisterFunction("GetFontFace",         "PhysicalDiaries_MCM", MCM_GetFontFace);
+        a_vm->RegisterFunction("SetFontFace",         "PhysicalDiaries_MCM", MCM_SetFontFace);
 
         SKSE::log::info("Registered Physical Diary Papyrus API functions");
         return true;

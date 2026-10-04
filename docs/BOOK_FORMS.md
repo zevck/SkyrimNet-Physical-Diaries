@@ -109,6 +109,7 @@ Only hits are cached (`g_actorCacheByUuid`, keyed by UUID), so a miss retries ne
 - Without `Dynamic Persistent Forms.esp` the old forms don't exist, so the engine drops their inventory entries: **copies the player held (stolen or dropped) are lost once.** Theft records clear through the normal "the NPC writes" path. Skyrim may warn once per save that it relies on content no longer present.
 - A user who keeps DPF for another mod still has the old diary forms (at every game start DPF recreates every form it ever made, from one global cache file shared by all saves, until a New Game deletes them; SNPD 1.x never called `Dispose`, which caused duplicate FormIDs). `LoadFromDB` recognises them: a row with no book in the save whose old FormID is still a DPF clone of a template (plugin FormID, template model) is tracked as retired, so the sweep clears its copies everywhere, as after a Reset.
 - DiaryDB's schema is unchanged apart from the unused `persisted_in_save` column, which old DBs keep. `stolen_volumes` and `actor_templates` carry over.
+- 2.0 also renamed the plugin to `Physical Diaries.esp`: another one-time missing-content warning, and the old plugin must go ([ARCHITECTURE.md](ARCHITECTURE.md#names)).
 
 ---
 

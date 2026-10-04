@@ -18,25 +18,14 @@
  */
 
 #include "EditorInternal.h"
-#include "ActorLookup.h"
-#include "Config.h"
 #include "Localization.h"
 
 #include <set>
 
-// The player's journals: which one the new-entry key opens, and making a new one (docs/EDITING.md#new-entries,
-// #reading-a-blank-journal).
+// The player's journals: making a new one, restoring lost ones (docs/EDITING.md#reading-a-blank-journal).
 namespace SkyrimNetDiaries::BookEditor {
 
     namespace {
-        // Open a journal and begin a new entry once its menu is open.  Game thread.
-        void OpenForNewEntry(RE::FormID bookFormId) {
-            auto* book = RE::TESForm::LookupByID<RE::TESObjectBOOK>(bookFormId);
-            if (!book) return;
-            RE::BookMenu::OpenMenuFromBaseForm(book);
-            BeginNewEntryOnOpen(bookFormId);
-        }
-
         // The journal numbers SkyrimNet's entries name (untagged ones are journal 1's), or nullopt.
         std::optional<std::set<int>> TaggedJournals() {
             bool ok = false;
@@ -102,47 +91,6 @@ namespace SkyrimNetDiaries::BookEditor {
             ++restored;
         }
         if (restored > 0) Notify(Localization::GetSingleton()->GetJournalRestored());
-    }
-
-    bool JournalFull(const DiaryBookData& vol) {
-        const auto pending = g_pending.find(vol.bookFormId);
-        const std::size_t count = pending != g_pending.end() && !pending->second.stale
-                                      ? pending->second.entries.size()
-                                      : static_cast<std::size_t>(std::max(vol.lastKnownEntryCount, 0));
-        return count >= static_cast<std::size_t>(Config::GetSingleton()->GetEntriesPerVolume());
-    }
-
-    // The journal last written in if carried and not full, else the newest carried one with room.
-    void NewEntryFromPlay() {
-        auto* loc = Localization::GetSingleton();
-        if (!Database::CanWriteDiaries()) {
-            Notify(loc->GetEditNeedsSkyrimNet());
-            return;
-        }
-        const auto owner = PlayerJournalOwner();
-        auto* player = RE::PlayerCharacter::GetSingleton();
-        if (!owner || !player) return;
-        const auto* journals = BookManager::GetSingleton()->GetAllVolumesForActor(owner->uuid, VolumeKind::Written);
-        if (!journals || journals->empty()) {
-            Notify(loc->GetEditNoJournal());
-            return;
-        }
-        const auto carried = [player](const DiaryBookData& vol) {
-            return CountInInventory(player, RE::TESForm::LookupByID<RE::TESBoundObject>(vol.bookFormId)) > 0;
-        };
-        const DiaryBookData* pick = nullptr;
-        bool carriesOne = false;
-        for (auto vol = journals->rbegin(); vol != journals->rend(); ++vol) {
-            if (!carried(*vol)) continue;
-            carriesOne = true;
-            if (JournalFull(*vol)) continue;
-            if (!pick || vol->bookFormId == g_lastJournal) pick = &*vol;
-        }
-        if (!pick) {
-            Notify(carriesOne ? loc->GetEditJournalFull() : loc->GetEditJournalNotCarried());
-            return;
-        }
-        OpenForNewEntry(pick->bookFormId);
     }
 
 } // namespace SkyrimNetDiaries::BookEditor

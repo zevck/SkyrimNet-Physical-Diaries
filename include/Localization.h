@@ -67,6 +67,8 @@ namespace SkyrimNetDiaries {
 
         // Startup warning ([Messages] in the locale file).
         const std::string& GetTemplatesMissingText() const { return templatesMissingText_; }
+        // Startup: 1.x's ESP or DLL is still installed (docs/ARCHITECTURE.md#names).
+        const std::string& GetOldFilesText() const { return oldFilesText_; }
         // After a load: writing is off, but the save has journals.
         const std::string& GetWritingOffText() const { return writingOffText_; }
         // Startup: SkyrimNet is older than the public API SNPD needs.
@@ -89,8 +91,6 @@ namespace SkyrimNetDiaries {
         const std::string& GetEditStartedVolume() const { return editStartedVolume_; }
         // After a load: a journal made after the save, whose entries SkyrimNet kept, is back with the player.
         const std::string& GetJournalRestored() const { return journalRestored_; }
-        const std::string& GetEditNoJournal() const { return editNoJournal_; }
-        const std::string& GetEditJournalNotCarried() const { return editJournalNotCarried_; }
         const std::string& GetBlankJournalFailed() const { return blankJournalFailed_; }
         // An NPC starts or stops writing every day; {Name} is theirs.
         const std::string& GetDailyDiaryOn() const { return dailyDiaryOn_; }
@@ -135,6 +135,7 @@ namespace SkyrimNetDiaries {
         std::string volumeSuffixFmt_; // e.g. ", v{n}"
         std::string emptyVolumeText_;
         std::string templatesMissingText_;
+        std::string oldFilesText_;
         std::string writingOffText_;
         std::string skyrimNetTooOldText_;
         std::string editSaveFailed_;
@@ -147,8 +148,6 @@ namespace SkyrimNetDiaries {
         std::string editJournalFull_;
         std::string editStartedVolume_;
         std::string journalRestored_;
-        std::string editNoJournal_;
-        std::string editJournalNotCarried_;
         std::string blankJournalFailed_;
     };
 

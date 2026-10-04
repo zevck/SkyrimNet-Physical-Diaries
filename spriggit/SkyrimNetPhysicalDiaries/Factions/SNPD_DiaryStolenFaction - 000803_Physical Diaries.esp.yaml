@@ -1,0 +1,11 @@
+FormKey: 000803:Physical Diaries.esp
+EditorID: SNPD_DiaryStolenFaction
+Name:
+  TargetLanguage: English
+  Value: Diary Stolen
+Flags:
+- HiddenFromPC
+CrimeValues:
+  Arrest: True
+  AttackOnSight: True
+VendorValues: {}

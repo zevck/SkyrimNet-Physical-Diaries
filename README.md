@@ -21,7 +21,7 @@ Stealing an NPC's diary has consequences. The NPC will be aware their diary is m
 When an NPC writes a new entry, their physical diary updates to include it. If they fill the current volume, a new one is created automatically. This happens in the background without any player action needed.
 
 ### Writing in Your Own Journal
-With **Ink & Quill - Writing Framework** installed, you can write in your own journal ("{Name}'s Journal"), next to the diary SkyrimNet writes for you, which stays read-only (it stops growing once writing is on; turn **Your Diary Books** on in the MCM to keep it going). Ink & Quill does the writing: you need a quill and ink (each save uses a little ink; with a quill but no ink you can write in your own blood, and the words stay dark red), and its key writes. While reading your journal, press **F3** (Ink & Quill's edit key) to write in it, right on the page. Press it again to save and go back to reading. Only the entries' text can be changed; the dates stay. Closing the book while writing asks whether to save your changes. To tear out an entry, put the cursor in it and press **F10** (Physical Diaries' key, set in the MCM); you're asked first, and it can't be undone. A few mods read the keyboard directly (SkyrimNet's dashboard and capture keys, for example), so their hotkeys can still fire while you type: bind them to keys you don't type with, such as F-keys. To start a journal, read a Blank Journal from your inventory (sold by general-goods merchants, or made at a tanning rack from 1 Leather and 2 Rolls of Paper) and write its first entry: saving it turns the blank into a journal in that book's look. Put it down without saving and it stays blank. A journal holds as many entries as a diary volume (**Entries Per Volume**); you can keep several and write in whichever you open. To write a new entry, bind the **New Entry Key** in the MCM (it's unbound by default) and press it, with a journal open or during play (it opens the journal you last wrote in). Your changes go back into SkyrimNet, so the diary entry and the memory made from it both change. Without Ink & Quill your journals can still be read, but not written in.
+With **Ink & Quill - Writing Framework** installed, you can write in your own journal ("{Name}'s Journal"), next to the diary SkyrimNet writes for you, which stays read-only (it stops growing once writing is on; turn **Your Diary Books** on in the MCM to keep it going). Ink & Quill does the writing: you need a quill and ink (each save uses a little ink; with a quill but no ink you can write in your own blood, and the words stay dark red), and its key writes. While reading your journal, press **F3** (Ink & Quill's edit key) to write in it, right on the page. Press it again to save and go back to reading. Only the entries' text can be changed; the dates stay. Closing the book while writing asks whether to save your changes. To tear out an entry, put the cursor in it and press **F10** (Physical Diaries' key, set in the MCM); you're asked first, and it can't be undone. A few mods read the keyboard directly (SkyrimNet's dashboard and capture keys, for example), so their hotkeys can still fire while you type: bind them to keys you don't type with, such as F-keys. To start a journal, read a Blank Journal from your inventory (sold by general-goods merchants, or made at a tanning rack from 1 Leather and 2 Rolls of Paper) and write its first entry: saving it turns the blank into a journal in that book's look. Put it down without saving and it stays blank. A journal holds as many entries as a diary volume (**Entries Per Volume**); you can keep several and write in whichever you open. To write a new entry, bind the **New Entry Key** in the MCM (it's unbound by default) and press it with a journal open. Your changes go back into SkyrimNet, so the diary entry and the memory made from it both change. Without Ink & Quill your journals can still be read, but not written in.
 
 Optionally (MCM, off by default, since every entry is an LLM call), NPCs write diary entries on their own once a day: a few NPCs with an eventful day, and anyone you've set in the MCM to write every day in that playthrough. NPCs with too little to write about write nothing, so it costs nothing. NPCs' diaries can only be read: their entries are their memories.
 
@@ -35,12 +35,12 @@ Found under **Physical Diaries** in the Mod Configuration Menu.
 - **Font Sizes** - Separate sliders for title, date, body text, and small text in the diary books
 - **Book Font** - Switch font faces for readability
 - **Tear Out Entry Key** - While writing, tears out the entry the cursor is in, after asking (default: F10).
-- **New Entry Key** - Starts a new entry in the open journal, or during play in the journal you last wrote in (unbound by default). A new journal begins when you write in a Blank Journal. Needs Ink & Quill; its own settings have the key to write.
+- **New Entry Key** - Starts a new entry in the open journal (unbound by default). A new journal begins when you write in a Blank Journal. Needs Ink & Quill; its own settings have the key to write.
 - **NPCs Write Diaries** - NPCs write diary entries on their own once a day (default: off). Each entry is one LLM call; NPCs with too little to write about cost nothing. On the **Daily Writers** page, **Add Targeted Actor** adds the NPC in your crosshair to the NPCs who write every day in this playthrough; select one to remove them.
 - **Random Writers Per Day** - How many NPCs with an eventful day are picked to write, besides those set to write every day (default: 3).
 - **Writing Hour** - When NPCs write (default: 22:00). A sleep, wait, fast travel or carriage ride that passes it still has them write.
 - **Favor Followers and Spouse** - Followers and your spouse are twice as likely to be picked (default: on).
-- **SkyrimNet: Diary Generation** and **SkyrimNet: Diary Day Boundary** - SkyrimNet's own diary settings, changed here and saved in SkyrimNet's config. With the day boundary off, an NPC's entry covers everything since their last one, so days you skip past midnight (sleeping, fast travel) aren't lost.
+- **Diary Generation** and **Diary Day Boundary** (under **SkyrimNet**) - SkyrimNet's own diary settings, changed here and saved in SkyrimNet's config. With the day boundary off, an NPC's entry covers everything since their last one, so days you skip past midnight (sleeping, fast travel) aren't lost.
 
 **Daily Writers**
 - **Write Every Day** - The NPCs listed on this page write in their diary every day, besides the random picks (default: on). Off keeps the list.
@@ -68,7 +68,7 @@ The mod supports all 9 official Skyrim languages out of the box: English, French
 
 ### Language Override
 
-If your game language is set to English but you want diary books in another language, add a `Language` line to `SkyrimNetPhysicalDiaries.ini` under `[General]`:
+If your game language is set to English but you want diary books in another language, add a `Language` line to `PhysicalDiaries.ini` under `[General]`:
 
 ```ini
 [General]
@@ -82,12 +82,12 @@ This will load `Locales/GERMAN.ini` for diary formatting. The value must match t
 
 Community translators can add support for any language without recompiling the plugin. Two files are needed:
 
-**1. Locale file** - `SKSE/Plugins/SkyrimNetPhysicalDiaries/Locales/{LANGUAGE}.ini`
+**1. Locale file** - `SKSE/Plugins/PhysicalDiaries/Locales/{LANGUAGE}.ini`
 
 This controls how diary book titles, dates, and volume numbers are formatted. Example:
 
 ```ini
-; SKSE/Plugins/SkyrimNetPhysicalDiaries/Locales/PORTUGUESE.ini
+; SKSE/Plugins/PhysicalDiaries/Locales/PORTUGUESE.ini
 
 [Format]
 DateLong = {Day}, {d} {Month}, 4E {y}
@@ -131,12 +131,13 @@ Available placeholders:
 > [!NOTE]
 > If these sections are omitted, the plugin falls back to reading month/day names from the game's GMST records, then to English. Note that some mods (e.g. Seasons of Skyrim) override GMST month names, so including `[Months]` and `[Days]` in your locale file is recommended.
 
-**2. MCM translation file** (optional) - `Interface/Translations/SkyrimNet Physical Diaries_{LANGUAGE}.txt`
+**2. MCM translation file** (optional) - `Interface/Translations/Physical Diaries_{LANGUAGE}.txt`
 
 This translates the in-game settings menu. Use the English file as a template. If you would like to correct or contribute any translations feel free to submit a PR.
 
 ## 🗒️ Notes
 
+- **Upgrading from 1.x:** the files are renamed: `Physical Diaries.esp`, `PhysicalDiaries.dll`, `PhysicalDiaries.ini` and the `SKSE/Plugins/PhysicalDiaries` folder. Remove the old version first (the mod warns at the main menu if `SkyrimNet Physical Diaries.esp` or `SkyrimNetPhysicalDiaries.dll` is still there) and enable `Physical Diaries.esp`. Your settings and diary data are copied to the new names by themselves (a save's diary data when you load it); once you've played on, you can delete the old `SkyrimNetPhysicalDiaries.ini` and `SKSE/Plugins/SkyrimNetPhysicalDiaries` folder (under MO2, in `overwrite`). Skyrim warns once that your save relies on content no longer present: that's expected.
 - Diary books appear in NPC inventories after SkyrimNet generates the NPC's first diary entry. NPCs without any diary entries will have no books. You must generate SkyrimNet's diary entries yourself, unless **NPCs Write Diaries** is on in the MCM.
 - Player character diaries are supported and will appear in the player's inventory.
 - If books are missing after installing on an existing save, use **Reset All Diaries** followed by saving and reloading. Also ensure you have powerofthree's Tweaks or Native EditorID Fix installed so the mod can locate the templates.

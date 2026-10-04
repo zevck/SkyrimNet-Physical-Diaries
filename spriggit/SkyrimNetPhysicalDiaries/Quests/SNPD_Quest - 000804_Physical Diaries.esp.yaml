@@ -1,0 +1,26 @@
+FormKey: 000804:Physical Diaries.esp
+EditorID: SNPD_Quest
+VirtualMachineAdapter:
+  Scripts:
+  - Name: PhysicalDiaries_EventListener
+  - Name: PhysicalDiaries_MCM
+  FileName: ''
+  Aliases:
+  - Property:
+      Name: ''
+      Object: 000804:Physical Diaries.esp
+      Alias: 0
+    Scripts:
+    - Name: SKI_PlayerLoadGameAlias
+Name:
+  TargetLanguage: English
+  Value: Physical Diaries Quest
+Flags:
+- StartGameEnabled
+- 0x10
+NextAliasID: 1
+Aliases:
+- Name: PlayerAlias
+  Flags: []
+  ForcedReference: 000014:Skyrim.esm
+  VoiceTypes: Null

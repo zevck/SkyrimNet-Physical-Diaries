@@ -18,6 +18,7 @@
  */
 
 #include "Localization.h"
+#include "PluginPaths.h"
 #include "Config.h"
 
 #include <algorithm>
@@ -146,8 +147,8 @@ namespace SkyrimNetDiaries {
 
     // ── Locale file loading ────────────────────────────────────────────
     bool Localization::LoadLocaleFile(const std::string& language) {
-        // Relative to our DLL (.../SKSE/Plugins/SkyrimNetPhysicalDiaries.dll):
-        // .../SKSE/Plugins/SkyrimNetPhysicalDiaries/Locales/
+        // Relative to our DLL (.../SKSE/Plugins/PhysicalDiaries.dll):
+        // .../SKSE/Plugins/PhysicalDiaries/Locales/
         std::filesystem::path localeDir;
 
         HMODULE hModule = nullptr;
@@ -157,11 +158,9 @@ namespace SkyrimNetDiaries {
                                &hModule)) {
             char dllPath[MAX_PATH] = {};
             GetModuleFileNameA(hModule, dllPath, MAX_PATH);
-            localeDir = std::filesystem::path(dllPath).parent_path()
-                        / "SkyrimNetPhysicalDiaries" / "Locales";
+            localeDir = std::filesystem::path(dllPath).parent_path() / PluginPaths::kName / "Locales";
         } else {
-            localeDir = std::filesystem::path("Data") / "SKSE" / "Plugins"
-                        / "SkyrimNetPhysicalDiaries" / "Locales";
+            localeDir = PluginPaths::DataDir() / "Locales";
         }
 
         std::filesystem::path localePath = localeDir / (language + ".ini");
@@ -227,6 +226,7 @@ namespace SkyrimNetDiaries {
                     }
                 }
                 if (key == "TemplatesMissing") templatesMissingText_ = text;
+                else if (key == "OldFiles") oldFilesText_ = text;
                 else if (key == "WritingOff") writingOffText_ = text;
                 else if (key == "SkyrimNetTooOld") skyrimNetTooOldText_ = text;
                 else if (key == "EditSaveFailed") editSaveFailed_ = text;
@@ -239,8 +239,6 @@ namespace SkyrimNetDiaries {
                 else if (key == "EditJournalFull") editJournalFull_ = text;
                 else if (key == "EditStartedVolume") editStartedVolume_ = text;
                 else if (key == "JournalRestored") journalRestored_ = text;
-                else if (key == "EditNoJournal") editNoJournal_ = text;
-                else if (key == "EditJournalNotCarried") editJournalNotCarried_ = text;
                 else if (key == "BlankJournalFailed") blankJournalFailed_ = text;
                 else if (key == "DailyDiaryOn") dailyDiaryOn_ = text;
                 else if (key == "DailyDiaryOff") dailyDiaryOff_ = text;
@@ -360,30 +358,32 @@ namespace SkyrimNetDiaries {
         volumeSuffixFmt_ = ", v{n}";
         emptyVolumeText_ = "All entries from this time period have been removed.";
         templatesMissingText_ =
-            "SkyrimNet Physical Diaries: the diary template books were not found.\n\n"
+            "Physical Diaries: the diary template books were not found.\n\n"
             "Diaries can't be created. Check that:\n"
-            " - SkyrimNet Physical Diaries.esp is enabled\n"
+            " - Physical Diaries.esp is enabled\n"
             " - powerofthree's Tweaks or Native EditorID Fix is installed for your game version\n\n"
-            "See SkyrimNetPhysicalDiaries.log for details.";
+            "See PhysicalDiaries.log for details.";
+        oldFilesText_ =
+            "Physical Diaries: files from version 1 are still installed (SkyrimNet Physical Diaries.esp or "
+            "SkyrimNetPhysicalDiaries.dll).\n\nVersion 2 named them Physical Diaries.esp and PhysicalDiaries.dll. "
+            "Remove the old ones: until then Physical Diaries doesn't work properly.";
         writingOffText_ =
             "Ink & Quill - Writing Framework isn't installed, or its writing is off (see InkAndQuill.log). Your journals "
             "are read-only until it's back.";
         skyrimNetTooOldText_ =
             "Physical Diaries needs a newer version of SkyrimNet. Diaries and journals are disabled until SkyrimNet "
             "is updated.";
-        editSaveFailed_ = "Your journal couldn't be saved. See SkyrimNetPhysicalDiaries.log.";
+        editSaveFailed_ = "Your journal couldn't be saved. See PhysicalDiaries.log.";
         editDeletePrompt_ = "Tear out the entry from {Date}?\n\nIt will be gone from your journal and from your memory.";
         editDelete_ = "Tear out";
         editKeep_ = "Keep it";
-        editDeleteFailed_ = "The entry couldn't be torn out. See SkyrimNetPhysicalDiaries.log.";
+        editDeleteFailed_ = "The entry couldn't be torn out. See PhysicalDiaries.log.";
         editNeedsSkyrimNet_ = "Writing in your journal needs a newer SkyrimNet.";
         editEmptiedHint_ = "An emptied entry is kept. To remove an entry, tear it out.";
         editJournalFull_ = "Your journal is full. Read a blank journal to begin another.";
         editStartedVolume_ = "You begin a new journal.";
         journalRestored_ = "You still have your journal.";
-        editNoJournal_ = "You have no journal. Read a blank journal to begin one.";
-        editJournalNotCarried_ = "Your journal isn't with you.";
-        blankJournalFailed_ = "The journal couldn't be started. See SkyrimNetPhysicalDiaries.log.";
+        blankJournalFailed_ = "The journal couldn't be started. See PhysicalDiaries.log.";
         dailyDiaryOn_ = "{Name} will write in their diary every day.";
         dailyDiaryOff_ = "{Name} will no longer write in their diary every day.";
 

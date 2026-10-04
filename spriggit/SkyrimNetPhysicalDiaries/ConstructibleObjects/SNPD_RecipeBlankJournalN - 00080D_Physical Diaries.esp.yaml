@@ -1,0 +1,29 @@
+FormKey: 00080D:Physical Diaries.esp
+EditorID: SNPD_RecipeBlankJournalN
+Items:
+- Item:
+    Item: 0DB5D2:Skyrim.esm
+    Count: 1
+- Item:
+    Item: 033761:Skyrim.esm
+    Count: 2
+Conditions:
+- MutagenObjectType: ConditionFloat
+  Flags:
+  - OR
+  Unknown2: 84
+  Data:
+    MutagenObjectType: GetStageDoneConditionData
+    Quest: 057F99:Skyrim.esm
+    Stage: 57
+  ComparisonValue: 1
+- MutagenObjectType: ConditionFloat
+  Unknown2: 84
+  Data:
+    MutagenObjectType: GetStageDoneConditionData
+    Quest: 057F99:Skyrim.esm
+    Stage: 200
+  ComparisonValue: 1
+CreatedObject: 00080C:Physical Diaries.esp
+WorkbenchKeyword: 07866A:Skyrim.esm
+CreatedObjectCount: 1

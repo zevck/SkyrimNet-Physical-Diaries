@@ -47,6 +47,7 @@ set(sources
     src/DiaryTheftHandler.cpp
     src/DynamicForms.cpp
     src/InterPluginAPI.cpp
+    src/LegacyFiles.cpp
     src/Localization.cpp
     src/NpcDiaries.cpp
     src/PapyrusAPI.cpp
@@ -71,6 +72,9 @@ add_commonlibsse_plugin(${PROJECT_NAME}
     USE_ADDRESS_LIBRARY
     SOURCES ${sources}
 )
+
+# The file is PhysicalDiaries.dll; the declared NAME stays: other plugins send their queries to it.
+set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "PhysicalDiaries")
 
 target_include_directories(
     ${PROJECT_NAME}

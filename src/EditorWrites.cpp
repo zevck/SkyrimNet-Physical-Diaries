@@ -158,7 +158,6 @@ namespace SkyrimNetDiaries::BookEditor {
 
     void QueueWrites(std::vector<WriteJob> jobs) {
         if (jobs.empty()) return;
-        g_lastJournal = g_bookFormId;
         auto& pending = g_pending[g_bookFormId];
         pending.entries = EditedEntries();
         pending.count += static_cast<int>(jobs.size());

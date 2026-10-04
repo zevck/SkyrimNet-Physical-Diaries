@@ -267,7 +267,8 @@ namespace SkyrimNetDiaries {
                 SKSE::log::warn("SkyrimNet has no PublicAddDiaryEntry (needs public API v11)");
                 return 0;
             }
-            return PublicAddDiaryEntry(formId, content.c_str(), entryDate, tagsCSV.c_str(), nullptr, -1.0f, nullptr);
+            // Unscored: the middle of SkyrimNet's scale, and "neutral" so its event doesn't read "(feeling )"
+            return PublicAddDiaryEntry(formId, content.c_str(), entryDate, tagsCSV.c_str(), "neutral", 0.5f, nullptr);
         } catch (const std::exception& e) {
             SKSE::log::error("PublicAddDiaryEntry(0x{:X}) threw: {}", formId, e.what());
             return 0;

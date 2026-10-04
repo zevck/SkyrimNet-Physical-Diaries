@@ -316,6 +316,18 @@ namespace SkyrimNetDiaries {
 
     } // namespace
 
+    std::vector<std::string_view> Paragraphs(std::string_view text) {
+        std::vector<std::string_view> paragraphs;
+        for (std::size_t pos = 0;;) {
+            const auto found = text.find("\n\n", pos);
+            const auto paragraph = text.substr(pos, found == std::string_view::npos ? text.npos : found - pos);
+            if (!paragraph.empty()) paragraphs.push_back(paragraph);
+            if (found == std::string_view::npos) break;
+            pos = found + 2;
+        }
+        return paragraphs;
+    }
+
     std::string EditableEntryText(const DiaryEntry& entry) {
         return SanitizePlain(MarkBlood(entry.content, entry.blood), !IsPlayerWritten(entry));
     }
@@ -454,16 +466,10 @@ namespace SkyrimNetDiaries {
                 if (marked) bookText += kLockClose;
                 const std::string content = SanitizeBookText(entry, marked);
                 bool first = true;
-                for (size_t pos = 0;;) {
-                    const size_t found = content.find("\n\n", pos);
-                    const std::string paragraph =
-                        content.substr(pos, found == std::string::npos ? std::string::npos : found - pos);
-                    if (!paragraph.empty()) {
-                        if (!std::exchange(first, false)) bookText += "\n\n";
-                        bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'>" + paragraph + "</font>";
-                    }
-                    if (found == std::string::npos) break;
-                    pos = found + 2;
+                for (const auto paragraph : Paragraphs(content)) {
+                    if (!std::exchange(first, false)) bookText += "\n\n";
+                    bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'>" +
+                                std::string(paragraph) + "</font>";
                 }
                 if (marked) bookText += kLockOpen;
                 if (!first) bookText += "\n\n";

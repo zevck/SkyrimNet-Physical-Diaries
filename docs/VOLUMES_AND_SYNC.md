@@ -131,6 +131,6 @@ Backwards time travel also clears stolen-volume records at load (see [THEFT.md](
 
 ## Which save am I in?
 
-SNPD's per-save state lives in `…/SkyrimNetPhysicalDiaries/<saveFolder>/diary.db`. The folder name is `SkyrimNet-<id>`, where `<id>` is the value on the last `Using save ID: ` line in `SkyrimNet.log` (`DetectSaveFolderFromLog`). It is only accepted if SkyrimNet's own `SkyrimNet-<id>.db` exists. SkyrimNet's API needs no save parameter: it always serves the active save. So both SNPD's DB and SkyrimNet's answers depend on SkyrimNet's idea of the current save.
+SNPD's per-save state lives in `…/PhysicalDiaries/<saveFolder>/diary.db`. The folder name is `SkyrimNet-<id>`, where `<id>` is the value on the last `Using save ID: ` line in `SkyrimNet.log` (`DetectSaveFolderFromLog`). It is only accepted if SkyrimNet's own `SkyrimNet-<id>.db` exists. SkyrimNet's API needs no save parameter: it always serves the active save. So both SNPD's DB and SkyrimNet's answers depend on SkyrimNet's idea of the current save.
 
 This detection runs in the post-load sync, after the waits for SkyrimNet's database and timeline decision, by which time SkyrimNet has logged the new save ID.

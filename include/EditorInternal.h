@@ -26,7 +26,7 @@
 #include <unordered_set>
 
 // Shared by the book editor's sources: BookEditor.cpp, EditorWrites.cpp, EditorJournals.cpp.
-// Game thread: Ink & Quill's callbacks are UI tasks, on the main thread, paused or not.  See docs/EDITING.md.
+// Game thread: Ink & Quill's callbacks are UI tasks, safe for game state paused or not.  docs/ARCHITECTURE.md#threading
 namespace SkyrimNetDiaries::BookEditor {
 
     // An entry being edited, its run as given or last saved, and whether its last save failed.
@@ -41,7 +41,6 @@ namespace SkyrimNetDiaries::BookEditor {
 
     inline std::vector<EditedEntry> g_edit;  // the session's entries: entry k is Ink & Quill's run k
     inline RE::FormID g_bookFormId = 0;      // the journal being edited
-    inline RE::FormID g_lastJournal = 0;     // the journal last written in (the new-entry key's first pick)
 
     // An entry's key in the pending-write bookkeeping: its id, or its local key (negated).
     inline int EntryKey(const DiaryEntry& entry) { return entry.id != 0 ? entry.id : -entry.localKey; }
@@ -52,9 +51,6 @@ namespace SkyrimNetDiaries::BookEditor {
     // ---- Sessions (BookEditor.cpp) ----
 
     void Notify(const std::string& text);
-
-    // The new-entry key from play opened this journal: begin in a new entry once its menu is open.
-    bool BeginNewEntryOnOpen(RE::FormID bookFormId);
 
     // ---- Writes to SkyrimNet (EditorWrites.cpp) ----
 
@@ -89,11 +85,6 @@ namespace SkyrimNetDiaries::BookEditor {
 
     // ---- Journals (EditorJournals.cpp) ----
 
-    // A journal holds EntriesPerVolume entries, counting writes SkyrimNet hasn't finished.
-    bool JournalFull(const DiaryBookData& vol);
-
-    // The new-entry key during play: open a journal with room and start a new entry.  Game thread.
-    void NewEntryFromPlay();
 
     // Whose journals: the player's SkyrimNet UUID and name (SkyrimNet's, else the game's).
     struct JournalOwner {

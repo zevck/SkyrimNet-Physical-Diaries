@@ -52,6 +52,9 @@ namespace SkyrimNetDiaries {
     // Plain-text pieces of that layout for the book editor (no markup, not escaped).
     // An entry's text as its page shows it (the same cleanup as FormatDiaryEntries), blood marked.
     std::string EditableEntryText(const DiaryEntry& entry);
+
+    // Text's paragraphs (split at "\n\n", empty ones dropped): an entry's run in the editor, and its pages.
+    std::vector<std::string_view> Paragraphs(std::string_view text);
     // Its date as a heading shows it, whether headings are on or not.
     std::string EntryDate(const DiaryEntry& entry);
     // The title page's date range ("" for no entries).

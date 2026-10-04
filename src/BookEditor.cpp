@@ -78,18 +78,12 @@ namespace SkyrimNetDiaries::BookEditor {
             return out;
         }
 
-        // An entry's run as the editor reads it back: FormatDiaryEntries' paragraphs (empty ones dropped)
-        // between "\n\n", so an untouched entry compares equal at a save.
+        // An entry's run as the editor reads it back: FormatDiaryEntries' paragraphs between "\n\n", so an
+        // untouched entry compares equal at a save.
         std::string RunText(const DiaryEntry& entry) {
             const std::string text = EditableEntryText(entry);
             std::string run;
-            for (std::size_t pos = 0;;) {
-                const auto found = text.find("\n\n", pos);
-                const auto paragraph = std::string_view(text).substr(pos, found == std::string::npos ? text.npos : found - pos);
-                if (!paragraph.empty()) run += (run.empty() ? "" : "\n\n") + NormalizeLineBreaks(paragraph);
-                if (found == std::string::npos) break;
-                pos = found + 2;
-            }
+            for (const auto paragraph : Paragraphs(text)) run += (run.empty() ? "" : "\n\n") + NormalizeLineBreaks(paragraph);
             return run;
         }
 
@@ -180,6 +174,18 @@ namespace SkyrimNetDiaries::BookEditor {
         }
 
         // ---- Ink & Quill's callbacks ----
+
+        // Every way in from Ink & Quill or SKSE's task queues: an exception must not unwind into either.
+        template <class F>
+        void Guarded(const char* what, F&& body) {
+            try {
+                body();
+            } catch (const std::exception& e) {
+                SKSE::log::error("[BookEditor] {}: {}", what, e.what());
+            } catch (...) {
+                SKSE::log::error("[BookEditor] {}: unknown exception", what);
+            }
+        }
 
         // Queue the changed entries' writes (docs/EDITING.md#saving).  An emptied entry is left as it is:
         // removing one is tearing it out, which asks first.
@@ -313,7 +319,8 @@ namespace SkyrimNetDiaries::BookEditor {
             }
             const char* buttons[] = { loc->GetEditDelete().c_str(), loc->GetEditKeep().c_str() };
             g_askedRun = run;
-            g_asking = API().Prompt(question.c_str(), buttons, 2, 1, TearOutAnswered, UserOf(g_session));
+            const auto answered = [](void* u, std::int32_t button) { Guarded("Tearing out", [&] { TearOutAnswered(u, button); }); };
+            g_asking = API().Prompt(question.c_str(), buttons, 2, 1, answered, UserOf(g_session));
         }
 
         void OnEnd(void* user) {
@@ -351,9 +358,8 @@ namespace SkyrimNetDiaries::BookEditor {
             g_blankLook = std::move(state.blankLook);
         }
 
-        // Ink & Quill's session over `next`, caret at the end of run `caretRun` (-1: the page being read); with
-        // `openBook`, once that book's menu is open.  Ours still waiting for its book gives way to it.
-        bool BeginSession(SessionState next, int caretRun, RE::FormID openBook = 0) {
+        // Ink & Quill's session over `next`, caret at the end of run `caretRun` (-1: the page being read).
+        bool BeginSession(SessionState next, int caretRun) {
             auto previous = TakeState();
             next.session = ++g_sessions;
             PutState(std::move(next));
@@ -367,25 +373,24 @@ namespace SkyrimNetDiaries::BookEditor {
             session.runSize = config->GetFontSizeContent();
             session.caretRun = caretRun;
             session.user = UserOf(g_session);
-            session.onSave = OnSave;
-            session.onDiscard = OnDiscard;
-            session.onEnd = OnEnd;
-            const bool begun = openBook ? API().BeginSessionOnOpen(openBook, &session) : API().BeginSession(&session);
+            // Unanswered (an exception), a save is refused.
+            session.onSave = [](void* u, const char* const* runs, std::int32_t count, IQ_SaveReply* reply) {
+                Guarded("Saving", [&] { OnSave(u, runs, count, reply); });
+            };
+            session.onDiscard = [](void* u) { Guarded("Discarding", [&] { OnDiscard(u); }); };
+            session.onEnd = [](void* u) { Guarded("Ending", [&] { OnEnd(u); }); };
+            const bool begun = API().BeginSession(&session);
             // Refused (its OnEnd has run): Ink & Quill still has the one before, if there was one.
             if (!begun && g_session == 0) PutState(std::move(previous));
             return begun;
         }
 
         // Ink & Quill's session for this journal, with its entries as last saved, and a new one if asked (or
-        // the journal is empty: nowhere else to type); `onOpen`: once the menu just asked for is open.
-        bool Begin(DiaryBookData& vol, bool newEntry, bool onOpen = false) {
+        // the journal is empty: nowhere else to type).
+        bool Begin(DiaryBookData& vol, bool newEntry) {
             if (!Database::CanWriteDiaries()) {
                 SKSE::log::warn("[BookEditor] SkyrimNet can't save diary edits (needs public API v11): not editable");
                 Notify(Localization::GetSingleton()->GetEditNeedsSkyrimNet());
-                return false;
-            }
-            if (newEntry && JournalFull(vol)) {
-                Notify(Localization::GetSingleton()->GetEditJournalFull());
                 return false;
             }
             std::vector<DiaryEntry> entries;
@@ -404,6 +409,10 @@ namespace SkyrimNetDiaries::BookEditor {
                     return false;
                 }
             }
+            if (newEntry && entries.size() >= static_cast<std::size_t>(Config::GetSingleton()->GetEntriesPerVolume())) {
+                Notify(Localization::GetSingleton()->GetEditJournalFull());
+                return false;
+            }
             SessionState next{ .book = vol.bookFormId, .journal = vol.volumeNumber, .actorName = vol.actorName };
             std::string ids;
             for (const auto& entry : entries) {
@@ -416,7 +425,7 @@ namespace SkyrimNetDiaries::BookEditor {
             SKSE::log::info("[BookEditor] {} vol {}: {} entries to write in (ids {}){}", vol.actorName, vol.volumeNumber,
                             entries.size(), ids, start ? ", and a new one" : "");
             const int caret = start ? static_cast<int>(next.edit.size()) - 1 : -1;
-            return BeginSession(std::move(next), caret, onOpen ? vol.bookFormId : 0);
+            return BeginSession(std::move(next), caret);
         }
 
         // A blank journal read from the player's inventory (Ink & Quill checked where and the quill): writing in
@@ -465,8 +474,8 @@ namespace SkyrimNetDiaries::BookEditor {
 
         // ---- Menu and input ----
 
-        // The tear-out key in an open book, and the new-entry key there or during play (the menu doesn't get
-        // either).  While writing, Ink & Quill lets only registered keys through (RegisterKeys).
+        // The tear-out and new-entry keys in an open book (the menu doesn't get them).  While writing, Ink &
+        // Quill lets only registered keys through (RegisterKeys).
         class InputSink : public RE::BSTEventSink<RE::InputEvent*> {
         public:
             RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* a_event,
@@ -479,19 +488,13 @@ namespace SkyrimNetDiaries::BookEditor {
                     if (!button || button->GetDevice() != RE::INPUT_DEVICE::kKeyboard || !button->IsDown()) continue;
                     const auto code = button->GetIDCode();
                     auto* ui = RE::UI::GetSingleton();
-                    const bool inBook = ui && ui->IsMenuOpen(RE::BookMenu::MENU_NAME);
-                    if (code == tearOut && inBook) {
+                    if (!ui || !ui->IsMenuOpen(RE::BookMenu::MENU_NAME)) continue;
+                    if (code == tearOut) {
                         button->SetUserEvent("");
-                        SKSE::GetTaskInterface()->AddUITask([]() { AskTearOut(); });
-                        continue;
-                    }
-                    if (newEntry == 0 || code != newEntry) continue;
-                    if (inBook) {
+                        SKSE::GetTaskInterface()->AddUITask([]() { Guarded("Tear-out key", AskTearOut); });
+                    } else if (newEntry != 0 && code == newEntry) {
                         button->SetUserEvent("");
-                        SKSE::GetTaskInterface()->AddUITask([]() { NewEntryInBook(); });
-                    } else if (ui && !ui->GameIsPaused()) {
-                        // During play this runs on the input job: the work goes to the game thread.
-                        SKSE::GetTaskInterface()->AddTask([]() { NewEntryFromPlay(); });
+                        SKSE::GetTaskInterface()->AddUITask([]() { Guarded("New-entry key", NewEntryInBook); });
                     }
                 }
                 return RE::BSEventNotifyControl::kContinue;
@@ -502,17 +505,21 @@ namespace SkyrimNetDiaries::BookEditor {
     void Register() {
         static InputSink inputSink;
         API().SetClientName("Physical Diaries");  // in Ink & Quill's MCM
-        API().AddOwner(Owner, nullptr);
+        API().AddOwner([](void* u, std::uint32_t book) {
+            bool mine = false;
+            Guarded("Edit key", [&] { mine = Owner(u, book); });
+            return mine;
+        }, nullptr);
         RegisterKeys();
-        for (const auto blank : BlankJournals::Forms()) API().RegisterBlank(blank, OnBlankOpen, nullptr);
+        const auto onBlank = [](void* u, std::uint32_t blank) {
+            bool begun = false;
+            Guarded("Blank journal", [&] { begun = OnBlankOpen(u, blank); });
+            return begun;
+        };
+        for (const auto blank : BlankJournals::Forms()) API().RegisterBlank(blank, onBlank, nullptr);
         // Ahead of MenuControls, so the menu never gets our keys.
         if (auto* input = RE::BSInputDeviceManager::GetSingleton()) input->PrependEventSink(&inputSink);
         SKSE::log::info("[BookEditor] Registered with Ink & Quill: the player's journals can be written in");
-    }
-
-    bool BeginNewEntryOnOpen(RE::FormID bookFormId) {
-        auto* vol = BookManager::GetSingleton()->GetBookForFormID(bookFormId);
-        return vol && vol->kind == VolumeKind::Written && Begin(*vol, true, true);
     }
 
     bool RegisterKeys() {
@@ -535,7 +542,6 @@ namespace SkyrimNetDiaries::BookEditor {
         g_edit.clear();
         g_addQueued.clear();
         g_bookFormId = 0;
-        g_lastJournal = 0;
         g_blankLook.clear();
         g_asking = false;
     }

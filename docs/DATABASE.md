@@ -8,7 +8,7 @@ Code: `src/DiaryDB.cpp`, `include/DiaryDB.h` (singleton `SkyrimNetDiaries::Diary
 
 ## Location and lifetime
 
-`<game>/Data/SKSE/Plugins/SkyrimNetPhysicalDiaries/<saveFolder>/diary.db` (MO2: under `overwrite/`). `<saveFolder>` is SkyrimNet's save folder, `SkyrimNet-<id>`, found by `DetectSaveFolderFromLog` (see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#which-save-am-i-in)).
+`<game>/Data/SKSE/Plugins/PhysicalDiaries/<saveFolder>/diary.db` (MO2: under `overwrite/`). `<saveFolder>` is SkyrimNet's save folder, `SkyrimNet-<id>`, found by `DetectSaveFolderFromLog` (see [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md#which-save-am-i-in)).
 
 - Closed at `kPreLoadGame` and `kNewGame`, so nothing written during a load or a new game lands in the previous save's DB. Opened by the post-load sync, or in `SaveCallback` on a new game's first save. `SaveCallback` doesn't open it during a load's post-load wait, when `SkyrimNet.log` may still name the previous save; if the sync can't open it, diary books are paused for that session (see [ARCHITECTURE.md](ARCHITECTURE.md#startup-and-load-sequence)). The folder name must be `SkyrimNet-` followed by digits and dashes; anything else is refused. `Open()` with the folder that is already open does nothing; a different folder closes the old one first.
 - WAL journal, `synchronous=NORMAL`.
@@ -77,7 +77,7 @@ Deletes every tracked actor from DiaryDB (`DeleteActor`: their `volumes` and `ac
 With the game closed, or read-only while it runs:
 
 ```powershell
-sqlite3 "<MO2>\overwrite\SKSE\Plugins\SkyrimNetPhysicalDiaries\SkyrimNet-<id>\diary.db"
+sqlite3 "<MO2>\overwrite\SKSE\Plugins\PhysicalDiaries\SkyrimNet-<id>\diary.db"
 ```
 ```sql
 SELECT actor_name, kind, volume_number, book_form_id, after_id, last_id, end_time,

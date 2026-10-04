@@ -1,7 +1,7 @@
 SpriggitSource:
   PackageName: Spriggit.Yaml.Skyrim
   Version: 0.41
-ModKey: SkyrimNet Physical Diaries.esp
+ModKey: Physical Diaries.esp
 GameRelease: SkyrimSE
 ModHeader:
   Flags:
