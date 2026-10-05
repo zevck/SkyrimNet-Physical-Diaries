@@ -59,7 +59,7 @@ typedef struct IQ_Session
 {
     uint32_t size;           /* sizeof(IQ_Session) */
     const char* markedText;  /* required */
-    const char* runFont;     /* optional: typed text's font; with runSize, paragraph breaks at the page's size */
+    const char* runFont;     /* optional: typed text's font, line breaks included (keep yours inside your font tags) */
     int32_t runSize;         /* optional: 0 for none */
     int32_t caretRun;        /* the run the caret starts at the end of; -1: the page being read */
     void* user;

@@ -265,6 +265,16 @@ namespace SkyrimNetDiaries {
             return NeutralizePageBreaks(std::move(result));
         }
 
+        // A blank line.  Reading's holds a non-breaking space: the book menu finds a line by its first character,
+        // so an empty one never starts a page (docs/BOOK_TEXT.md).  The editor's stays empty.
+        std::string BlankLine(bool marked) { return marked ? "\n\n" : "\n&nbsp;\n"; }
+
+        // Reading: a paragraph's empty first or last line (an odd run of line breaks, or an empty paragraph) gets one too.
+        void KeepBlankEnds(std::string& paragraph) {
+            if (paragraph.empty() || paragraph.front() == '\n') paragraph.insert(0, "&nbsp;");
+            if (paragraph.back() == '\n') paragraph += "&nbsp;";
+        }
+
         // `marked`: blood stays as its markers (the editor paints it).
         std::string SanitizeBookText(const DiaryEntry& entry, bool marked) {
             std::string text = EscapeMarkup(SanitizePlain(MarkBlood(entry.content, entry.blood), !IsPlayerWritten(entry)));
@@ -459,7 +469,8 @@ namespace SkyrimNetDiaries {
                     const std::string heading =
                         entry.bloodHeading ? std::format("<font color='{}'>{}</font>", kBloodColor, dateStr) : dateStr;
                     bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontDate) + "'>" + heading + "</font>";
-                    bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'></font>\n\n";  // Reset to content font size
+                    // The blank line under it in the content font (as the paragraphs' below).
+                    bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'>" + BlankLine(marked) + "</font>";
                 }
 
                 // Entry content - wrap EACH paragraph in font tag since Skyrim resets after \n\n.
@@ -470,13 +481,15 @@ namespace SkyrimNetDiaries {
                 const std::string contentFont = "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'>";
                 bool first = true;
                 for (const auto paragraph : Paragraphs(content)) {
-                    if (!std::exchange(first, false)) bookText += contentFont + "\n\n</font>";
-                    if (!paragraph.empty()) bookText += contentFont + std::string(paragraph) + "</font>";
+                    if (!std::exchange(first, false)) bookText += contentFont + BlankLine(marked) + "</font>";
+                    std::string text{ paragraph };
+                    if (!marked) KeepBlankEnds(text);
+                    if (!text.empty()) bookText += contentFont + text + "</font>";
                 }
                 if (marked) bookText += kLockOpen;
-                if (!first) bookText += "\n\n";
-
-                bookText += "\n\n";
+                // The breaks after the entry in the content font too: the editor's line after the run holds them, and a
+                // line in the page's bigger size starts a page that typing into it takes back.
+                bookText += contentFont + (first ? "\n\n" : "\n\n\n\n") + "</font>";
 
                 // Pagebreak between entries
                 if (i < entries.size() - 1) {
