@@ -15,7 +15,7 @@ Prerequisites: MSVC x64 with C++23, CMake ≥ 3.21 and vcpkg with the `VCPKG_ROO
 v9 changes that SNPD relies on (keep them when updating CommonLib again):
 - The entry point is `SKSE_PLUGIN_LOAD(...)`; v9 removed the `SKSEAPI` macro.
 - `SKSE::Init(a_skse, { .log = false })`. By default v9 installs its own logger on the same `PhysicalDiaries.log` file, replacing the one `InitializeLog` set up.
-- The one MinHook detour (`GetDescription`) is installed through `InstallDetour` (`include/Detour.h`). SNPD allocates no SKSE trampoline. (v9's `SKSE::AllocTrampoline` is deprecated and silently allocates nothing without a `TrampolineInterface`, should one ever be needed.)
+- The two MinHook detours (`GetDescription`, `OpenBookMenu`) are installed through `InstallDetour` (`include/Detour.h`). SNPD allocates no SKSE trampoline. (v9's `SKSE::AllocTrampoline` is deprecated and silently allocates nothing without a `TrampolineInterface`, should one ever be needed.)
 
 **Use `Build_Local.ps1`** (repo root, modeled on SkyrimNet's). It builds only the plugin, incrementally; compiles Papyrus with Pyro; and deploys to every configured test instance. It ends with a PASS/FAIL banner, and the same result is written to `%TEMP%\snpd-build-result.json`.
 
@@ -103,7 +103,7 @@ SkyrimNet's own log (`SkyrimNet.log`, same folder) holds the `Using save ID:` li
 ## Verifying a change in game
 
 1. Turn on `DebugLog`, deploy, launch.
-2. Check startup: `Installed GetDescription hook`, `Diary template books verified (all 4 resolved)`, `SkyrimNet API ready`, `DetectSaveFolderFromLog: detected save folder '…'`, `[DiaryDB] Opened`, `[DynamicForms] Loaded N of N form record(s)`, `[LoadFromDB] Loaded N actors`.
+2. Check startup: `Installed GetDescription hook`, `Installed OpenBookMenu hook`, `Diary template books verified (all 4 resolved)`, `SkyrimNet API ready`, `DetectSaveFolderFromLog: detected save folder '…'`, `[DiaryDB] Opened`, `[DynamicForms] Loaded N of N form record(s)`, `[LoadFromDB] Loaded N actors`.
 3. Make an entry happen (talk to an NPC until SkyrimNet writes a diary entry, or use the SkyrimNet dashboard), then watch for `Added '…' (0xFF…) to …'s inventory`.
 4. Open the book (from an NPC via pickpocket, or your own diary): `[BookTextHook] Opening diary`.
 5. For anything touching persistence, cover **save → reload**, **reload without saving**, **load an older save** (try both SkyrimNet KEEP and CLEAR) and **a second character**. Most past bugs lived there.
@@ -121,7 +121,8 @@ Check these whenever CommonLib or the game runtime changes.
 | Created-reference load | (no code: a constraint) | A world copy keeps its base's raw FormID and the builder (AE `0x14060EE40`) only checks it is some bound object, so SNPD never removes a book form from the save. Recheck after a runtime update; see [BOOK_FORMS.md](BOOK_FORMS.md#the-engine-behaviour-this-rests-on) fact 8. |
 | Save/load behaviour | `DynamicForms`, `LoadFromDB` | The engine facts in [BOOK_FORMS.md](BOOK_FORMS.md#the-engine-behaviour-this-rests-on) (IDs listed there): recheck them after a runtime update |
 | `TESObjectBOOK` fields | `ConfigureDiaryForm` | `data.type`, `data.flags`, `inventoryModel`, `itemCardDescription`, world model (`SetModel`), `boundData`, `pickupSound`, `putdownSound`, keywords, `weight`, `value`; `teaches` is never written |
-| `TESDescription::GetDescription` entry hook | `GetDescriptionHook::Install` (`BookTextHook.cpp`) | `RELOCATION_ID(14399, 14552)`, VR reuses the SE id (VR `0x1A01B0`). MinHook, because other plugins (e.g. Description Framework) hook it too. The book menu's three callers pass `book + 0xA8` with no parent; recheck that after a runtime update (see [BOOK_TEXT.md](BOOK_TEXT.md#delivery-the-getdescription-hook)). |
+| `TESDescription::GetDescription` entry hook | `GetDescriptionHook::Install` (`BookTextHook.cpp`) | `RELOCATION_ID(14399, 14552)`, VR reuses the SE id (VR `0x1A01B0`). MinHook, because other plugins (e.g. Description Framework) hook it too. The book menu's three callers pass `book + 0xA8` with no parent; recheck that after a runtime update (see [BOOK_TEXT.md](BOOK_TEXT.md#delivery-the-getdescription-and-openbookmenu-hooks)). |
+| `BookMenu::OpenBookMenu` entry hook | `OpenBookMenuHook::Install` (`BookTextHook.cpp`) | `RELOCATION_ID(50122, 51053)`, VR reuses the SE id. MinHook (Physical Letters hooks it too). Nine arguments on every runtime: VR has an extra `NiAVObject*` that must be forwarded ([BOOK_TEXT.md](BOOK_TEXT.md#delivery-the-getdescription-and-openbookmenu-hooks)). |
 | Book menu input | `BookEditor` (`InputSink`) | A sink prepended to `BSInputDeviceManager` (it must run before `MenuControls`) for the tear-out and new-entry keys; `ButtonEvent::SetUserEvent` to blank them; `UI::IsMenuOpen` (both keys act only in the book menu); `BookMenu::GetTargetForm`. The rest of the book menu's input is Ink & Quill's. |
 | Leveled list in memory | `BlankJournals::AddToMerchants` | Appends to `TESLeveledList::entries` of Skyrim.esm `LItemMiscVendorMiscItems75` (`0x09AF0A`) and updates `numEntries`, which is a `uint8`: a list already at 255 entries is left alone. |
 | Recipe workbench | `BlankJournals::OnDataLoaded` | `BGSConstructibleObject::benchKeyword` set to null hides a recipe (writing off). |

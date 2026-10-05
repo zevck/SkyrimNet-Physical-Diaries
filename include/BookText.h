@@ -53,7 +53,8 @@ namespace SkyrimNetDiaries {
     // An entry's text as its page shows it (the same cleanup as FormatDiaryEntries), blood marked.
     std::string EditableEntryText(const DiaryEntry& entry);
 
-    // Text's paragraphs (split at "\n\n", empty ones dropped): an entry's run in the editor, and its pages.
+    // Text's paragraphs (split at "\n\n"; empty ones are blank lines and kept, but not at the end): an entry's
+    // run in the editor, and its pages.
     std::vector<std::string_view> Paragraphs(std::string_view text);
     // Its date as a heading shows it, whether headings are on or not.
     std::string EntryDate(const DiaryEntry& entry);

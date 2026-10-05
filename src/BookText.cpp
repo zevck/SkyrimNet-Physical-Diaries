@@ -320,11 +320,12 @@ namespace SkyrimNetDiaries {
         std::vector<std::string_view> paragraphs;
         for (std::size_t pos = 0;;) {
             const auto found = text.find("\n\n", pos);
-            const auto paragraph = text.substr(pos, found == std::string_view::npos ? text.npos : found - pos);
-            if (!paragraph.empty()) paragraphs.push_back(paragraph);
+            paragraphs.push_back(text.substr(pos, found == std::string_view::npos ? text.npos : found - pos));
             if (found == std::string_view::npos) break;
             pos = found + 2;
         }
+        // Empty ones are blank lines and stay; only those at the end go (nothing would show them).
+        while (!paragraphs.empty() && paragraphs.back().empty()) paragraphs.pop_back();
         return paragraphs;
     }
 
@@ -465,11 +466,12 @@ namespace SkyrimNetDiaries {
                 // Marked: the run is the paragraphs and the breaks between them, nothing after the last.
                 if (marked) bookText += kLockClose;
                 const std::string content = SanitizeBookText(entry, marked);
+                // Breaks in the content font too: a blank line as tall as a text line (Ink & Quill sizes typed ones so).
+                const std::string contentFont = "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'>";
                 bool first = true;
                 for (const auto paragraph : Paragraphs(content)) {
-                    if (!std::exchange(first, false)) bookText += "\n\n";
-                    bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'>" +
-                                std::string(paragraph) + "</font>";
+                    if (!std::exchange(first, false)) bookText += contentFont + "\n\n</font>";
+                    if (!paragraph.empty()) bookText += contentFont + std::string(paragraph) + "</font>";
                 }
                 if (marked) bookText += kLockOpen;
                 if (!first) bookText += "\n\n";

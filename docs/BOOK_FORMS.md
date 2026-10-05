@@ -131,7 +131,7 @@ Only hits are cached (`g_actorCacheByUuid`, keyed by UUID), so a miss retries ne
 
 `DynamicForms.h/.cpp` has no SNPD types: any form type, any owner key. A letters or quest-reward mod copies it, writes the record from its own co-save callbacks, retires forms it no longer needs (never removes them), and fills its forms in from their records on load. The book-text side (`BookTextHook`) is separate and book-specific.
 
-**Physical Letters**, the sibling mod, has a copy, identical apart from its header, taken at commit `dd20705`: `include/DynamicForms.h`, `src/DynamicForms.cpp`. A fix here goes into that copy too, and a change to the co-save record format changes both. Its `src/TextHook.cpp` also copies `BookTextHook`'s Win-1251 helpers and `StripFontTags`.
+**Physical Letters**, the sibling mod, has a copy, identical apart from its header, taken at commit `dd20705`: `include/DynamicForms.h`, `src/DynamicForms.cpp`. A fix here goes into that copy too, and a change to the co-save record format changes both. Its `src/TextHook.cpp` also copies `BookTextHook`'s Win-1251 helpers, and hooks `OpenBookMenu` as SNPD does (with VR's ninth argument). SNPD removed `StripFontTags` on 2026-10-04 (other readers get the font tags: [BOOK_TEXT.md](BOOK_TEXT.md#delivery-the-getdescription-and-openbookmenu-hooks)); Physical Letters' copy is its own until it follows.
 
 ---
 

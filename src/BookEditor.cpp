@@ -83,7 +83,10 @@ namespace SkyrimNetDiaries::BookEditor {
         std::string RunText(const DiaryEntry& entry) {
             const std::string text = EditableEntryText(entry);
             std::string run;
-            for (const auto paragraph : Paragraphs(text)) run += (run.empty() ? "" : "\n\n") + NormalizeLineBreaks(paragraph);
+            bool first = true;
+            for (const auto paragraph : Paragraphs(text)) {
+                run += (std::exchange(first, false) ? "" : "\n\n") + NormalizeLineBreaks(paragraph);
+            }
             return run;
         }
 

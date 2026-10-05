@@ -59,7 +59,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
         │                                                                     │
  player opens book                                  snpd_diary_stolen decorator (SkyrimNet prompt)
         ▼
- BookTextHook (TESDescription::GetDescription) ─► BookManager::RefreshVolumeOnOpen ─► diary text
+ BookTextHook (BookMenu::OpenBookMenu) ─► BookManager::RefreshVolumeOnOpen ─► diary text
 ```
 
 | Component | Files | Role |
@@ -80,7 +80,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 | NPC diaries | `src/NpcDiaries.cpp`, `include/NpcDiaries.h` | Optional: once a game day, picks NPCs (SkyrimNet's engagement data, the save's daily writers) and asks SkyrimNet's Papyrus `GenerateDiaryEntry` to write for them. See [NPC_DIARIES.md](NPC_DIARIES.md). |
 | Blank journals | `src/BlankJournals.cpp`, `include/BlankJournals.h` | The blank journal items: their localized name, adding them to general-goods merchants' stock in memory, hiding their recipes while writing is off. See [EDITING.md](EDITING.md#blank-journals). |
 | Writing mode | `src/WritingMode.cpp`, `include/WritingMode.h` | Finding Ink & Quill at `kPostLoad` (`IQ_GetAPI`) and whether its writing is on; player writing exists only then. See [EDITING.md](EDITING.md#writing-mode). |
-| Text injection | `src/BookTextHook.cpp`, `include/BookTextHook.h` | Hook on `TESDescription::GetDescription`: the book menu's text (no parent form: refresh, styled, Win-1251 for Cyrillic) and other readers' (SkyrimNet's book-read event, Immersive Reading: cached UTF-8). See [BOOK_TEXT.md](BOOK_TEXT.md). |
+| Text injection | `src/BookTextHook.cpp`, `include/BookTextHook.h` | Hooks on `TESDescription::GetDescription` (our books' text: the book menu's with no parent form, Win-1251 for Cyrillic; other readers', SkyrimNet's book-read event and Immersive Reading, cached UTF-8 with its tags) and `BookMenu::OpenBookMenu` (every open, other mods' too: refresh, then the book menu's text). See [BOOK_TEXT.md](BOOK_TEXT.md). |
 | Theft | `src/DiaryTheftHandler.cpp`, `include/DiaryTheftHandler.h` | Container-change and menu sinks that record theft, returns and willing handovers; the `snpd_diary_stolen` decorator registration and post-load theft reconciliation. See [THEFT.md](THEFT.md). |
 | Papyrus natives | `src/PapyrusAPI.cpp`, `include/PapyrusAPI.h` | MCM getters and setters, the theft API, `UpdateDiaryFromEvent` |
 | Localization | `src/Localization.cpp`, `include/Localization.h` | Language detection, locale `.ini`, GMST month and day names, title and date formats. See [LOCALIZATION.md](LOCALIZATION.md). |
@@ -129,7 +129,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 3. `UpdateDiaryForFormID` (`PapyrusAPI.cpp`) clears that actor's stolen volumes (the theft has now been written about) and calls `UpdateDiaryForActorInternal` (`VolumeSync.cpp`).
 4. `UpdateDiaryForActorInternal` fetches entries and takes one of three paths: create every volume (no volumes yet), start a new volume (the NPC no longer holds the latest one), or update or seal the latest volume in place. See [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md).
 5. New volumes go through `BookManager::CreateDiaryBook`, which creates the form with the engine's factory, configures it from its template, tracks it for the co-save, registers the volume, writes the rendered text to DiaryDB and adds the book to the NPC, all before it returns. See [BOOK_FORMS.md](BOOK_FORMS.md).
-6. The player opens the book. The engine asks for its description; `BookTextHook` finds the volume by the description component, calls `RefreshVolumeOnOpen` (which catches entries SkyrimNet added or deleted since the last render), converts the text and returns it in place of the book's own. See [BOOK_TEXT.md](BOOK_TEXT.md).
+6. The player opens the book, from the engine or another mod (Grid Inventory). `BookTextHook`'s `OpenBookMenu` hook calls `RefreshVolumeOnOpen` (which catches entries SkyrimNet added or deleted since the last render) and opens the menu with the volume's text, converted for the book menu, in place of the book's own; its `GetDescription` hook gives other readers the same text in UTF-8. See [BOOK_TEXT.md](BOOK_TEXT.md#delivery-the-getdescription-and-openbookmenu-hooks).
 
 ---
 
@@ -143,7 +143,7 @@ While the game is **paused** (a menu that pauses it is open), the main thread ru
 | "UI" job (list "Main render scene", during play) | `UI::ProcessMessages`, where SKSE runs `AddUITask` bodies (so Ink & Quill's callbacks and SNPD's editor keys) and menu event sinks fire (`MenuOpenCloseEvent`). |
 | "VM update", "VM render-safe" and "Post process" jobs | Papyrus natives (registered with `callableFromTasklets = false`, CommonLib's default, so the VM queues each call and runs it from one of these jobs). "Post process" (list "Main render end") is where SKSE runs every `AddTask` body (its hook on `BSTaskPool::ProcessTasks`, Address Library id 36891), then one of the VM's queues. |
 | "Poll controls" job (list "Main render end", during play) | Input polling and player activation, so a book read from the world asks the text hook from here. No sync point separates it from "Post process": the two can run at the same time on two workers. |
-| Any thread | The text hook: it reads `BookManager`'s text snapshot and description index, which are under their own mutex, never `books_`. The book-open refresh runs inline only on the main thread while paused; otherwise it is queued as a task. |
+| Any thread | The text hooks (`GetDescription`, and `OpenBookMenu`, which other mods may call from their own threads): they read `BookManager`'s text snapshot and description index, which are under their own mutex, never `books_`. The book-open refresh (in `OpenBookMenu`) runs inline only on the main thread while paused; otherwise it is queued as a task. |
 | Detached `std::thread` | Sleepers that wait, then queue a game-thread task: the post-load readiness poll, `DeferUntilSyncReady`, the NPC diaries clock (a check every 10 s, for the process's life) its spaced-out requests (one every 3 s; each checks a session counter `Revert` bumps, and drops itself after a load), and a check every 100 ms while the Sleep/Wait menu is open. The NPC diaries' `MenuOpenCloseEvent` sink notes where a sleep, wait or fast travel starts and runs a skipped day when it ends ([NPC_DIARIES.md](NPC_DIARIES.md#when)). |
 | The editor's write queue | One detached worker, started on the first write, that runs the book editor's saves and deletions in order (SkyrimNet blocks while it re-embeds an entry's memory). Each finished job queues a game-thread task; a job from before a load (`BookEditor::Reset` bumps a generation) is ignored there. |
 

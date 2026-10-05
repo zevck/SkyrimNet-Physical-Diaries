@@ -11,7 +11,7 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 | Understand how the pieces fit together | [ARCHITECTURE.md](ARCHITECTURE.md) | [BOOK_FORMS.md](BOOK_FORMS.md), [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md) |
 | Build, deploy, and check a change in game | [DEVELOPMENT.md](DEVELOPMENT.md) | |
 | Compile or add a Papyrus script or native | [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md#adding-or-changing-a-native-all-four-steps-every-time) | [DEVELOPMENT.md](DEVELOPMENT.md#papyrus) |
-| Update CommonLib or support a new runtime | [DEVELOPMENT.md](DEVELOPMENT.md#engine-touchpoints) | [BOOK_TEXT.md](BOOK_TEXT.md#delivery-the-getdescription-hook), [BOOK_FORMS.md](BOOK_FORMS.md#the-engine-behaviour-this-rests-on) |
+| Update CommonLib or support a new runtime | [DEVELOPMENT.md](DEVELOPMENT.md#engine-touchpoints) | [BOOK_TEXT.md](BOOK_TEXT.md#delivery-the-getdescription-and-openbookmenu-hooks), [BOOK_FORMS.md](BOOK_FORMS.md#the-engine-behaviour-this-rests-on) |
 | Debug a missing, empty or wrong book | [BOOK_FORMS.md](BOOK_FORMS.md) | [DEVELOPMENT.md](DEVELOPMENT.md#logging), [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md) |
 | Debug a missing, blank or wrong book after a load | [BOOK_FORMS.md](BOOK_FORMS.md#load) | [DATABASE.md](DATABASE.md#co-save-records) |
 | Change how entries are split into volumes | [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md) | [DATABASE.md](DATABASE.md) |
@@ -19,7 +19,7 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 | Change how the text looks or is cleaned up | [BOOK_TEXT.md](BOOK_TEXT.md) | [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md) |
 | Work on the player editing their diary in the book menu | [EDITING.md](EDITING.md) | Ink & Quill's `docs/API.md` |
 | Work on NPCs writing diaries on their own | [NPC_DIARIES.md](NPC_DIARIES.md) | [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md), [DATABASE.md](DATABASE.md#co-save-records) |
-| Fix something VR-specific | [BOOK_TEXT.md](BOOK_TEXT.md#delivery-the-getdescription-hook) | [BOOK_FORMS.md](BOOK_FORMS.md#the-engine-behaviour-this-rests-on), [DEVELOPMENT.md](DEVELOPMENT.md#engine-touchpoints) |
+| Fix something VR-specific | [BOOK_TEXT.md](BOOK_TEXT.md#delivery-the-getdescription-and-openbookmenu-hooks) | [BOOK_FORMS.md](BOOK_FORMS.md#the-engine-behaviour-this-rests-on), [DEVELOPMENT.md](DEVELOPMENT.md#engine-touchpoints) |
 | Work on theft, return or the SkyrimNet decorator | [THEFT.md](THEFT.md) | [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md) |
 | Add a language or fix a translation | [LOCALIZATION.md](LOCALIZATION.md) | |
 | Add a setting end to end (INI, MCM) | [CONFIG_AND_MCM.md](CONFIG_AND_MCM.md#adding-a-setting-end-to-end) | [PAPYRUS_AND_API.md](PAPYRUS_AND_API.md) |

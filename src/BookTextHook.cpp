@@ -24,8 +24,8 @@
 #include "Detour.h"
 #include <thread>
 
-// TESDescription::GetDescription hook: no parent means the book menu is opening (styled, refreshed);
-// with the book as parent, the cached UTF-8 text.  See docs/BOOK_TEXT.md#delivery-the-getdescription-hook.
+// TESDescription::GetDescription hook: our books' text (no parent: the book menu's; with the book as parent, UTF-8).
+// OpenBookMenu: every open, whoever makes it, refreshed with the book menu's text.  docs/BOOK_TEXT.md (Delivery)
 
 namespace
 {
@@ -149,25 +149,11 @@ namespace
         return out;
     }
 
-    // For readers other than the book menu (SkyrimNet's prompt, Immersive Reading): markup close
-    // to a vanilla book's.
-    std::string StripFontTags(const std::string& text) {
-        std::string out;
-        out.reserve(text.size());
-        for (std::size_t i = 0; i < text.size();) {
-            if (text.compare(i, 6, "<font ") == 0 || text.compare(i, 7, "</font>") == 0) {
-                const std::size_t close = text.find('>', i);
-                if (close == std::string::npos) break;
-                i = close + 1;
-            } else {
-                out += text[i++];
-            }
-        }
-        return out;
-    }
-
     // The thread that loaded the plugin: the main thread.
     std::thread::id g_mainThread;
+
+    // OpenBookMenuHook is in: it refreshes every open.  Without it, the no-parent GetDescription branch does.
+    bool g_openHooked = false;
 
     // books_ is touched only where SKSE runs our tasks: inline on the main thread while paused (menus),
     // else queued (shows on the next open).  See docs/ARCHITECTURE.md#threading.
@@ -199,21 +185,19 @@ namespace
                 try {
                     auto* books = SkyrimNetDiaries::BookManager::GetSingleton();
                     if (!a_parent) {
-                        // The book menu is opening one of our books (see the file header).
+                        // The book menu is opening one of our books (see the file header); OpenBookMenu refreshes.
                         if (const auto bookId = books->FindBookByDescription(a_self)) {
-                            RefreshBeforeOpen(bookId);
+                            if (!g_openHooked) RefreshBeforeOpen(bookId);
                             if (const auto text = books->GetBookTextSnapshot(bookId); !text.empty()) {
-                                SKSE::log::info("[BookTextHook] Opening diary 0x{:X} (textLen={})", bookId, text.size());
-                                // Win-1251 for Cyrillic: Scaleform's pagination needs one byte per character.
                                 a_out = SkyrimNetDiaries::BookTextHook::ForBookMenu(text).c_str();
                                 return;
                             }
                         }
                     } else if (a_parent->GetFormType() == RE::FormType::Book) {
-                        // Another reader, any thread: the snapshot, no refresh, UTF-8 without
-                        // font tags (docs/BOOK_TEXT.md#delivery-the-getdescription-hook).
+                        // Another reader, any thread: the snapshot, no refresh, UTF-8, tags and all as a
+                        // vanilla book's (docs/BOOK_TEXT.md#delivery-the-getdescription-and-openbookmenu-hooks).
                         if (const auto text = books->GetBookTextSnapshot(a_parent->GetFormID()); !text.empty()) {
-                            a_out = StripFontTags(text).c_str();
+                            a_out = text.c_str();
                             return;
                         }
                     }
@@ -236,6 +220,55 @@ namespace
         }
     };
 
+    // BookMenu::OpenBookMenu, every open whoever makes it (Grid Inventory opens books itself, with the parent text):
+    // our books are refreshed and get the book menu's text here.
+    struct OpenBookMenuHook
+    {
+        // Plus VR's ninth argument, the reference's 3D: forwarded on every runtime (docs/BOOK_TEXT.md).
+        using func_t = void (*)(const RE::BSString&, const RE::ExtraDataList*, RE::TESObjectREFR*, RE::TESObjectBOOK*,
+                                const RE::NiPoint3&, const RE::NiMatrix3&, float, bool, RE::NiAVObject*);
+        static inline func_t original{ nullptr };
+
+        static void thunk(const RE::BSString& a_description, const RE::ExtraDataList* a_extraList, RE::TESObjectREFR* a_ref,
+                          RE::TESObjectBOOK* a_book, const RE::NiPoint3& a_pos, const RE::NiMatrix3& a_rot, float a_scale,
+                          bool a_useDefaultPos, RE::NiAVObject* a_vrNode)
+        {
+            std::string styled;
+            try {
+                auto* books = SkyrimNetDiaries::BookManager::GetSingleton();
+                const RE::FormID bookId = a_book ? a_book->GetFormID() : 0;
+                if (bookId && !books->GetBookTextSnapshot(bookId).empty()) {
+                    RefreshBeforeOpen(bookId);
+                    // Read again: an inline refresh (paused, main thread) has just changed it.  Win-1251 for Cyrillic:
+                    // Scaleform's pagination needs one byte per character.
+                    styled = SkyrimNetDiaries::BookTextHook::ForBookMenu(books->GetBookTextSnapshot(bookId));
+                    SKSE::log::info("[BookTextHook] Opening diary 0x{:X} (textLen={})", bookId, styled.size());
+                }
+            } catch (const std::exception& e) {
+                SKSE::log::error("[BookTextHook] Preparing diary text failed: {} — showing the text given", e.what());
+                styled.clear();
+            } catch (...) {
+                SKSE::log::error("[BookTextHook] Preparing diary text failed — showing the text given");
+                styled.clear();
+            }
+            if (!styled.empty()) {
+                const RE::BSString text{ styled.c_str() };
+                original(text, a_extraList, a_ref, a_book, a_pos, a_rot, a_scale, a_useDefaultPos, a_vrNode);
+                return;
+            }
+            original(a_description, a_extraList, a_ref, a_book, a_pos, a_rot, a_scale, a_useDefaultPos, a_vrNode);
+        }
+
+        static void Install()
+        {
+            // SE id 50122 (also used by VR) | AE id 51053; Physical Letters hooks it too.
+            REL::Relocation<std::uintptr_t> target{ RELOCATION_ID(50122, 51053) };
+            g_openHooked = SkyrimNetDiaries::InstallDetour(target.address(), reinterpret_cast<void*>(&thunk),
+                reinterpret_cast<void**>(&original), "OpenBookMenu", "50122/51053",
+                "books opened by other mods show the text they were given (no Win-1251 for Cyrillic, no refresh)");
+        }
+    };
+
 } // anonymous namespace
 
 std::string SkyrimNetDiaries::BookTextHook::ForBookMenu(const std::string& text)
@@ -250,4 +283,5 @@ void SkyrimNetDiaries::BookTextHook::Install()
 
     g_mainThread = std::this_thread::get_id();  // SKSEPlugin_Load runs on the main thread
     GetDescriptionHook::Install();
+    OpenBookMenuHook::Install();
 }

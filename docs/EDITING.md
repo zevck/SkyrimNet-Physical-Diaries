@@ -97,7 +97,7 @@ What SNPD hands Ink & Quill: the journal as the book shows it, from `FormatDiary
 - **Stored text can't break the runs**: `MarkBlood` removes U+E002 and U+E003 from an entry's content as it does the blood markers.
 - **Hint:** the session's `runFont` and `runSize` are the content font and size, so typed text and paragraph breaks look as the renderer makes them.
 
-Ink & Quill compares each run against what it loaded to know whether anything changed; SNPD compares each against its own `savedBody` to know what to write. `savedBody` is the run as the editor reads it back (`RunText`): the entry's text (`EditableEntryText`) as paragraphs, empty ones dropped (the renderer drops them), with `\n` line breaks.
+Ink & Quill compares each run against what it loaded to know whether anything changed; SNPD compares each against its own `savedBody` to know what to write. `savedBody` is the run as the editor reads it back (`RunText`): the entry's text (`EditableEntryText`) as paragraphs (`Paragraphs`: empty ones are blank lines and stay, only trailing ones go, as the renderer does: [BOOK_TEXT.md](BOOK_TEXT.md#rendering-formatdiaryentries)), with `\n` line breaks.
 
 ---
 

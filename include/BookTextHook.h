@@ -19,8 +19,8 @@
 
 #pragma once
 
-// Hooks TESDescription::GetDescription, where the book menu and every other reader ask for a
-// book's text.  See docs/BOOK_TEXT.md#delivery-the-getdescription-hook.
+// Hooks TESDescription::GetDescription (every reader's text) and BookMenu::OpenBookMenu (every open: refresh, the
+// book menu's text).  See docs/BOOK_TEXT.md#delivery-the-getdescription-and-openbookmenu-hooks.
 namespace SkyrimNetDiaries::BookTextHook
 {
     void Install();
