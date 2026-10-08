@@ -233,13 +233,24 @@ namespace SkyrimNetDiaries {
         return true;
     }
 
-    std::string Database::GetActorEngagement(double shortWindowSeconds, double mediumWindowSeconds) {
+    std::string Database::GetActorEngagement() {
         try {
             if (!api_initialized_ && !InitializeAPI()) return {};
             if (!PublicGetActorEngagement) return {};
-            return PublicGetActorEngagement(0, true, false, shortWindowSeconds, mediumWindowSeconds);
+            return PublicGetActorEngagement(0, true, false, 86400.0, 604800.0);
         } catch (const std::exception& e) {
             SKSE::log::error("GetActorEngagement exception: {}", e.what());
+            return {};
+        }
+    }
+
+    std::string Database::GetRecentEvents(std::uint32_t formId, int maxCount) {
+        try {
+            if (!api_initialized_ && !InitializeAPI()) return {};
+            if (!PublicGetRecentEvents) return {};
+            return PublicGetRecentEvents(formId, maxCount, "");
+        } catch (const std::exception& e) {
+            SKSE::log::error("GetRecentEvents(0x{:X}) exception: {}", formId, e.what());
             return {};
         }
     }

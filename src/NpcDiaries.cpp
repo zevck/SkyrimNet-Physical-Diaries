@@ -41,7 +41,15 @@ namespace SkyrimNetDiaries::NpcDiaries {
         constexpr auto kStagger = std::chrono::seconds(3);
         // While the Sleep/Wait menu is open: a wait passes the writing hour in well under a second.
         constexpr auto kWaitPoll = std::chrono::milliseconds(100);
-        constexpr double kDaySeconds = 86400.0, kWeekSeconds = 604800.0;
+        constexpr double kDaySeconds = 86400.0;
+        // Enough that barks, a fight or a reloaded save's later events don't push the day's conversation out.
+        constexpr int kRecentEvents = 200;
+        // SkyrimNet's dialogue spoken by or at the actor (event_constants.h's DIALOGUE_EVENTS less vanilla topics,
+        // barks and monologue): a whole point each; anything else a quarter.  docs/NPC_DIARIES.md#who-writes
+        constexpr std::string_view kDialogueTypes[] = { "dialogue", "dialogue_player_text", "dialogue_player_stt",
+                                                        "dialogue_player_telepathy", "dialogue_npc_telepathy",
+                                                        "gamemaster_dialogue" };
+        constexpr double kOtherEventWeight = 0.25;
         constexpr std::string_view kNamePlaceholder = "{Name}";
 
         RE::TESFaction* g_skyrimNetBlacklist = nullptr;
@@ -230,65 +238,128 @@ namespace SkyrimNetDiaries::NpcDiaries {
             return writers;
         }
 
-        // The day's diaries: every daily writer, then DailyRandom weighted picks from SkyrimNet's activity data.
-        void RunPicks(std::int32_t day, bool now) {
-            auto list = nlohmann::json::parse(Database::GetActorEngagement(kDaySeconds, kWeekSeconds), nullptr, false);
+        // A listed actor's numbers, from SkyrimNet queries alone (no game state), so they can be gathered off the
+        // game thread.
+        struct Gathered {
+            enum class State { Active, Quiet, WroteToday, WrittenUp } state = State::Active;
+            RE::FormID formId = 0;
+            std::string name;
+            double lastEvent = 0.0;  // game seconds; 0: none
+            double activity = 0.0;   // SkyrimNet dialogue spoken by or at them 1, other events kOtherEventWeight
+        };
+
+        struct Gathering {
+            bool listed = true;  // false: SkyrimNet gave no list of actors
+            std::vector<Gathered> actors;
+            std::vector<RE::FormID> writersWrote;  // daily writers with an entry today
+            double newestEvent = 0.0;
+            long long ms = 0;
+        };
+
+        // The actor's own events: SkyrimNet's engagement data reads every game time as 0 (its database layer hands
+        // `game_time` back as a time_point those queries don't expect), from windowStart on.  docs/NPC_DIARIES.md
+        Gathered Assess(RE::FormID formId, std::string name, std::int32_t day, double gameNow, double windowStart) {
+            Gathered g{ .formId = formId, .name = std::move(name) };
+            const std::string uuidText = Database::GetUUIDFromFormID(formId);
+            const std::uint64_t uuid = uuidText.empty() ? 0 : std::stoull(uuidText);
+            std::vector<std::pair<double, double>> recent;  // time, weight
+            const auto events = nlohmann::json::parse(Database::GetRecentEvents(formId, kRecentEvents), nullptr, false);
+            for (const auto& e : events.is_array() ? events : nlohmann::json::array()) {
+                const double t = e.is_object() ? e.value("gameTime", 0.0) : 0.0;
+                if (t <= 0.0 || t > gameNow + 1.0) continue;  // none, or a later timeline's (an earlier save reloaded)
+                g.lastEvent = std::max(g.lastEvent, t);
+                if (t < windowStart) continue;
+                const auto type = e.value("type", std::string{});
+                const bool theirs = uuid != 0 && (e.value("originatingActor", std::uint64_t{ 0 }) == uuid ||
+                                                  e.value("targetActor", std::uint64_t{ 0 }) == uuid);
+                const bool dialogue = std::ranges::find(kDialogueTypes, type) != std::end(kDialogueTypes);
+                recent.emplace_back(t, dialogue && theirs ? 1.0 : kOtherEventWeight);
+            }
+            if (g.lastEvent < windowStart) {
+                g.state = Gathered::State::Quiet;  // nothing new to write about
+                return g;
+            }
+            if (WroteOn(formId, day)) {
+                g.state = Gathered::State::WroteToday;
+                return g;
+            }
+            // SkyrimNet writes only what their newest entry doesn't cover: nothing left, and it would decline.
+            const auto lastEntry = Database::GetDiaryEntries(formId, 1);
+            const double covered = lastEntry.empty() ? 0.0 : lastEntry.back().entry_date;
+            if (covered >= g.lastEvent) {
+                g.state = Gathered::State::WrittenUp;
+                return g;
+            }
+            for (const auto& [time, weight] : recent) {
+                if (time > covered) g.activity += weight;
+            }
+            return g;
+        }
+
+        // Every listed actor, and which daily writers wrote today.  SkyrimNet queries only: any thread.
+        Gathering Gather(std::int32_t day, double gameNow, bool dayBoundary, const std::vector<RE::FormID>& writers) {
+            const auto started = std::chrono::steady_clock::now();
+            Gathering g;
+            auto list = nlohmann::json::parse(Database::GetActorEngagement(), nullptr, false);
             if (!list.is_array()) {
-                SKSE::log::warn("[NpcDiaries] No activity data from SkyrimNet: only daily writers today");
+                g.listed = false;
                 list = nlohmann::json::array();
             }
-            auto* config = Config::GetSingleton();
-            const bool closeBoost = config->Get(Config::kNpcCloseBoost) != 0;
-            auto writers = DailyWriters();
-            std::vector<Candidate> pool;
-            int quiet = 0, unknown = 0, filtered = 0, wroteToday = 0, writtenUp = 0;
-            const double gameNow = CurrentGameTimeSeconds();
+            // What SkyrimNet writes about: since midnight with its day boundary on, else the last game day.
+            const double windowStart = dayBoundary ? std::floor(gameNow / kDaySeconds) * kDaySeconds : gameNow - kDaySeconds;
             for (const auto& a : list) {
                 if (!a.is_object()) continue;
                 const auto formId = static_cast<RE::FormID>(a.value("formId", std::int64_t{ 0 }));
-                const double lastEvent = a.value("lastEventTime", 0.0);
-                SKSE::log::debug("[NpcDiaries] {} (0x{:X}): last event {:.0f} (now {:.0f}), {} recent event(s), "
-                                 "recent importance {:.2f}", a.value("name", std::string{}), formId, lastEvent, gameNow,
-                                 a.value("recentEventCountShort", 0), a.value("recentMemoryImportanceShort", 0.0));
-                // Against the game's time, not SkyrimNet's "recent" (measured from its newest event, which after
-                // reloading an earlier save is ahead of the game).
-                if (lastEvent < gameNow - kDaySeconds) {  // nothing new to write about
-                    ++quiet;
-                    continue;
-                }
-                auto* actor = RE::TESForm::LookupByID<RE::Actor>(formId);
+                if (formId == 0 || std::ranges::find(writers, formId) != writers.end()) continue;
+                auto assessed = Assess(formId, a.value("name", std::string{}), day, gameNow, windowStart);
+                g.newestEvent = std::max(g.newestEvent, assessed.lastEvent);
+                SKSE::log::debug("[NpcDiaries] {} (0x{:X}): last event {:.0f} (now {:.0f}, from {:.0f}), activity {:.2f}",
+                                 assessed.name, formId, assessed.lastEvent, gameNow, windowStart, assessed.activity);
+                g.actors.push_back(std::move(assessed));
+            }
+            for (const auto formId : writers) {
+                if (WroteOn(formId, day)) g.writersWrote.push_back(formId);
+            }
+            g.ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+            return g;
+        }
+
+        // Game thread: the game-state filters, the picks, the requests.
+        void Pick(std::int32_t day, bool now, double gameNow, const Gathering& g, std::vector<Candidate> writers) {
+            if (!g.listed) SKSE::log::warn("[NpcDiaries] No activity data from SkyrimNet: only daily writers today");
+            const bool closeBoost = Config::GetSingleton()->Get(Config::kNpcCloseBoost) != 0;
+            std::vector<Candidate> pool;
+            int quiet = 0, unknown = 0, filtered = 0, wroteToday = 0, writtenUp = 0;
+            for (const auto& a : g.actors) {
+                auto* actor = RE::TESForm::LookupByID<RE::Actor>(a.formId);
                 if (!actor) {
                     ++unknown;
-                    continue;
-                }
-                if (std::ranges::any_of(writers, [formId](const Candidate& w) { return w.formId == formId; })) continue;
-                if (!MayWrite(actor)) {
+                } else if (a.state == Gathered::State::Quiet) {
+                    ++quiet;
+                } else if (!MayWrite(actor)) {
                     ++filtered;
-                    continue;
-                }
-                if (WroteOn(formId, day)) {
+                } else if (a.state == Gathered::State::WroteToday) {
                     ++wroteToday;
-                    continue;
-                }
-                // Their newest entry is after their last event: everything is written up, SkyrimNet would decline.
-                const auto newest = Database::GetDiaryEntries(formId, 1);
-                if (!newest.empty() && newest.back().entry_date >= lastEvent) {
+                } else if (a.state == Gathered::State::WrittenUp) {
                     ++writtenUp;
-                    continue;
+                } else {
+                    // Squared: the busiest NPCs write most nights, the barely active rarely.
+                    Candidate c{ a.formId, actor->GetDisplayFullName(), a.activity * a.activity };
+                    if (closeBoost && IsClose(actor)) c.score *= 2.0;
+                    if (c.score > 0.0) pool.push_back(std::move(c));
                 }
-                Candidate c{ formId, actor->GetDisplayFullName(),
-                             1.0 + 4.0 * a.value("recentMemoryImportanceShort", 0.0) +
-                                 0.1 * std::min(a.value("recentEventCountShort", 0), 20) };
-                if (closeBoost && IsClose(actor)) c.score *= 2.0;
-                pool.push_back(std::move(c));
             }
-            const auto writersWrote = std::erase_if(writers, [day](const Candidate& w) { return WroteOn(w.formId, day); });
-            SKSE::log::info("[NpcDiaries] Day {}: {} actor(s) from SkyrimNet: {} quiet in the last day, {} not loaded as "
+            const auto writersWrote = std::erase_if(writers, [&g](const Candidate& w) {
+                return std::ranges::find(g.writersWrote, w.formId) != g.writersWrote.end();
+            });
+            SKSE::log::info("[NpcDiaries] Day {}: newest event {:.0f}, now {:.0f} ({} ms asking SkyrimNet)", day,
+                            g.newestEvent, gameNow, g.ms);
+            SKSE::log::info("[NpcDiaries] Day {}: {} actor(s) from SkyrimNet: {} quiet, {} not loaded as "
                             "actors, {} filtered out, {} wrote today, {} written up, {} candidate(s); {} daily writer(s), "
-                            "{} more wrote today", day, list.size(), quiet, unknown, filtered, wroteToday, writtenUp,
+                            "{} more wrote today", day, g.actors.size(), quiet, unknown, filtered, wroteToday, writtenUp,
                             pool.size(), writers.size(), writersWrote);
             std::mt19937 rng{ std::random_device{}() };
-            const auto random = PickWeighted(std::move(pool), config->Get(Config::kNpcDailyRandom), rng);
+            const auto random = PickWeighted(std::move(pool), Config::GetSingleton()->Get(Config::kNpcDailyRandom), rng);
 
             std::vector<RE::FormID> picks;
             const auto add = [&](const std::vector<Candidate>& group, std::string_view why) {
@@ -301,6 +372,38 @@ namespace SkyrimNetDiaries::NpcDiaries {
             add(random, "picked");
             SKSE::log::info("[NpcDiaries] Day {}: {} diary request(s), {} writing daily", day, picks.size(), writers.size());
             Dispatch(std::move(picks), now);
+        }
+
+        // The day's diaries: every daily writer, then DailyRandom weighted picks.  During play the SkyrimNet queries
+        // (a few per listed actor) run off the game thread; before a time skip inline, as its requests can't wait.
+        void RunPicks(std::int32_t day, bool now) {
+            auto writers = DailyWriters();
+            std::vector<RE::FormID> writerIds;
+            for (const auto& w : writers) writerIds.push_back(w.formId);
+            const double gameNow = CurrentGameTimeSeconds();
+            const bool dayBoundary = g_dayBoundary;
+            if (now) {
+                Pick(day, true, gameNow, Gather(day, gameNow, dayBoundary, writerIds), std::move(writers));
+                return;
+            }
+            auto shared = std::make_shared<std::vector<Candidate>>(std::move(writers));
+            std::thread([day, gameNow, dayBoundary, writerIds, shared, session = g_session]() {
+                auto g = std::make_shared<Gathering>();
+                try {
+                    *g = Gather(day, gameNow, dayBoundary, writerIds);
+                } catch (const std::exception& e) {
+                    SKSE::log::error("[NpcDiaries] Day {}: {}", day, e.what());
+                    return;
+                }
+                SKSE::GetTaskInterface()->AddTask([day, gameNow, g, shared, session]() {
+                    if (session != g_session) return;  // a load since
+                    try {
+                        Pick(day, false, gameNow, *g, std::move(*shared));
+                    } catch (const std::exception& e) {
+                        SKSE::log::error("[NpcDiaries] Day {}: {}", day, e.what());
+                    }
+                });
+            }).detach();
         }
 
         // A time skip's days already covered by its one run (see SkipEnds); 0 or below: none pending.

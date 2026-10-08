@@ -132,9 +132,12 @@ namespace SkyrimNetDiaries {
         // SkyrimNet's keep/clear check (TimelineState values), or nullopt before public API v11.
         static std::optional<int> GetTimelineState();
 
-        // SkyrimNet's per-actor activity (memory importance, event counts) over two game-second windows, as its
-        // JSON array; "" if unavailable.  docs/NPC_DIARIES.md#who-writes
-        static std::string GetActorEngagement(double shortWindowSeconds, double mediumWindowSeconds);
+        // SkyrimNet's actors with any events or memories (its engagement data: only the list is used, its times read
+        // 0), as its JSON array; "" if unavailable.  docs/NPC_DIARIES.md#who-writes
+        static std::string GetActorEngagement();
+
+        // An actor's newest events (up to maxCount, newest first), as SkyrimNet's JSON array; "" if unavailable.
+        static std::string GetRecentEvents(std::uint32_t formId, int maxCount);
 
         // Registers a native prompt decorator (SkyrimNet public API v5+).  The callback
         // runs on SkyrimNet's worker threads.  False if unavailable or refused.

@@ -269,10 +269,24 @@ namespace SkyrimNetDiaries {
         // so an empty one never starts a page (docs/BOOK_TEXT.md).  The editor's stays empty.
         std::string BlankLine(bool marked) { return marked ? "\n\n" : "\n&nbsp;\n"; }
 
-        // Reading: a paragraph's empty first or last line (an odd run of line breaks, or an empty paragraph) gets one too.
-        void KeepBlankEnds(std::string& paragraph) {
-            if (paragraph.empty() || paragraph.front() == '\n') paragraph.insert(0, "&nbsp;");
-            if (paragraph.back() == '\n') paragraph += "&nbsp;";
+        // Reading: the same for every blank line of a text (one with only tags, blood's, is blank too).
+        std::string HoldBlankLines(std::string_view text) {
+            std::string out;
+            for (std::size_t start = 0;;) {
+                const auto end = text.find('\n', start);
+                const auto line = text.substr(start, end == std::string_view::npos ? std::string_view::npos : end - start);
+                bool blank = true;
+                for (std::size_t i = 0; i < line.size() && blank; ++i) {
+                    const auto close = line[i] == '<' ? line.find('>', i) : std::string_view::npos;
+                    if (close == std::string_view::npos) blank = false;
+                    else i = close;
+                }
+                out += line;
+                if (blank) out += "&nbsp;";
+                if (end == std::string_view::npos) return out;
+                out += '\n';
+                start = end + 1;
+            }
         }
 
         // `marked`: blood stays as its markers (the editor paints it).
@@ -473,23 +487,34 @@ namespace SkyrimNetDiaries {
                     bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'>" + BlankLine(marked) + "</font>";
                 }
 
-                // Entry content - wrap EACH paragraph in font tag since Skyrim resets after \n\n.
-                // Marked: the run is the paragraphs and the breaks between them, nothing after the last.
-                if (marked) bookText += kLockClose;
+                // Breaks in the content font too: a blank line as tall as a text line (Ink & Quill sizes typed ones so),
+                // and the breaks after the entry (in the editor the line after the run holds them; bigger, it overflowed).
                 const std::string content = SanitizeBookText(entry, marked);
-                // Breaks in the content font too: a blank line as tall as a text line (Ink & Quill sizes typed ones so).
                 const std::string contentFont = "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'>";
-                bool first = true;
-                for (const auto paragraph : Paragraphs(content)) {
-                    if (!std::exchange(first, false)) bookText += contentFont + BlankLine(marked) + "</font>";
-                    std::string text{ paragraph };
-                    if (!marked) KeepBlankEnds(text);
-                    if (!text.empty()) bookText += contentFont + text + "</font>";
+                const auto paragraphs = Paragraphs(content);
+                // None before a page break: the book ignores empty lines there, the editor counted them (a page off).
+                const bool beforeBreak = i + 1 < entries.size();
+                const std::string after = beforeBreak ? "" : paragraphs.empty() ? "\n\n" : "\n\n\n\n";
+                if (marked) {
+                    // The run is the paragraphs and the breaks between them, nothing after the last.  A tag per
+                    // paragraph: Skyrim resets the font after an empty line.
+                    bookText += kLockClose;
+                    for (std::size_t p = 0; p < paragraphs.size(); ++p) {
+                        if (p > 0) bookText += contentFont + "\n\n</font>";
+                        if (!paragraphs[p].empty()) bookText += contentFont + std::string(paragraphs[p]) + "</font>";
+                    }
+                    bookText += kLockOpen;
+                    if (!after.empty()) bookText += contentFont + after + "</font>";
+                } else {
+                    // One tag: every blank line holds a character, so nothing resets the font.  The join only drops the
+                    // trailing breaks Paragraphs drops, so both texts end an entry alike.
+                    std::string text;
+                    for (std::size_t p = 0; p < paragraphs.size(); ++p) {
+                        if (p > 0) text += "\n\n";
+                        text += paragraphs[p];
+                    }
+                    bookText += contentFont + (text.empty() ? std::string() : HoldBlankLines(text)) + after + "</font>";
                 }
-                if (marked) bookText += kLockOpen;
-                // The breaks after the entry in the content font too: the editor's line after the run holds them, and a
-                // line in the page's bigger size starts a page that typing into it takes back.
-                bookText += contentFont + (first ? "\n\n" : "\n\n\n\n") + "</font>";
 
                 // Pagebreak between entries
                 if (i < entries.size() - 1) {
