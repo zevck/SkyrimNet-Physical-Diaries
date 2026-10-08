@@ -67,7 +67,7 @@ Result codes: `Success`, `NoEntries` (the volume has no entries: the "all entrie
 
 Implementation notes:
 - Answers come from **`cachedBookText`** (in memory, refreshed when the book is opened), not from SkyrimNet. Dispatch from the game thread; `books_` is read without a lock.
-- Entry text is font-tagged in all three queries. `&`, `<` and `>` in the prose are escaped in the book text and turned back (`UnescapeMarkup`) before being returned, so callers get the prose as before.
+- Entry text is font-tagged in all three queries, without Ink & Quill's bookmark tags (`StripBookmarks`; the book menu's text has one at each entry's start). `&`, `<` and `>` in the prose are escaped in the book text and turned back (`UnescapeMarkup`) before being returned, so callers get the prose as before.
 - Entry queries split the rendered text on `kPageBreak` (`BookText.h`) and assume entries start at page 2. Changing the layout in `FormatDiaryEntries` breaks them. See [BOOK_TEXT.md](BOOK_TEXT.md#rendering-formatdiaryentries).
 - `SNPD_QUERY_ALL_ENTRIES` on a volume whose entries were all removed returns `Success`, `isValid = true`, `entryCount = 0` (not `NoEntries`). An entry that doesn't fit the buffer is skipped and counted in `truncatedCount`; a later, shorter one may still be packed.
 - Callers should just send the query; the header's old advice to pre-filter by the English title is gone.

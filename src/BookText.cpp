@@ -429,6 +429,22 @@ namespace SkyrimNetDiaries {
         return first == last ? first : first + " - " + last;
     }
 
+    std::string StripBookmarks(std::string_view text) {
+        constexpr std::string_view kOpen = "<a href=\"bookmark:", kClose = "</a>";
+        std::string out;
+        out.reserve(text.size());
+        std::size_t from = 0;
+        for (std::size_t at; (at = text.find(kOpen, from)) != std::string_view::npos;) {
+            const auto end = text.find('>', at + kOpen.size());
+            if (end == std::string_view::npos) break;
+            out.append(text.substr(from, at - from));
+            from = end + 1;
+            if (text.substr(from, kClose.size()) == kClose) from += kClose.size();  // ours are empty
+        }
+        out.append(text.substr(from));
+        return out;
+    }
+
     std::string FormatDiaryEntries(const std::vector<SkyrimNetDiaries::DiaryEntry>& entries,
                                    const std::string& actorName, SkyrimNetDiaries::VolumeKind kind, bool marked) {
         std::string bookText;
@@ -476,6 +492,9 @@ namespace SkyrimNetDiaries {
                 // Format the date string
                 std::string dateStr = FormatGameDate(entry.entry_date);
 
+                // An Ink & Quill bookmark at each entry, named by its date (reading only; empty: nothing shows without it).
+                if (!marked) bookText += std::format("<a href=\"bookmark:{}\"></a>", dateStr);
+
                 // Date header (optional — controlled by ShowDateHeaders config)
                 if (SkyrimNetDiaries::Config::GetSingleton()->GetShowDateHeaders()) {
                     // Reset font size explicitly (title page font might bleed through pagebreak)
@@ -492,9 +511,10 @@ namespace SkyrimNetDiaries {
                 const std::string content = SanitizeBookText(entry, marked);
                 const std::string contentFont = "<font face='" + fontFace + "' size='" + std::to_string(fontContent) + "'>";
                 const auto paragraphs = Paragraphs(content);
-                // None before a page break: the book ignores empty lines there, the editor counted them (a page off).
+                // One line break before a page break: the [pagebreak] tag on its own line (the book breaks only there), and
+                // no empty line (the book ignores them there, the editor counted them: a page off).
                 const bool beforeBreak = i + 1 < entries.size();
-                const std::string after = beforeBreak ? "" : paragraphs.empty() ? "\n\n" : "\n\n\n\n";
+                const std::string after = beforeBreak ? "\n" : paragraphs.empty() ? "\n\n" : "\n\n\n\n";
                 if (marked) {
                     // The run is the paragraphs and the breaks between them, nothing after the last.  A tag per
                     // paragraph: Skyrim resets the font after an empty line.

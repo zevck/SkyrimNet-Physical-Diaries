@@ -102,7 +102,7 @@ namespace SkyrimNetDiaries::InterPluginAPI {
                 // Don't expose the "entries removed" placeholder — it would be read aloud by TTS mods.
                 // Leave text empty so callers know there's nothing to read for this volume.
                 if (!IsEmptyVolume(bookData->cachedBookText)) {
-                    const std::string t = UnescapeMarkup(bookData->cachedBookText);
+                    const std::string t = UnescapeMarkup(StripBookmarks(bookData->cachedBookText));
                     query->resultCode = SkyrimNetPhysicalDiaries_API::SNPDResultCode::Success;
                     size_t copyLen = std::min(t.size(), sizeof(query->text) - 1);
                     std::memcpy(query->text, t.c_str(), copyLen);
@@ -138,7 +138,7 @@ namespace SkyrimNetDiaries::InterPluginAPI {
                 return;
             }
 
-            const std::string text = UnescapeMarkup(bookData->cachedBookText);
+            const std::string text = UnescapeMarkup(StripBookmarks(bookData->cachedBookText));
             const auto entries = EntryPages(text);
             const int entryPageCount = static_cast<int>(entries.size());
             if (entryPageCount <= 0 || IsEmptyVolume(bookData->cachedBookText)) {
@@ -191,7 +191,7 @@ namespace SkyrimNetDiaries::InterPluginAPI {
                 return;
             }
 
-            const std::string text = UnescapeMarkup(bookData->cachedBookText);
+            const std::string text = UnescapeMarkup(StripBookmarks(bookData->cachedBookText));
             const auto entries = EntryPages(text);
 
             query->isValid    = true;

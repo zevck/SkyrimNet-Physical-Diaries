@@ -56,6 +56,10 @@ namespace SkyrimNetDiaries {
     // Text's paragraphs (split at "\n\n"; empty ones are blank lines and kept, but not at the end): an entry's
     // run in the editor, and its pages.
     std::vector<std::string_view> Paragraphs(std::string_view text);
+    // The text without Ink & Quill's bookmark tags (<a href="bookmark:...">, its </a>): what readers other than the
+    // book menu get (docs/BOOK_TEXT.md#delivery-the-getdescription-and-openbookmenu-hooks).
+    std::string StripBookmarks(std::string_view text);
+
     // Its date as a heading shows it, whether headings are on or not.
     std::string EntryDate(const DiaryEntry& entry);
     // The title page's date range ("" for no entries).

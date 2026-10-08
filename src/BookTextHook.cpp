@@ -19,6 +19,7 @@
 
 #include "BookTextHook.h"
 #include "BookManager.h"
+#include "BookText.h"
 #include "Localization.h"
 
 #include "Detour.h"
@@ -197,7 +198,7 @@ namespace
                         // Another reader, any thread: the snapshot, no refresh, UTF-8, tags and all as a
                         // vanilla book's (docs/BOOK_TEXT.md#delivery-the-getdescription-and-openbookmenu-hooks).
                         if (const auto text = books->GetBookTextSnapshot(a_parent->GetFormID()); !text.empty()) {
-                            a_out = text.c_str();
+                            a_out = SkyrimNetDiaries::StripBookmarks(text).c_str();  // the tags are the book menu's only
                             return;
                         }
                     }
