@@ -358,15 +358,15 @@ namespace SkyrimNetDiaries {
         volumeSuffixFmt_ = ", v{n}";
         emptyVolumeText_ = "All entries from this time period have been removed.";
         templatesMissingText_ =
-            "Physical Diaries: the diary template books were not found.\n\n"
+            "Physical Diaries\n\nThe diary template books were not found.\n\n"
             "Diaries can't be created. Check that:\n"
             " - Physical Diaries.esp is enabled\n"
             " - powerofthree's Tweaks or Native EditorID Fix is installed for your game version\n\n"
             "See PhysicalDiaries.log for details.";
         oldFilesText_ =
-            "Physical Diaries: files from version 1 are still installed (SkyrimNet Physical Diaries.esp or "
-            "SkyrimNetPhysicalDiaries.dll).\n\nVersion 2 named them Physical Diaries.esp and PhysicalDiaries.dll. "
-            "Remove the old ones: until then Physical Diaries doesn't work properly.";
+            "Physical Diaries\n\nFiles from version 1 are still installed (SkyrimNet Physical Diaries.esp or "
+            "SkyrimNetPhysicalDiaries.dll).\n\nVersion 2 renamed them to Physical Diaries.esp and PhysicalDiaries.dll. "
+            "Remove the old files before continuing.";
         writingOffText_ =
             "Ink & Quill - Writing Framework isn't installed, or its writing is off (see InkAndQuill.log). Your journals "
             "are read-only until it's back.";
