@@ -10,7 +10,7 @@ There is **no automated test suite**. Every change is checked in game, through t
 
 Prerequisites: MSVC x64 with C++23, CMake ≥ 3.21 and vcpkg with the `VCPKG_ROOT` environment variable set (`CMakePresets.json` reads the toolchain file from it).
 
-**CommonLib is the `lib/commonlibsse-ng` submodule** (alandtse CommonLibSSE-NG, `ng` branch, pinned at v9.1.0), built with `add_subdirectory(...)`. Clone with `--recursive`, or run `git submodule update --init --recursive` in an existing clone. The `--recursive` matters: CommonLib has a nested `extern/openvr` submodule, and without it the VR code fails with `Cannot open include file: 'openvr.h'`. The first build compiles all of CommonLib and takes several minutes; later builds are incremental. CommonLib is GPL-3.0, which is why SNPD is GPL-3.0-or-later (`LICENSE.md`).
+**CommonLib is the `lib/commonlibsse-ng` submodule** (alandtse CommonLibSSE-NG, `ng` branch, pinned at v9.1.0), built with `add_subdirectory(...)`. Clone with `--recursive`, or run `git submodule update --init --recursive` in an existing clone. The `--recursive` matters: CommonLib has a nested `extern/openvr` submodule, and without it the VR code fails with `Cannot open include file: 'openvr.h'`. The first build compiles all of CommonLib and takes several minutes; later builds are incremental. CommonLib is GPL-3.0, which is why SNPD is GPL-3.0-or-later (`LICENSE`: no extension, so GitHub shows it as plain text and recognises the license; as `LICENSE.md` it was rendered as Markdown and reflowed).
 
 v9 changes that SNPD relies on (keep them when updating CommonLib again):
 - The entry point is `SKSE_PLUGIN_LOAD(...)`; v9 removed the `SKSEAPI` macro.
