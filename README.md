@@ -31,7 +31,7 @@ Found under **Physical Diaries** in the Mod Configuration Menu.
 
  **Settings**
 - **Your Diary Books** - Makes books of the diary SkyrimNet writes for you, as for NPCs (default: off with Ink & Quill installed, on without). Off, your diary stops at its last entry; your journal isn't affected.
-- **Entries Per Volume** - How many entries fit in one book: a diary starts a new volume, and a full journal of yours takes no new entry (default: 10, range: 1–50).
+- **Entries Per Volume** - How many entries fit in one book: a diary starts a new volume, and a full journal of yours takes no new entry (default: 25, range: 1–50).
 - **Font Sizes** - Separate sliders for title, date, body text, and small text in the diary books
 - **Book Font** - Switch font faces for readability
 - **Tear Out Entry Key** - While writing, tears out the entry the cursor is in, after asking (default: F10).

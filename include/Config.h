@@ -114,7 +114,7 @@ namespace SkyrimNetDiaries {
         struct IntSetting { const char* section; const char* key; int defaultValue; int min; int max; };
         static constexpr IntSetting kDebugLog         { "General", "DebugLog",         0,  0, 1  };
         static constexpr IntSetting kShowDateHeaders  { "Diary",   "ShowDateHeaders",  1,  0, 1  };
-        static constexpr IntSetting kEntriesPerVolume { "Diary",   "EntriesPerVolume", 10, 1, 50 };
+        static constexpr IntSetting kEntriesPerVolume { "Diary",   "EntriesPerVolume", 25, 1, 50 };
         // -1 (default): off with writing on (Ink & Quill), on without; 0/1 forced.  docs/CONFIG_AND_MCM.md
         static constexpr IntSetting kPlayerDiaryBooks { "Diary",   "PlayerDiaryBooks", -1, -1, 1 };
         // DirectX scan code of the key that tears out the entry under the caret while the

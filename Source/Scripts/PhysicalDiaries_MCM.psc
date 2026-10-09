@@ -356,7 +356,7 @@ endevent
 event OnOptionSliderOpen(int oid)
     if oid == oidEntriesPerVolume
         SetSliderDialogStartValue(GetEntriesPerVolume())
-        SetSliderDialogDefaultValue(10)
+        SetSliderDialogDefaultValue(25)
         SetSliderDialogRange(1, 50)
         SetSliderDialogInterval(1)
     elseif oid == oidFontSizeTitle
@@ -495,7 +495,7 @@ event OnOptionDefault(int oid)
         SetNpcSetting("DailyWriters", 1)
         SetToggleOptionValue(oid, true)
     elseif oid == oidEntriesPerVolume
-        SetEntriesPerVolume(10)
+        SetEntriesPerVolume(25)
         SetSliderOptionValue(oid, 10.0, "{0}")
     elseif oid == oidShowDateHeaders
         SetShowDateHeaders(true)

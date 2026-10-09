@@ -25,3 +25,6 @@ Fixed on 2026-10-04: books opened by a mod that opens the book menu itself (Grid
 ## By design
 
 9. **Identity-linked NPCs share their diary books.** SkyrimNet treats an actor's co-identity set (former selves after a rename, declared successions, identity links) as one journal: its diary reads, prompts and memories all merge them. SNPD's books show that same journal, so with a bidirectional link each NPC's books also hold the other's entries, with no author shown. Things a player may notice: adding a link mid-playthrough brings the other self's whole history into the existing volumes at once, and removing it takes those pages away. A change belongs in SkyrimNet's identity links, not in SNPD.
+
+
+10. **A blank journal written in, then a Keep, leaves both.** Reloading a save from before the blank was written in, and choosing SkyrimNet's Keep, restores the journal it became ([EDITING.md](EDITING.md#diaries-and-journals)) while the save still has the blank: one blank turned into a journal and a blank. Taking a matching blank from the player's inventory on restore was considered (2026-10-08) and left out: it misses a blank stashed in a chest, and the dupe is a cheap item, the cost of time travel.
