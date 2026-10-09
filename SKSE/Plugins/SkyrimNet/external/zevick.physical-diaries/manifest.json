@@ -8,7 +8,7 @@
   "tags": ["diary", "diaries", "books", "immersive"],
   "nsfw": false,
   "icon": "book",
-  "version": "1.0.0",
-  "min_skyrimnet_version": "0.25.0",
+  "version": "2.0.0",
+  "min_skyrimnet_version": "0.26.0",
   "mods": [{ "name": "Physical Diaries", "file": "Physical Diaries.esp", "required": true }]
 }

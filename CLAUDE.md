@@ -13,6 +13,7 @@ SKSE plugin (CommonLibSSE-NG, C++23; one DLL for SE, AE and VR) that turns the d
 - Game state is touched only on the game thread (`SKSE::GetTaskInterface()->AddTask`). Papyrus natives run on the game thread (registered non-tasklet).
 - A Papyrus change is done only when the `.pex` is compiled into `Scripts/` **and** shipped. See [docs/PAPYRUS_AND_API.md](docs/PAPYRUS_AND_API.md).
 - **Build and deploy with `.\Build_Local.ps1`**: incremental plugin build, Pyro (`skyrimse.ppj`, same as the VS Code task), the ESP from its Spriggit YAML in `spriggit/` (see [docs/PLUGIN.md](docs/PLUGIN.md)), and deploy to the `Physical Diaries - Dev` mod folder in each test instance (one per runtime: SE, AE, VR). Paths are in the gitignored `Build_Config_Local.ps1`. PASS/FAIL is also written to `%TEMP%\snpd-build-result.json`. Never `/t:Rebuild`: it rebuilds all of CommonLib. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#build).
+- **Release with `.\Build_Release.ps1`**: refuses uncommitted work, builds, checks and zips `build\release\Physical Diaries <version>.zip` ([docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#releases)).
 
 ## Open work (as of 2026-09-28)
 
