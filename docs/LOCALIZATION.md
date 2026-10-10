@@ -8,7 +8,7 @@ Code: `src/Localization.cpp`, `include/Localization.h` (singleton `SkyrimNetDiar
 
 ## Choosing the language
 
-`Localization::Initialize()` runs in `SKSEPlugin_Load`, before `BookTextHook::Install()`:
+`Localization::Initialize()` runs in `SKSEPlugin_Load`, long before `BookTextHook::Install()` (at `kDataLoaded`):
 
 1. `[General] Language` in `PhysicalDiaries.ini`, if set (lets an English game use, say, German books).
 2. Otherwise `sLanguage` from `Documents/My Games/Skyrim Special Edition/Skyrim.ini` (found with `SHGetFolderPath`).
