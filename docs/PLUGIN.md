@@ -26,7 +26,7 @@ Until 2.0 the plugin was `SkyrimNet Physical Diaries.esp`: see [ARCHITECTURE.md]
 | `0x803` | Faction | `SNPD_DiaryStolenFaction` | Unused, from an earlier theft design; harmless, left in place ([THEFT.md](THEFT.md)) |
 | `0x804` | Quest | `SNPD_Quest` | Starts with the game. Scripts `PhysicalDiaries_EventListener` and `PhysicalDiaries_MCM`; player alias with `SKI_PlayerLoadGameAlias` ([PAPYRUS_AND_API.md](PAPYRUS_AND_API.md)) |
 | `0x805`, `0x806`, `0x807` | Book | `SNPD_BlankJournal1`, `2`, `3` | Blank Journal, one per template look (`JournalLowPoly01`–`03`; not the Nightingale one). 20 gold, `VendorItemBook`. Named from the locale file (`[Format] BlankJournal`) at load |
-| `0x808` | LeveledItem | `SNPD_LItemBlankJournal` | One of the three at random. The DLL adds it to Skyrim.esm's `LItemMiscVendorMiscItems75` in memory ([EDITING.md](EDITING.md#blank-journals)) |
+| `0x808` | LeveledItem | `SNPD_LItemBlankJournal` | One of the three at random. The DLL adds it to every general-goods merchant chest in memory ([EDITING.md](EDITING.md#blank-journals)) |
 | `0x809`, `0x80A`, `0x80B` | ConstructibleObject | `SNPD_RecipeBlankJournal1`, `2`, `3` | Tanning rack: 1 Leather + 2 Roll of Paper → one Blank Journal of that look. Hidden (no workbench) while writing is off |
 | `0x80C` | Book | `SNPD_BlankJournalN` | Blank Journal in the Nightingale look (`TG05JournalLowPoly01`). Not sold |
 | `0x80D` | ConstructibleObject | `SNPD_RecipeBlankJournalN` | Its tanning-rack recipe, the same materials, once the player is a Nightingale: `GetStageDone` TG08A ("Trinity Restored", `057F99`) stage 57 (the Oath) OR stage 200 (completed). Hidden while writing is off |
