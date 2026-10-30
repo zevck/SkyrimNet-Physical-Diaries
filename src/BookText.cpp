@@ -45,6 +45,24 @@ namespace SkyrimNetDiaries {
             }
         }
 
+        // Characters the handwriting fonts lack (Russian: ё, Ё, №); a missing glyph breaks the book's
+        // pagination (docs/BOOK_TEXT.md#cyrillic-utf-8-as-vanilla).
+        void PlainForms(std::string& text) {
+            static constexpr std::pair<std::string_view, std::string_view> kPlainForms[] = {
+                { "\xE2\x80\x94", "-" },         // em dash
+                { "\xE2\x80\x93", "-" },         // en dash
+                { "\xE2\x80\x9C", "\"" },        // left double quote
+                { "\xE2\x80\x9D", "\"" },        // right double quote
+                { "\xE2\x80\x98", "'" },         // left single quote
+                { "\xE2\x80\x99", "'" },         // right single quote
+                { "\xE2\x80\xA6", "..." },       // ellipsis
+                { "\xD1\x91", "\xD0\xB5" },      // ё -> е
+                { "\xD0\x81", "\xD0\x95" },      // Ё -> Е
+                { "\xE2\x84\x96", "No." },       // №
+            };
+            for (const auto& [from, to] : kPlainForms) ReplaceAll(text, from, to);
+        }
+
         // A "<" in Scaleform's book HTML would start a tag and swallow text ("<sigh>", "<3").
         // The inter-plugin API turns the escapes back before handing text to other mods.
         std::string EscapeMarkup(std::string text) {
@@ -220,19 +238,7 @@ namespace SkyrimNetDiaries {
                     }
                 }
 
-            // Typographic characters the handwriting fonts lack.
-            static constexpr std::pair<std::string_view, std::string_view> kPlainForms[] = {
-                { "\xE2\x80\x94", "-" },    // em dash
-                { "\xE2\x80\x93", "-" },    // en dash
-                { "\xE2\x80\x9C", "\"" },   // left double quote
-                { "\xE2\x80\x9D", "\"" },   // right double quote
-                { "\xE2\x80\x98", "'" },    // left single quote
-                { "\xE2\x80\x99", "'" },    // right single quote
-                { "\xE2\x80\xA6", "..." },  // ellipsis
-            };
-            for (const auto& [from, to] : kPlainForms) {
-                ReplaceAll(result, from, to);
-            }
+            PlainForms(result);
 
             // Strip Markdown bold/italic markers: the handwriting fonts have no bold or italic variants.
             // ** is handled before * so bold markers aren't half-matched as italic.
@@ -463,7 +469,9 @@ namespace SkyrimNetDiaries {
         bookText += "\n\n\n\n\n\n";
         bookText += "<font face='" + fontFace + "' size='" + std::to_string(fontTitle) + "'><p align='center'>";
         auto* loc = SkyrimNetDiaries::Localization::GetSingleton();
-        bookText += loc->FormatTitle(EscapeMarkup(actorName), kind);
+        std::string title = actorName;  // the name is in the book's font too
+        PlainForms(title);
+        bookText += loc->FormatTitle(EscapeMarkup(title), kind);
         bookText += "</p></font>\n\n";
 
         if (entries.empty() && marked) {

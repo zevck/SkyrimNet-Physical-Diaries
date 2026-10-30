@@ -86,7 +86,7 @@ Levels: `debug` for routine tracing, `info` for state changes worth seeing in a 
 
 | Prefix | Area |
 |---|---|
-| `[BookTextHook]` | `Opening diary` at `info` on every diary open; the per-call entry line only with `DebugLog` on |
+| `[BookTextHook]` | `Opening diary` at `info` on every diary open; `Refresh of 0x… queued: main thread …, paused …` when an open couldn't refresh first (the text shows on the next open); `Installed off the main thread (kDataLoaded)` at startup; the per-call entry line only with `DebugLog` on |
 | `[DynamicForms]` | Book-form records saved and loaded, forms the engine renumbered, world copies rebuilt after a load |
 | `[BookForms]` | Books filled in at load, retired books swept (per-copy lines at debug) |
 | `[TimelineGate]`, `[Timeline]` | Waiting for SkyrimNet's keep/clear check, and reconciling volumes with the history it kept or cleared |
@@ -104,7 +104,9 @@ Levels: `debug` for routine tracing, `info` for state changes worth seeing in a 
 | `[NpcDiaries]` | At `kDataLoaded`: ready (on/off). Each day's run: the newest event against the game's time and the milliseconds spent asking SkyrimNet (`newest event …, now … (… ms asking SkyrimNet)`), a summary (quiet, not loaded, filtered, wrote today, written up, candidates, daily writers and how many of them wrote today) and each pick with its score; with Debug Logging, each actor's last event, window start and activity; `Days A-B: a time skip passed the writing hour` (sleep, wait, fast travel, carriages); `Day N: skipped, SkyrimNet's AI is off` (or diaries); SkyrimNet diary-config changes from the MCM; daily writers starting and stopping. Every actor's numbers at debug ([NPC_DIARIES.md](NPC_DIARIES.md)) |
 | `[BookEditor]` | Journals as Ink & Quill's client: sessions begun, saves and tear-outs (and SkyrimNet's answers), new entries, blank journals' sessions. The editor's own lines (edit mode, ink, blood, `Marked text: N runs; layout …`) are in `InkAndQuill.log` |
 | `[Physical Diaries]`, `[Theft Reconciliation]` | Theft |
-| `[DiaryDB]`, `[BookManager]`, `[Localization]`, `[PapyrusAPI]` | As named |
+| `[Localization]` | The language and its strings; at `kDataLoaded`, the game's own `sLanguage` (for bug reports: ours is read earlier, from `Skyrim.ini`) |
+| `[DiaryDB]`, `[BookManager]`, `[PapyrusAPI]` | As named |
+| (no prefix) | `Game: Skyrim <SE/AE/VR> <version>, SKSE <version>` right after plugin load, for bug reports |
 
 Script binding problems (missing `.pex`, missing registration) appear **only in the Papyrus log**, not this one.
 

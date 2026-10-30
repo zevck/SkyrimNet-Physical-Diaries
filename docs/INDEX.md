@@ -37,7 +37,7 @@ New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first, then [DEVELOPMENT.md](D
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Repo layout, component map, startup and load sequence, one entry end to end, threading, dependencies, names (and 1.x's, with the copy to the new ones) |
 | [BOOK_FORMS.md](BOOK_FORMS.md) | Book forms the engine saves itself (no plugin file): the engine facts they rest on, creation, the co-save record, load and matching against DiaryDB, retirement, templates, finding the NPC, the DPF migration, alternatives tested |
 | [VOLUMES_AND_SYNC.md](VOLUMES_AND_SYNC.md) | Entries → volumes, boundaries, update and seal, load-time recovery and catch-up, refresh on open, save reverts, save-folder detection |
-| [BOOK_TEXT.md](BOOK_TEXT.md) | Rendering, dates, cleaning LLM output, the `GetDescription` hook (the book menu and other readers), UTF-8 → Win-1251 |
+| [BOOK_TEXT.md](BOOK_TEXT.md) | Rendering, dates, cleaning LLM output, the `GetDescription` hook (the book menu and other readers), Cyrillic (UTF-8) |
 | [THEFT.md](THEFT.md) | Theft, return and handover; the decorator; clearing; save reverts |
 | [EDITING.md](EDITING.md) | The player writing in their own journal through Ink & Quill: writing mode, diaries and journals, blank journals, marked text, saving to SkyrimNet, tearing out an entry, new entries |
 | [NPC_DIARIES.md](NPC_DIARIES.md) | Optional: NPCs writing diary entries on their own once a day through SkyrimNet's generation: when, who, the daily writers |

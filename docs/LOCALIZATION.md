@@ -59,5 +59,5 @@ Precedence: locale `[Months]`/`[Days]` → the game's GMSTs → English. It appl
 
 - Don't hard-code user-visible, language-specific strings outside `Localization.cpp` and the locale files.
 - **Never compare names.** Book titles and NPC names are localized (theft detection used to filter on the English word "Diary" and did nothing in 8 of 9 languages). Identify books by FormID (`BookManager::GetBookForFormID`) and NPCs by UUID or base form.
-- Cyrillic text is converted to Windows-1251 at injection time. See [BOOK_TEXT.md](BOOK_TEXT.md#utf-8--windows-1251).
+- Book text is UTF-8 in every language, Cyrillic included. See [BOOK_TEXT.md](BOOK_TEXT.md#cyrillic-utf-8-as-vanilla).
 - The MCM font dropdown: `$StartGameFont` renders as boxes, and in vanilla `$HandwrittenBold` is the same as `$HandwrittenFont`. SkyUI's `OnOptionMenuOpen` must fill the list without checking the option ID, or the menu opens empty.

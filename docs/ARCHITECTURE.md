@@ -80,7 +80,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 | NPC diaries | `src/NpcDiaries.cpp`, `include/NpcDiaries.h` | Optional: once a game day, picks NPCs (actors from SkyrimNet's engagement list, weighted by their own recent events, gathered off the game thread; the save's daily writers) and asks SkyrimNet's Papyrus `GenerateDiaryEntry` to write for them. See [NPC_DIARIES.md](NPC_DIARIES.md). |
 | Blank journals | `src/BlankJournals.cpp`, `include/BlankJournals.h` | The blank journal items: their localized name, adding them to general-goods merchants' stock in memory, hiding their recipes while writing is off. See [EDITING.md](EDITING.md#blank-journals). |
 | Writing mode | `src/WritingMode.cpp`, `include/WritingMode.h` | Finding Ink & Quill at `kPostLoad` (`IQ_GetAPI`) and whether its writing is on; player writing exists only then. See [EDITING.md](EDITING.md#writing-mode). |
-| Text injection | `src/BookTextHook.cpp`, `include/BookTextHook.h` | Hooks on `TESDescription::GetDescription` (our books' text: the book menu's with no parent form, Win-1251 for Cyrillic; other readers', SkyrimNet's book-read event and Immersive Reading, cached UTF-8 with its tags) and `BookMenu::OpenBookMenu` (every open, other mods' too: refresh, then the book menu's text). See [BOOK_TEXT.md](BOOK_TEXT.md). |
+| Text injection | `src/BookTextHook.cpp`, `include/BookTextHook.h` | Hooks on `TESDescription::GetDescription` (our books' text: the book menu's with no parent form; other readers', SkyrimNet's book-read event and Immersive Reading, cached UTF-8 with its tags) and `BookMenu::OpenBookMenu` (every open, other mods' too: refresh, then the book menu's text). See [BOOK_TEXT.md](BOOK_TEXT.md). |
 | Theft | `src/DiaryTheftHandler.cpp`, `include/DiaryTheftHandler.h` | Container-change and menu sinks that record theft, returns and willing handovers; the `snpd_diary_stolen` decorator registration and post-load theft reconciliation. See [THEFT.md](THEFT.md). |
 | Papyrus natives | `src/PapyrusAPI.cpp`, `include/PapyrusAPI.h` | MCM getters and setters, the theft API, `UpdateDiaryFromEvent` |
 | Localization | `src/Localization.cpp`, `include/Localization.h` | Language detection, locale `.ini`, GMST month and day names, title and date formats. See [LOCALIZATION.md](LOCALIZATION.md). |
@@ -92,7 +92,7 @@ SNPD also **reads** `SkyrimNet.log` (same folder as its own log) to learn the ac
 ## Startup and load sequence
 
 **`SKSEPlugin_Load`** (`main.cpp`), in order:
-1. `InitializeLog()`, then `SKSE::Init`. If 1.x's DLL is still installed (`LegacyFiles::OldDllPresent`), stop there: only the `OldFiles` warning, at `kDataLoaded` ([Names](#names)). Otherwise `LegacyFiles::CopySettings()` (1.x's INI, if there's no new one).
+1. `InitializeLog()`, then `SKSE::Init`, the `Game:` line (runtime and SKSE versions) and `BookTextHook::RecordMainThread()` (the main thread, for the refresh on open: `kDataLoaded` comes from another thread). If 1.x's DLL is still installed (`LegacyFiles::OldDllPresent`), stop there: only the `OldFiles` warning, at `kDataLoaded` ([Names](#names)). Otherwise `LegacyFiles::CopySettings()` (1.x's INI, if there's no new one).
 2. `Config::Load()` (`PhysicalDiaries.ini`) followed at once by `Config::Save()`, so MO2 copies the INI into `overwrite/` and user settings survive mod updates. Debug level is applied from `[General] DebugLog`.
 3. Register `OnMessage`; `Serialization::Register()` registers the co-save callbacks under the unique ID `'SNDB'`.
 4. `DiaryTheftHandler::Register()` (event sinks), `RegisterRetiredBookSweeper()` (cell-attach sink), `Localization::Initialize()`, `PapyrusAPI::Register()`.
@@ -139,7 +139,7 @@ While the game is **paused** (a menu that pauses it is open), the main thread ru
 
 | Context | What runs there |
 |---|---|
-| Main thread | SKSE messages; while paused, also every `AddTask` and `AddUITask` body, Papyrus natives and input, so opening a book from an inventory runs here. |
+| Main thread | SKSE messages (but `kDataLoaded` comes from another thread: "Installed off the main thread" in the log on 1.6.1170 and 1.7.104, 2026-10-29); while paused, also every `AddTask` and `AddUITask` body, Papyrus natives and input, so opening a book from an inventory runs here. |
 | "UI" job (list "Main render scene", during play) | `UI::ProcessMessages`, where SKSE runs `AddUITask` bodies (so Ink & Quill's callbacks and SNPD's editor keys) and menu event sinks fire (`MenuOpenCloseEvent`). |
 | "VM update", "VM render-safe" and "Post process" jobs | Papyrus natives (registered with `callableFromTasklets = false`, CommonLib's default, so the VM queues each call and runs it from one of these jobs). "Post process" (list "Main render end") is where SKSE runs every `AddTask` body (its hook on `BSTaskPool::ProcessTasks`, Address Library id 36891), then one of the VM's queues. |
 | "Poll controls" job (list "Main render end", during play) | Input polling and player activation, so a book read from the world asks the text hook from here. No sync point separates it from "Post process": the two can run at the same time on two workers. |

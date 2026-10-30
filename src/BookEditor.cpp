@@ -22,7 +22,6 @@
 
 #include "BlankJournals.h"
 #include "BookText.h"
-#include "BookTextHook.h"
 #include "Config.h"
 #include "Localization.h"
 #include "WritingMode.h"
@@ -135,7 +134,7 @@ namespace SkyrimNetDiaries::BookEditor {
         // The journal as the book menu reads it: the session's saved entries (a new one never given text isn't
         // one), without entry `skip`.
         std::string ReadingText(int skip = -1) {
-            return BookTextHook::ForBookMenu(FormatDiaryEntries(EditedEntries(skip), g_actorName, VolumeKind::Written));
+            return FormatDiaryEntries(EditedEntries(skip), g_actorName, VolumeKind::Written);
         }
 
         // `reading`: what the edit key goes back to if no run changes after this (a tear-out changes none).

@@ -266,6 +266,12 @@ namespace SkyrimNetDiaries {
 
     // ── GMST reading ───────────────────────────────────────────────────
     void Localization::ReadGMSTs() {
+        // The game's own sLanguage, for bug reports: ours came from reading Skyrim.ini at plugin load, and can differ.
+        auto* ini = RE::INISettingCollection::GetSingleton();
+        auto* sLanguage = ini ? ini->GetSetting("sLanguage:General") : nullptr;
+        const char* game = sLanguage && sLanguage->GetType() == RE::Setting::Type::kString ? sLanguage->GetString() : nullptr;
+        SKSE::log::info("[Localization] Game language (sLanguage): '{}'", game ? game : "");
+
         auto* dh = RE::TESDataHandler::GetSingleton();
         if (!dh) {
             SKSE::log::warn("[Localization] TESDataHandler not available — skipping GMST read");
