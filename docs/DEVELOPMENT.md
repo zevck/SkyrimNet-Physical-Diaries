@@ -38,7 +38,7 @@ cmake --build build --config Release --target SkyrimNetPhysicalDiaries
 
 | Fact | Where |
 |---|---|
-| Plugin version is in both `CMakeLists.txt` and `vcpkg.json` (2.0.1 as of 2026-11-01) | Keep them in sync when you bump it |
+| Plugin version is in both `CMakeLists.txt` and `vcpkg.json` (2.0.2 as of 2026-11-02) | Keep them in sync when you bump it |
 | vcpkg triplet forced to `x64-windows-static`; static MSVC runtime | `CMakeLists.txt` top |
 | vcpkg deps: `sqlite3`, `nlohmann-json`, `spdlog`, `fmt`, `minhook` (+ CommonLib's) | `vcpkg.json` |
 | Plugin declared with `add_commonlibsse_plugin(... USE_ADDRESS_LIBRARY ...)`, which also generates `SKSEPlugin_Version`/`Query`. Don't declare them by hand. | `CMakeLists.txt`, bottom of `main.cpp` |
