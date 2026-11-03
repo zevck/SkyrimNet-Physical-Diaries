@@ -2,11 +2,11 @@
 
 A companion mod for [SkyrimNet](https://github.com/MinLL/SkyrimNet-GamePlugin) that turns the AI-generated diary entries written by NPCs into actual books you can find and read in the world.
 
+<div align="center"><h3>💾 <a href="https://github.com/zevck/SkyrimNet-Physical-Diaries/releases/latest">DOWNLOAD HERE</a> 💾</h3></div>
+
 <p align="center">
   <img src="images/diaryexample.jpg">
 </p>
-
-<div align="center"><h3>💾 <a href="https://github.com/zevck/SkyrimNet-Physical-Diaries/releases/latest">DOWNLOAD HERE</a> 💾</h3></div>
 
 ## 📖 Features
 
