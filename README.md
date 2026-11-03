@@ -122,5 +122,7 @@ This translates the in-game settings menu. Use the English file as a template. I
 - If books are missing after installing on an existing save, use **Reset All Diaries** followed by saving and reloading. Also ensure you have powerofthree's Tweaks installed so the mod can locate the templates.
 - Generic NPCs that share a name (e.g. multiple "Whiterun Guard") will share a single, pooled diary. SkyrimNet groups memories by actor name, so same-named NPCs are treated as one identity. To give these NPCs distinct diaries, use a mod that assigns unique names such as **Real Names Extended**.
 
+<div align="center"><h3>💾 <a href="https://github.com/zevck/SkyrimNet-Physical-Diaries/releases/latest">DOWNLOAD HERE</a> 💾</h3></div>
+
 ## 🔑 License
 Physical Diaries is released under the GNU General Public License v3.0 or later (GPL-3.0-or-later). See [LICENSE](LICENSE) for the full text.
